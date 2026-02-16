@@ -293,3 +293,77 @@ export function applyCumulativeJudgments(
     }
   }
 }
+
+/**
+ * Apply improvement judgments to cumulative feedback-provider ratings.
+ * Uses the same grouped-pairing logic as computeFeedbackEloFromImprovements
+ * but mutates existing ratings instead of starting fresh.
+ *
+ * Groups improvement judgments by (promptId, judgeModel), then within each
+ * group pairs different feedback providers and compares their improvement
+ * rates (did the revision beat the original?).
+ */
+export function applyCumulativeFeedbackJudgments(
+  ratings: Map<string, EloRating>,
+  improvementJudgments: PairwiseJudgment[],
+  sampleToFeedbackModel: Map<string, string>,
+  k: number = DEFAULT_K
+): void {
+  // Ensure all feedback models exist
+  for (const model of new Set(sampleToFeedbackModel.values())) {
+    if (!ratings.has(model)) {
+      ratings.set(model, createRating(model));
+    }
+  }
+
+  // Group improvement results by (promptId, judgeModel)
+  type ImpResult = {
+    feedbackModel: string;
+    winner: "A" | "B" | "tie";
+  };
+  const groups = new Map<string, ImpResult[]>();
+
+  for (const j of improvementJudgments) {
+    // sampleB is the revised sample
+    const fbModel = sampleToFeedbackModel.get(j.sampleB);
+    if (!fbModel) continue;
+
+    const groupKey = `${j.promptId}:${j.judgeModel}`;
+    const group = groups.get(groupKey) ?? [];
+    group.push({ feedbackModel: fbModel, winner: j.winner });
+    groups.set(groupKey, group);
+  }
+
+  // Within each group, pair up different feedback models
+  for (const results of groups.values()) {
+    for (let i = 0; i < results.length; i++) {
+      for (let j = i + 1; j < results.length; j++) {
+        const a = results[i];
+        const b = results[j];
+        if (a.feedbackModel === b.feedbackModel) continue;
+
+        const rA = ratings.get(a.feedbackModel)!;
+        const rB = ratings.get(b.feedbackModel)!;
+
+        // B wins the improvement judgment = revision beat original = better feedback
+        const aImproved = a.winner === "B";
+        const bImproved = b.winner === "B";
+
+        let matchResult: "A" | "B" | "tie";
+        if (aImproved && !bImproved) matchResult = "A";
+        else if (!aImproved && bImproved) matchResult = "B";
+        else matchResult = "tie";
+
+        const [newA, newB] = updateElo(rA.rating, rB.rating, matchResult, k);
+        rA.rating = newA;
+        rB.rating = newB;
+        rA.matchCount++;
+        rB.matchCount++;
+
+        if (matchResult === "A") { rA.wins++; rB.losses++; }
+        else if (matchResult === "B") { rB.wins++; rA.losses++; }
+        else { rA.ties++; rB.ties++; }
+      }
+    }
+  }
+}

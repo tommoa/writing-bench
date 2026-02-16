@@ -4,6 +4,8 @@ import {
   updateElo,
   computeEloFromJudgments,
   computeFeedbackElo,
+  computeFeedbackEloFromImprovements,
+  applyCumulativeFeedbackJudgments,
   createRating,
 } from "./elo.js";
 import type { PairwiseJudgment } from "../types.js";
@@ -146,21 +148,203 @@ describe("computeFeedbackElo", () => {
   });
 });
 
+describe("computeFeedbackEloFromImprovements", () => {
+  it("credits feedback model whose revision beat the original", () => {
+    // Two improvement judgments for the same prompt+judge:
+    // feedbackA's revision wins (B wins = revision beat original)
+    // feedbackB's revision loses (A wins = original beat revision)
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackB"],
+    ]);
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
+      makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
+    ];
+
+    const ratings = computeFeedbackEloFromImprovements(
+      judgments,
+      sampleToFeedbackModel
+    );
+    const fbA = ratings.find((r) => r.model === "feedbackA")!;
+    const fbB = ratings.find((r) => r.model === "feedbackB")!;
+
+    expect(fbA.rating).toBeGreaterThan(fbB.rating);
+    expect(fbA.wins).toBe(1);
+    expect(fbB.losses).toBe(1);
+  });
+
+  it("ties when both revisions beat (or both lose to) the original", () => {
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackB"],
+    ]);
+    // Both revisions beat the original
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
+      makeJudgment("j2", "orig2", "rev2", "B", "improvement", "p1"),
+    ];
+
+    const ratings = computeFeedbackEloFromImprovements(
+      judgments,
+      sampleToFeedbackModel
+    );
+    const fbA = ratings.find((r) => r.model === "feedbackA")!;
+    const fbB = ratings.find((r) => r.model === "feedbackB")!;
+
+    expect(fbA.rating).toBe(fbB.rating);
+    expect(fbA.ties).toBe(1);
+    expect(fbB.ties).toBe(1);
+  });
+
+  it("groups by promptId and judgeModel separately", () => {
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackB"],
+      ["rev3", "feedbackA"],
+      ["rev4", "feedbackB"],
+    ]);
+    // Different prompts — should be separate groups, each producing one match
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
+      makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
+      makeJudgment("j3", "orig3", "rev3", "B", "improvement", "p2"),
+      makeJudgment("j4", "orig4", "rev4", "A", "improvement", "p2"),
+    ];
+
+    const ratings = computeFeedbackEloFromImprovements(
+      judgments,
+      sampleToFeedbackModel
+    );
+    const fbA = ratings.find((r) => r.model === "feedbackA")!;
+
+    // Two groups (p1:judge, p2:judge), each produces one A win → 2 matches total
+    expect(fbA.matchCount).toBe(2);
+    expect(fbA.wins).toBe(2);
+  });
+
+  it("skips same feedback model comparisons", () => {
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackA"],
+    ]);
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
+      makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
+    ];
+
+    const ratings = computeFeedbackEloFromImprovements(
+      judgments,
+      sampleToFeedbackModel
+    );
+    expect(ratings).toHaveLength(1);
+    expect(ratings[0].matchCount).toBe(0);
+  });
+});
+
+describe("applyCumulativeFeedbackJudgments", () => {
+  it("updates existing ratings from improvement judgments", () => {
+    const ratings = new Map([
+      ["feedbackA", createRating("feedbackA")],
+      ["feedbackB", createRating("feedbackB")],
+    ]);
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackB"],
+    ]);
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
+      makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
+    ];
+
+    applyCumulativeFeedbackJudgments(ratings, judgments, sampleToFeedbackModel);
+
+    expect(ratings.get("feedbackA")!.rating).toBeGreaterThan(1500);
+    expect(ratings.get("feedbackB")!.rating).toBeLessThan(1500);
+    expect(ratings.get("feedbackA")!.wins).toBe(1);
+    expect(ratings.get("feedbackB")!.losses).toBe(1);
+  });
+
+  it("preserves pre-existing ratings and accumulates", () => {
+    // feedbackA already has a high rating from prior runs
+    const ratings = new Map([
+      [
+        "feedbackA",
+        { model: "feedbackA", rating: 1600, wins: 5, losses: 1, ties: 0, matchCount: 6 },
+      ],
+      [
+        "feedbackB",
+        { model: "feedbackB", rating: 1400, wins: 1, losses: 5, ties: 0, matchCount: 6 },
+      ],
+    ]);
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackB"],
+    ]);
+    // feedbackB's revision wins this time
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "orig1", "rev1", "A", "improvement", "p1"),
+      makeJudgment("j2", "orig2", "rev2", "B", "improvement", "p1"),
+    ];
+
+    applyCumulativeFeedbackJudgments(ratings, judgments, sampleToFeedbackModel);
+
+    const a = ratings.get("feedbackA")!;
+    const b = ratings.get("feedbackB")!;
+    // feedbackA still ahead but gap narrowed
+    expect(a.rating).toBeGreaterThan(b.rating);
+    expect(a.matchCount).toBe(7);
+    expect(b.matchCount).toBe(7);
+    expect(b.wins).toBe(2);
+  });
+
+  it("creates entries for new feedback models not yet in ratings", () => {
+    const ratings = new Map<string, import("../types.js").EloRating>();
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "newModelA"],
+      ["rev2", "newModelB"],
+    ]);
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
+      makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
+    ];
+
+    applyCumulativeFeedbackJudgments(ratings, judgments, sampleToFeedbackModel);
+
+    expect(ratings.has("newModelA")).toBe(true);
+    expect(ratings.has("newModelB")).toBe(true);
+    expect(ratings.get("newModelA")!.rating).toBeGreaterThan(1500);
+  });
+
+  it("does nothing with empty judgments", () => {
+    const ratings = new Map([
+      ["feedbackA", createRating("feedbackA")],
+    ]);
+
+    applyCumulativeFeedbackJudgments(ratings, [], new Map());
+
+    expect(ratings.get("feedbackA")!.rating).toBe(1500);
+    expect(ratings.get("feedbackA")!.matchCount).toBe(0);
+  });
+});
+
 function makeJudgment(
   id: string,
   sampleA: string,
   sampleB: string,
-  winner: "A" | "B" | "tie"
+  winner: "A" | "B" | "tie",
+  stage: "initial" | "revised" | "improvement" = "initial",
+  promptId: string = "p1"
 ): PairwiseJudgment {
   return {
     id,
     judgeModel: "judge",
-    promptId: "p1",
+    promptId,
     sampleA,
     sampleB,
     winner,
     reasoning: "test",
-    stage: "initial",
+    stage,
     usage: { inputTokens: 0, outputTokens: 0 },
     cost: { input: 0, output: 0, total: 0, totalUncached: 0 },
     latencyMs: 0,
