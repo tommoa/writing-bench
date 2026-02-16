@@ -1,8 +1,10 @@
 node_modules/
 dist/
 data/runs/
+data/cache/
 data/elo.json
 data/models-cache.json
 web/data/
+.opencode/
 .env
 *.log
