@@ -29,6 +29,7 @@ interface ModelsDevModel {
 interface ModelsDevProvider {
   id: string;
   name: string;
+  api?: string; // Base URL for API calls
   env?: string[]; // Required environment variables
   npm?: string;
   models: Record<string, ModelsDevModel>;
@@ -94,6 +95,24 @@ export async function fetchModelsDb(): Promise<ModelsDb> {
     }
     throw error;
   }
+}
+
+export interface ProviderMeta {
+  name: string;
+  api?: string;
+  npm?: string;
+}
+
+/**
+ * Look up provider metadata from the models.dev database.
+ */
+export async function getProviderMeta(
+  providerId: string
+): Promise<ProviderMeta | null> {
+  const db = await fetchModelsDb();
+  const p = db[providerId];
+  if (!p) return null;
+  return { name: p.name, api: p.api, npm: p.npm };
 }
 
 /**

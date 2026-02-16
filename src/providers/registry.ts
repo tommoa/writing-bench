@@ -1,11 +1,14 @@
 import type { LanguageModel } from "ai";
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createVertex } from "@ai-sdk/google-vertex";
 import { createVertexAnthropic } from "@ai-sdk/google-vertex/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { fetchModelsDb } from "./models.js";
+import { fetchModelsDb, getProviderMeta, type ProviderMeta } from "./models.js";
 
 // ── Types ───────────────────────────────────────────
 
@@ -39,10 +42,11 @@ const BUNDLED_PROVIDERS: Record<string, SDKFactory> = {
 // ── Custom loaders ──────────────────────────────────
 // Provider-specific initialization logic. Handles env var
 // fallback chains and custom SDK options per provider.
+// Receives provider metadata from models.dev when available.
 
 const CUSTOM_LOADERS: Record<
   string,
-  () => CustomLoaderResult
+  (meta: ProviderMeta | null) => CustomLoaderResult
 > = {
   "google-vertex": () => {
     const project =
@@ -68,20 +72,62 @@ const CUSTOM_LOADERS: Record<
     return { options: { project, location } };
   },
 
-  "openrouter": () => ({
+  "openrouter": (meta) => ({
     options: {
-      name: "openrouter",
+      name: meta?.name ?? "openrouter",
       apiKey: process.env.OPENROUTER_API_KEY,
-      baseURL: "https://openrouter.ai/api/v1",
+      baseURL: meta?.api ?? "https://openrouter.ai/api/v1",
     },
   }),
 
-  "ollama": () => ({
+  "opencode": (meta) => {
+    // Check env var first, then OpenCode auth store as fallback
+    let apiKey = process.env.OPENCODE_API_KEY;
+    if (!apiKey) {
+      try {
+        const authPath = join(
+          process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"),
+          "opencode",
+          "auth.json"
+        );
+        if (existsSync(authPath)) {
+          const auth = JSON.parse(readFileSync(authPath, "utf-8"));
+          const entry = auth.opencode;
+          if (entry?.type === "api" && entry.key) {
+            apiKey = entry.key;
+          } else if (entry?.type === "oauth" && entry.access) {
+            apiKey = entry.access;
+          }
+        }
+      } catch {
+        // Auth store unreadable, continue without key
+      }
+    }
+    return {
+      options: {
+        name: meta?.name ?? "opencode",
+        apiKey,
+        baseURL: meta?.api ?? "https://opencode.ai/zen/v1",
+      },
+    };
+  },
+
+  "ollama": (meta) => ({
     options: {
-      name: "ollama",
-      baseURL: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434/v1",
+      name: meta?.name ?? "ollama",
+      baseURL: process.env.OLLAMA_BASE_URL ?? meta?.api ?? "http://localhost:11434/v1",
     },
   }),
+};
+
+// ── NPM overrides ──────────────────────────────────
+// When models.dev maps a provider to an npm package we don't bundle,
+// use the compatible bundled package instead.
+
+const NPM_OVERRIDES: Record<string, string> = {
+  openrouter: "@ai-sdk/openai-compatible",
+  opencode: "@ai-sdk/openai-compatible",
+  ollama: "@ai-sdk/openai-compatible",
 };
 
 // ── SDK cache ───────────────────────────────────────
@@ -144,9 +190,10 @@ async function getProviderNpm(
  */
 export async function resolveModel(modelId: string) {
   const { provider, model } = parseModelSpec(modelId);
-  const npm = await getProviderNpm(provider);
+  const npm = NPM_OVERRIDES[provider] ?? await getProviderNpm(provider);
+  const meta = await getProviderMeta(provider);
   const loader = CUSTOM_LOADERS[provider];
-  const loaderResult = loader?.();
+  const loaderResult = loader?.(meta);
   const sdk = getSDK(npm, loaderResult?.options);
   return sdk.languageModel(model);
 }
