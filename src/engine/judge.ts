@@ -1,4 +1,4 @@
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import { resolveModel } from "../providers/registry.js";
 import {
@@ -9,6 +9,7 @@ import {
   type ModelConfig,
   type CostBreakdown,
   type ModelInfo,
+  type TokenUsage,
 } from "../types.js";
 import { calculateCost } from "../providers/models.js";
 import { nanoid } from "nanoid";
@@ -77,7 +78,46 @@ Which sample is better? Respond with JSON.`;
 }
 
 /**
+ * Extract the first JSON object from a text response.
+ * Handles markdown code fences, leading/trailing text, etc.
+ */
+export function extractJson(text: string): unknown | null {
+  // Try the whole string first
+  try {
+    return JSON.parse(text);
+  } catch {
+    // continue
+  }
+
+  // Try extracting from code fences: ```json ... ``` or ``` ... ```
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  if (fenceMatch) {
+    try {
+      return JSON.parse(fenceMatch[1].trim());
+    } catch {
+      // continue
+    }
+  }
+
+  // Try finding a JSON object anywhere in the text
+  const objMatch = text.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    try {
+      return JSON.parse(objMatch[0]);
+    } catch {
+      // continue
+    }
+  }
+
+  return null;
+}
+
+/**
  * Have a judge model compare two writing samples.
+ *
+ * Tries generateObject first (structured output). If the model doesn't
+ * support responseFormat / JSON schema, falls back to generateText and
+ * parses the JSON from the response text.
  */
 export async function judgePair(
   judgeConfig: ModelConfig,
@@ -97,17 +137,67 @@ export async function judgePair(
     ? JudgmentSchemaWithReasoning
     : JudgmentSchemaCompact;
 
-  const result = await generateObject({
-    model,
-    schema,
-    system: buildJudgingSystemPrompt(prompt, reasoning),
-    prompt: buildJudgingUserPrompt(prompt, sampleA, sampleB),
-    temperature: judgeConfig.temperature ?? 0.2,
-  });
+  const systemPrompt = buildJudgingSystemPrompt(prompt, reasoning);
+  const userPrompt = buildJudgingUserPrompt(prompt, sampleA, sampleB);
+
+  let winner: "A" | "B" | "tie";
+  let reasoningText = "";
+  let usage: TokenUsage;
+  let cost: CostBreakdown;
+
+  try {
+    // Primary path: structured output via generateObject
+    const result = await generateObject({
+      model,
+      schema,
+      system: systemPrompt,
+      prompt: userPrompt,
+      temperature: judgeConfig.temperature ?? 0.2,
+    });
+
+    usage = extractUsage(result.usage);
+    cost = calculateCost(modelInfo, usage);
+    winner = result.object.winner;
+    reasoningText =
+      "reasoning" in result.object
+        ? String(result.object.reasoning)
+        : "";
+  } catch {
+    // Fallback: generateText + manual JSON extraction.
+    // This handles models that don't support responseFormat or
+    // produce malformed structured output.
+    const result = await generateText({
+      model,
+      system: systemPrompt,
+      prompt: userPrompt,
+      temperature: judgeConfig.temperature ?? 0.2,
+    });
+
+    usage = extractUsage(result.usage);
+    cost = calculateCost(modelInfo, usage);
+
+    const parsed = extractJson(result.text);
+    if (!parsed) {
+      throw new Error(
+        `${judgeConfig.label}: could not extract JSON from judgment response`
+      );
+    }
+
+    const validated = schema.safeParse(parsed);
+    if (!validated.success) {
+      throw new Error(
+        `${judgeConfig.label}: judgment JSON did not match schema: ${validated.error.message}`
+      );
+    }
+
+    winner = validated.data.winner;
+    reasoningText =
+      "reasoning" in validated.data
+        ? String(validated.data.reasoning)
+        : "";
+  }
 
   const latencyMs = Date.now() - startTime;
-  const usage = extractUsage(result.usage);
-  const cost: CostBreakdown = calculateCost(modelInfo, usage);
 
   return {
     id: nanoid(),
@@ -115,11 +205,8 @@ export async function judgePair(
     promptId: prompt.id,
     sampleA: sampleA.id,
     sampleB: sampleB.id,
-    winner: result.object.winner,
-    reasoning:
-      "reasoning" in result.object
-        ? String(result.object.reasoning)
-        : "",
+    winner,
+    reasoning: reasoningText,
     stage: sampleA.stage,
     usage,
     cost,
