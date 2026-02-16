@@ -82,6 +82,25 @@ export function parseModelConfigs(specs: string[]): ModelConfig[] {
   });
 }
 
+// ── Prompt filtering ────────────────────────────────
+
+/**
+ * Filter prompts by id or category.
+ * Each filter value is matched case-insensitively against both
+ * the prompt's `id` (filename) and `category`.
+ */
+export function filterPrompts(
+  prompts: PromptConfig[],
+  filters: string[]
+): PromptConfig[] {
+  const normalized = new Set(filters.map((f) => f.toLowerCase()));
+  return prompts.filter(
+    (p) =>
+      normalized.has(p.id.toLowerCase()) ||
+      normalized.has(p.category.toLowerCase())
+  );
+}
+
 // ── Run config assembly ─────────────────────────────
 
 /**
@@ -89,9 +108,11 @@ export function parseModelConfigs(specs: string[]): ModelConfig[] {
  */
 export function createRunConfig(opts: {
   models: ModelConfig[];
+  judges?: ModelConfig[];
   prompts: PromptConfig[];
   outputsPerModel: number;
   reasoning?: boolean;
+  noCache?: boolean;
 }): RunConfig {
   const now = new Date();
   const id = now.toISOString().replace(/[:.]/g, "-");
@@ -99,9 +120,11 @@ export function createRunConfig(opts: {
   return {
     id,
     models: opts.models,
+    judges: opts.judges?.length ? opts.judges : undefined,
     prompts: opts.prompts,
     outputsPerModel: Math.min(Math.max(opts.outputsPerModel, 1), 3),
     reasoning: opts.reasoning ?? true,
+    noCache: opts.noCache ?? false,
     timestamp: now.toISOString(),
   };
 }

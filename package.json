@@ -9,7 +9,8 @@
   "scripts": {
     "start": "bun run src/index.tsx",
     "test": "bun test",
-    "export": "bun run src/index.tsx export"
+    "export": "bun run src/index.tsx export",
+    "build:web": "bun build web/src/app.ts --outdir web --target browser --minify"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.44",

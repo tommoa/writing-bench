@@ -2,7 +2,7 @@
 import React from "react";
 import { render } from "ink";
 import { parseArgs, type Command } from "./cli.js";
-import { loadPrompts, parseModelConfigs, createRunConfig } from "./config.js";
+import { loadPrompts, parseModelConfigs, createRunConfig, filterPrompts } from "./config.js";
 import { BenchmarkRunner } from "./engine/runner.js";
 import { saveRun, loadRun, loadLatestRun, listRuns } from "./storage/run-store.js";
 import { updateCumulativeElo, loadCumulativeElo } from "./storage/elo-store.js";
@@ -13,45 +13,86 @@ import type { BenchmarkEvent, EloRating } from "./types.js";
 
 async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
   const models = parseModelConfigs(args.models);
-  const prompts = await loadPrompts(args.prompts);
+  const judges = args.judges?.length
+    ? parseModelConfigs(args.judges)
+    : undefined;
+  let prompts = await loadPrompts(args.prompts);
+
+  // Apply prompt filter (match against id or category)
+  if (args.filter && args.filter.length > 0) {
+    const before = prompts.length;
+    prompts = filterPrompts(prompts, args.filter);
+    if (prompts.length === 0) {
+      console.error(
+        `No prompts matched filter: ${args.filter.join(", ")}`
+      );
+      process.exit(1);
+    }
+    if (prompts.length < before) {
+      console.log(
+        `Filtered to ${prompts.length} prompt(s): ${prompts.map((p) => p.name).join(", ")}`
+      );
+    }
+  }
 
   // Check provider env vars and warn about missing ones
-  const providers = [...new Set(models.map((m) => m.provider))];
-  const envWarnings = await checkProviderEnv(providers);
+  const allProviders = [...new Set([
+    ...models.map((m) => m.provider),
+    ...(judges ?? []).map((m) => m.provider),
+  ])];
+  const envWarnings = await checkProviderEnv(allProviders);
   for (const warn of envWarnings) {
     console.warn(`Warning: ${warn}`);
   }
 
+  const judgeModels = judges ?? models;
+  const W = models.length;
+  const J = judgeModels.length;
+
   if (args.dryRun) {
     console.log("Dry run — would execute:");
-    console.log(`  Models: ${models.map((m) => m.label).join(", ")}`);
+    console.log(`  Writers: ${models.map((m) => m.label).join(", ")}`);
+    if (judges) {
+      console.log(`  Judges:  ${judges.map((m) => m.label).join(", ")}`);
+    }
     console.log(`  Prompts: ${prompts.map((p) => p.name).join(", ")}`);
     console.log(`  Outputs per model: ${args.outputs}`);
 
-    const nSamples = models.length * prompts.length * args.outputs;
+    const P = prompts.length;
+    const N = args.outputs;
+    const nSamples = W * P * N;
+    const samplesPerPrompt = W * N;
     const nPairsPerPrompt =
-      (models.length * args.outputs * (models.length * args.outputs - 1)) / 2;
-    const nJudgments = nPairsPerPrompt * models.length * prompts.length;
-    const nFeedback = nSamples * models.length;
+      (samplesPerPrompt * (samplesPerPrompt - 1)) / 2;
+    const nInitialJudgments = nPairsPerPrompt * J * P;
+    const nFeedback = nSamples * W;
+    const nRevisions = nFeedback;
+    const nImprovementJudgments = nRevisions * J;
+    // Revised pairs: W feedback groups per prompt, each with W*N revisions
+    const revisionsPerFbGroup = W * N;
+    const pairsPerFbGroup =
+      (revisionsPerFbGroup * (revisionsPerFbGroup - 1)) / 2;
+    const nRevisedJudgments = W * pairsPerFbGroup * J * P;
 
     console.log(`\n  Stage 1 writing: ${nSamples} samples`);
-    console.log(`  Stage 1 judging: ${nJudgments} judgments`);
+    console.log(`  Stage 1 judging: ${nInitialJudgments} judgments`);
     console.log(`  Stage 2 feedback: ${nFeedback} reviews`);
-    console.log(`  Stage 3 writing: ${nFeedback} revisions`);
+    console.log(`  Stage 3 writing: ${nRevisions} revisions`);
+    console.log(`  Stage 3 improvement judging: ${nImprovementJudgments} judgments`);
+    console.log(`  Stage 3 revised judging: ${nRevisedJudgments} judgments`);
     console.log(
-      `  Stage 3 judging: ~${nJudgments * models.length} judgments`
-    );
-    console.log(
-      `\n  Total API calls: ~${nSamples + nJudgments + nFeedback + nFeedback + nJudgments * models.length}`
+      `\n  Total API calls: ~${nSamples + nInitialJudgments + nFeedback + nRevisions + nImprovementJudgments + nRevisedJudgments}`
     );
     return;
   }
 
   const config = createRunConfig({
     models,
+    judges,
     prompts,
     outputsPerModel: args.outputs,
     reasoning: args.reasoning,
+    noCache: args.noCache,
   });
 
   const runner = new BenchmarkRunner(config);
@@ -90,6 +131,18 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     console.log(
       `Duration: ${(result.meta.durationMs / 1000).toFixed(1)}s`
     );
+
+    if (result.meta.errors && result.meta.errors.length > 0) {
+      const unique = new Map<string, number>();
+      for (const e of result.meta.errors) {
+        const key = e.model ? `${e.model}: ${e.message}` : e.message;
+        unique.set(key, (unique.get(key) ?? 0) + 1);
+      }
+      console.log(`\n${result.meta.errors.length} task(s) failed:`);
+      for (const [msg, count] of unique) {
+        console.log(`  ${count > 1 ? `(${count}x) ` : ""}${msg}`);
+      }
+    }
   } catch (error) {
     unmount();
     console.error("Benchmark failed:", error);
@@ -177,10 +230,29 @@ async function handleExport(
   console.log(`Exported ${count} run(s) to ${args.out}/`);
 }
 
+async function buildWeb() {
+  const result = await Bun.build({
+    entrypoints: ["web/src/app.ts"],
+    outdir: "web",
+    target: "browser",
+    minify: true,
+  });
+  if (!result.success) {
+    for (const log of result.logs) {
+      console.error(log);
+    }
+    throw new Error("Web build failed");
+  }
+}
+
 async function handleServe(
   args: Extract<Command, { command: "serve" }>["args"]
 ) {
-  // Export latest data first
+  // Build web viewer from TypeScript
+  await buildWeb();
+  console.log("Built web viewer");
+
+  // Export latest data
   const count = await exportForWeb("web/data");
   console.log(`Exported ${count} run(s)`);
 

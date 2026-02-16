@@ -4,7 +4,7 @@ import { StatusBar } from "./StatusBar.js";
 import { EloTable } from "./EloTable.js";
 import { CostBreakdownTable } from "./CostBreakdownTable.js";
 import { RunProgress } from "./RunProgress.js";
-import type { BenchmarkEvent, BenchmarkProgress, ModelSpeed } from "../types.js";
+import type { BenchmarkEvent, BenchmarkProgress, CacheSavings, ModelSpeed } from "../types.js";
 
 interface AppProps {
   subscribe: (handler: (event: BenchmarkEvent) => void) => void;
@@ -55,6 +55,12 @@ export function App({ subscribe, showSpeed }: AppProps) {
     costByModelByStage: {},
     speedByModel: {},
     speedByModelByStage: {},
+    cacheSavings: {
+      writes:    { cached: 0, fresh: 0, savedCost: 0 },
+      feedback:  { cached: 0, fresh: 0, savedCost: 0 },
+      revisions: { cached: 0, fresh: 0, savedCost: 0 },
+      judgments:  { cached: 0, fresh: 0, savedCost: 0 },
+    },
   });
 
   const [complete, setComplete] = useState(false);
@@ -126,6 +132,7 @@ export function App({ subscribe, showSpeed }: AppProps) {
         costByStage={progress.costByStage}
         done={progress.stageDone}
         total={progress.stageTotal}
+        cacheSavings={progress.cacheSavings}
       />
 
       <RunProgress done={progress.stageDone} total={progress.stageTotal} />

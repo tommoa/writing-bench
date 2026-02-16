@@ -6,7 +6,7 @@ import type {
   EloRating,
   RunResult,
 } from "../types.js";
-import { applyCumulativeJudgments, createRating } from "../engine/elo.js";
+import { applyCumulativeJudgments, applyCumulativeFeedbackJudgments, createRating } from "../engine/elo.js";
 
 const ELO_FILE = join(process.cwd(), "data", "elo.json");
 
@@ -19,6 +19,7 @@ export async function loadCumulativeElo(): Promise<CumulativeElo> {
       lastUpdated: new Date().toISOString(),
       writing: {},
       feedbackGiving: {},
+      writingByCategory: {},
       history: [],
     };
   }
@@ -67,19 +68,48 @@ export async function updateCumulativeElo(
   }
   applyCumulativeJudgments(writingRatings, run.judgments, sampleToModel);
 
-  // Update feedback ELO with revised judgments only
+  // Update feedback ELO with improvement judgments (revision vs original).
+  // Groups by (prompt, judge) and compares improvement rates across
+  // different feedback providers.
   const feedbackRatings = new Map<string, EloRating>();
   for (const [model, rating] of Object.entries(elo.feedbackGiving)) {
     feedbackRatings.set(model, { ...rating });
   }
-  const revisedJudgments = run.judgments.filter(
-    (j) => j.stage === "revised"
+  const improvementJudgments = run.judgments.filter(
+    (j) => j.stage === "improvement"
   );
-  applyCumulativeJudgments(
+  applyCumulativeFeedbackJudgments(
     feedbackRatings,
-    revisedJudgments,
+    improvementJudgments,
     sampleToFeedbackModel
   );
+
+  // Update per-category writing ELO
+  const promptToCategory = new Map<string, string>();
+  for (const p of run.config.prompts) {
+    promptToCategory.set(p.id, p.category);
+  }
+  const categories = new Set(run.config.prompts.map((p) => p.category));
+
+  if (!elo.writingByCategory) {
+    elo.writingByCategory = {};
+  }
+
+  for (const category of categories) {
+    const catRatings = new Map<string, EloRating>();
+    const existing = elo.writingByCategory[category] ?? {};
+    for (const [model, rating] of Object.entries(existing)) {
+      catRatings.set(model, { ...rating });
+    }
+    // Use initial + revised judgments for this category
+    const catJudgments = run.judgments.filter(
+      (j) =>
+        j.stage !== "improvement" &&
+        promptToCategory.get(j.promptId) === category
+    );
+    applyCumulativeJudgments(catRatings, catJudgments, sampleToModel);
+    elo.writingByCategory[category] = Object.fromEntries(catRatings);
+  }
 
   // Build snapshot for history
   const snapshot: Record<string, number> = {};

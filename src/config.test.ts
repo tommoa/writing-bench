@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { loadPrompts, parseModelConfigs, createRunConfig } from "./config.js";
+import { loadPrompts, parseModelConfigs, createRunConfig, filterPrompts } from "./config.js";
+import type { PromptConfig } from "./types.js";
 
 describe("loadPrompts", () => {
   it("loads all TOML prompt files", async () => {
@@ -80,5 +81,96 @@ describe("createRunConfig", () => {
       outputsPerModel: 0,
     });
     expect(config2.outputsPerModel).toBe(1);
+  });
+});
+
+describe("filterPrompts", () => {
+  const prompts: PromptConfig[] = [
+    {
+      id: "sermon",
+      name: "Sunday Sermon",
+      category: "sermon",
+      description: "test",
+      prompt: "test",
+      judgingCriteria: ["quality"],
+    },
+    {
+      id: "short-story",
+      name: "Short Story",
+      category: "fiction",
+      description: "test",
+      prompt: "test",
+      judgingCriteria: ["quality"],
+    },
+    {
+      id: "essay",
+      name: "Essay",
+      category: "essay",
+      description: "test",
+      prompt: "test",
+      judgingCriteria: ["quality"],
+    },
+    {
+      id: "youth-talk",
+      name: "Youth Talk",
+      category: "youth-talk",
+      description: "test",
+      prompt: "test",
+      judgingCriteria: ["quality"],
+    },
+  ];
+
+  it("filters by prompt id", () => {
+    const result = filterPrompts(prompts, ["sermon"]);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("sermon");
+  });
+
+  it("filters by category", () => {
+    const result = filterPrompts(prompts, ["fiction"]);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("short-story");
+  });
+
+  it("matches case-insensitively", () => {
+    const result = filterPrompts(prompts, ["SERMON", "Fiction"]);
+    // "SERMON" matches sermon by id, "Fiction" matches short-story by tag
+    expect(result).toHaveLength(2);
+  });
+
+  it("matches multiple filters (union)", () => {
+    const result = filterPrompts(prompts, ["sermon", "essay"]);
+    expect(result).toHaveLength(2);
+    expect(result.map((p) => p.id).sort()).toEqual(["essay", "sermon"]);
+  });
+
+  it("matches by id even when category differs", () => {
+    // "short-story" has category "fiction" — filter by id should still work
+    const result = filterPrompts(prompts, ["short-story"]);
+    expect(result).toHaveLength(1);
+    expect(result[0].category).toBe("fiction");
+  });
+
+  it("returns empty array when nothing matches", () => {
+    const result = filterPrompts(prompts, ["nonexistent"]);
+    expect(result).toHaveLength(0);
+  });
+
+  it("returns all when a category matches multiple prompts", () => {
+    // Add a second sermon-category prompt
+    const extended = [
+      ...prompts,
+      {
+        id: "kids-talk",
+        name: "Kids Talk",
+        category: "sermon",
+        description: "test",
+        prompt: "test",
+        judgingCriteria: ["quality"],
+      },
+    ];
+    const result = filterPrompts(extended, ["sermon"]);
+    // Matches both "sermon" (by id) and "kids-talk" (by category "sermon")
+    expect(result).toHaveLength(2);
   });
 });

@@ -23,6 +23,10 @@ interface RunsIndex {
   cumulativeElo: {
     writing: Array<{ model: string; rating: number; matchCount: number }>;
     feedback: Array<{ model: string; rating: number; matchCount: number }>;
+    byCategory: Record<
+      string,
+      Array<{ model: string; rating: number; matchCount: number }>
+    >;
   };
   eloHistory: Array<{
     runId: string;
@@ -100,6 +104,20 @@ export async function exportForWeb(outDir: string): Promise<number> {
           rating: r.rating,
           matchCount: r.matchCount,
         })),
+      byCategory: Object.fromEntries(
+        Object.entries(cumElo.writingByCategory ?? {}).map(
+          ([cat, ratings]) => [
+            cat,
+            Object.values(ratings)
+              .sort((a, b) => b.rating - a.rating)
+              .map((r) => ({
+                model: r.model,
+                rating: r.rating,
+                matchCount: r.matchCount,
+              })),
+          ]
+        )
+      ),
     },
     eloHistory: cumElo.history.map((h) => ({
       runId: h.runId,

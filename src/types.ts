@@ -86,9 +86,11 @@ export interface PromptConfig {
 export interface RunConfig {
   id: string; // ISO timestamp-based
   models: ModelConfig[];
+  judges?: ModelConfig[]; // If absent, models are used for judging
   prompts: PromptConfig[];
   outputsPerModel: number; // 1-3
   reasoning: boolean; // Include reasoning in judgments
+  noCache: boolean; // Skip reading from cache (still writes to cache)
   timestamp: string;
 }
 
@@ -102,6 +104,7 @@ export interface WritingSample {
   originalSampleId?: string; // WritingSample.id this revision is based on
   feedbackUsed?: string; // Feedback.id incorporated (stage 3)
   feedbackModel?: string; // Which model gave the feedback
+  fromCache?: boolean; // True if loaded from disk cache (no API call this run)
   usage: TokenUsage;
   cost: CostBreakdown;
   latencyMs: number;
@@ -112,6 +115,7 @@ export interface Feedback {
   sourceModel: string; // Who gave feedback
   targetSampleId: string; // Which sample received feedback
   text: string;
+  fromCache?: boolean; // True if loaded from disk cache (no API call this run)
   usage: TokenUsage;
   cost: CostBreakdown;
   latencyMs: number;
@@ -146,6 +150,7 @@ export interface EloSnapshot {
   stage: "initial" | "revised";
   ratings: EloRating[];
   feedbackRatings?: EloRating[]; // Only in revised stage
+  byCategory?: Record<string, EloRating[]>; // ELO per prompt category
 }
 
 // ── Run Result ──────────────────────────────────────
@@ -173,8 +178,10 @@ export interface RunResult {
     totalCostUncached: number;
     costByModel: Record<string, number>;
     costByStage: Record<string, number>;
+    costByModelByStage: Record<string, Record<string, number>>;
     speedByModel: Record<string, ModelSpeed>;
     durationMs: number;
+    errors?: Array<{ message: string; model?: string }>;
   };
   modelInfo: Record<string, ModelInfo>;
 }
@@ -185,6 +192,7 @@ export interface CumulativeElo {
   lastUpdated: string;
   writing: Record<string, EloRating>;
   feedbackGiving: Record<string, EloRating>;
+  writingByCategory: Record<string, Record<string, EloRating>>; // category -> model -> rating
   history: Array<{
     runId: string;
     timestamp: string;
@@ -200,7 +208,21 @@ export type BenchmarkStage =
   | "feedback"
   | "revisedWriting"
   | "revisedJudging"
+  | "computingElo"
   | "complete";
+
+export interface CacheStageSavings {
+  cached: number;
+  fresh: number;
+  savedCost: number;
+}
+
+export interface CacheSavings {
+  writes: CacheStageSavings;
+  feedback: CacheStageSavings;
+  revisions: CacheStageSavings;
+  judgments: CacheStageSavings;
+}
 
 export interface BenchmarkProgress {
   stage: BenchmarkStage; // Kept for the "complete" terminal state
@@ -221,6 +243,7 @@ export interface BenchmarkProgress {
   costByModelByStage: Record<string, Record<string, number>>;
   speedByModel: Record<string, ModelSpeed>;
   speedByModelByStage: Record<string, Record<string, ModelSpeed>>;
+  cacheSavings: CacheSavings;
 }
 
 export type BenchmarkEvent =

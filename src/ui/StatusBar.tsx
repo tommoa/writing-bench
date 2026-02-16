@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
-import type { BenchmarkStage } from "../types.js";
+import type { BenchmarkStage, CacheSavings } from "../types.js";
 
 const STAGE_LABELS: Record<BenchmarkStage, string> = {
   initialWriting: "Writing",
@@ -9,6 +9,7 @@ const STAGE_LABELS: Record<BenchmarkStage, string> = {
   feedback: "Feedback",
   revisedWriting: "Revising",
   revisedJudging: "Re-Judging",
+  computingElo: "Computing ELO",
   complete: "Complete",
 };
 
@@ -29,6 +30,7 @@ interface StatusBarProps {
   costByStage: Record<string, number>;
   done: number;
   total: number;
+  cacheSavings: CacheSavings;
 }
 
 export function StatusBar({
@@ -40,6 +42,7 @@ export function StatusBar({
   costByStage,
   done,
   total,
+  cacheSavings,
 }: StatusBarProps) {
   const isComplete = stage === "complete";
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -54,6 +57,24 @@ export function StatusBar({
   // Show uncached cost when it meaningfully differs from actual
   const cacheSaved = totalCostUncached - totalCost;
   const showUncached = cacheSaved > 0.00005;
+
+  // Cache breakdown — only show if anything was cached
+  const totalCached =
+    cacheSavings.writes.cached +
+    cacheSavings.feedback.cached +
+    cacheSavings.revisions.cached +
+    cacheSavings.judgments.cached;
+  const totalFresh =
+    cacheSavings.writes.fresh +
+    cacheSavings.feedback.fresh +
+    cacheSavings.revisions.fresh +
+    cacheSavings.judgments.fresh;
+  const totalSavedCost =
+    cacheSavings.writes.savedCost +
+    cacheSavings.feedback.savedCost +
+    cacheSavings.revisions.savedCost +
+    cacheSavings.judgments.savedCost;
+  const hasCacheActivity = totalCached > 0 || totalFresh > 0;
 
   // Active stages label
   const stageLabel = isComplete
@@ -93,6 +114,16 @@ export function StatusBar({
               {label}: <Text color="white">${cost.toFixed(4)}</Text>
             </Text>
           ))}
+        </Box>
+      )}
+      {totalFresh > 0 && hasCacheActivity && (
+        <Box marginLeft={3}>
+          <Text color="gray">{`Fresh: ${cacheSavings.writes.fresh}w ${cacheSavings.feedback.fresh}fb ${cacheSavings.revisions.fresh}rev ${cacheSavings.judgments.fresh}j`}</Text>
+        </Box>
+      )}
+      {totalCached > 0 && (
+        <Box marginLeft={3}>
+          <Text color="cyan">{`Cached: ${cacheSavings.writes.cached}w ${cacheSavings.feedback.cached}fb ${cacheSavings.revisions.cached}rev ${cacheSavings.judgments.cached}j (saved ~$${totalSavedCost.toFixed(4)})`}</Text>
         </Box>
       )}
       {!isComplete && currentOp && (

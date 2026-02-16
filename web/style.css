@@ -313,6 +313,110 @@ details[open] summary {
   margin-bottom: 0.5em;
 }
 
+/* Judgment filters */
+.judgment-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  flex-wrap: wrap;
+  margin-bottom: 1em;
+  padding: 0.75em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+/* intentionally blank — selects styled globally below */
+
+/* Revision nested under feedback */
+.revision-nested {
+  margin-top: 0.75em;
+  padding: 0.75em;
+  border-left: 3px solid var(--blue);
+  background: var(--bg);
+  border-radius: 0 4px 4px 0;
+}
+
+/* View judgments button on outputs */
+.view-judgments-btn {
+  display: inline-block;
+  margin-top: 0.5em;
+  padding: 0.3em 0.8em;
+  font-family: inherit;
+  font-size: 0.85em;
+  color: var(--blue);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.view-judgments-btn:hover {
+  border-color: var(--blue);
+  color: var(--accent);
+}
+
+/* Sample filter badge */
+.sample-filter-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  padding: 0.5em 0.75em;
+  margin-bottom: 0.75em;
+  background: var(--surface);
+  border: 1px solid var(--blue);
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.badge-clear {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--comment);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.2em 0.4em;
+}
+
+.badge-clear:hover {
+  color: var(--accent);
+}
+
+/* Head-to-head summary */
+.h2h-summary {
+  margin-bottom: 1em;
+  padding: 0.75em 1em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.h2h-record {
+  font-size: 1.1em;
+}
+
+.h2h-model {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.h2h-wins {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.h2h-losses {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.h2h-ties {
+  color: var(--comment);
+  font-weight: 700;
+}
+
 /* Judgment display */
 .judgment {
   padding: 0.75em;
@@ -320,6 +424,35 @@ details[open] summary {
   border-radius: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
+}
+
+/* Judgment card layout */
+.judgment-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  margin-bottom: 0.3em;
+  font-size: 0.85em;
+}
+
+.judgment-stage {
+  color: var(--purple);
+  font-weight: 700;
+}
+
+.judgment-judge {
+  margin-left: auto;
+  color: var(--comment);
+  font-size: 0.9em;
+}
+
+.judgment-matchup {
+  padding-left: 0.25em;
+}
+
+.judgment-result {
+  padding-left: 0.25em;
+  margin-top: 0.2em;
 }
 
 .judgment-winner {
@@ -342,6 +475,29 @@ details[open] summary {
   color: var(--comment);
   font-size: 0.9em;
   margin-top: 0.25em;
+}
+
+/* Judgment sample backlinks */
+.judgment-sample-link {
+  color: var(--text);
+  border-bottom: 1px dashed var(--comment);
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.judgment-sample-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Scroll target highlight */
+.scroll-highlight {
+  animation: highlight-fade 2s ease-out;
+}
+
+@keyframes highlight-fade {
+  0% { outline: 2px solid var(--accent); outline-offset: 4px; }
+  100% { outline: 2px solid transparent; outline-offset: 4px; }
 }
 
 /* Model info cards */
@@ -369,7 +525,13 @@ details[open] summary {
   font-size: 0.85em;
 }
 
-/* Cost breakdown */
+/* Cost breakdown table (model × stage) */
+.cost-breakdown-table td.total {
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* Cost summary cards */
 .cost-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -399,6 +561,72 @@ details[open] summary {
 
 .cost-item.speed .value {
   color: var(--cyan);
+}
+
+/* Section header with inline filter */
+.section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1em;
+}
+
+.section-header h2 {
+  margin-bottom: 0;
+}
+
+/* intentionally blank — selects styled globally below */
+
+/* Dropdown selects — global style */
+select {
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0.35em 1.8em 0.35em 0.6em;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239b9fa6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5em center;
+  background-size: 10px 6px;
+  transition: border-color 0.2s;
+}
+
+select:hover {
+  border-color: var(--accent);
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+select option {
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--text);
+  padding: 0.3em 0.5em;
+}
+
+select option:checked {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+select option:hover {
+  background: var(--surface);
+}
+
+/* Model selector (dropdown mode for many models) */
+.tabs-dropdown {
+  border-bottom: none;
+  margin-bottom: 0.5em;
+}
+
+.tabs-dropdown select {
+  font-size: 0.95em;
 }
 
 /* Utility */

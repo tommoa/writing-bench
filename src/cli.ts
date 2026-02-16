@@ -3,13 +3,16 @@ import { hideBin } from "yargs/helpers";
 
 export interface RunArgs {
   models: string[];
+  judges?: string[];
   prompts: string;
+  filter?: string[];
   outputs: number;
   concurrency: number;
   resume?: string;
   dryRun: boolean;
   speed: boolean;
   reasoning: boolean;
+  noCache: boolean;
 }
 
 export interface ResultsArgs {
@@ -57,11 +60,25 @@ export async function parseArgs(): Promise<Command> {
               describe:
                 "Model specs: provider:model[:label] (repeatable)",
             })
+            .option("judges", {
+              alias: "j",
+              type: "string",
+              array: true,
+              describe:
+                "Judge model specs: provider:model[:label] (repeatable). If omitted, --models are used for judging.",
+            })
             .option("prompts", {
               alias: "p",
               type: "string",
               default: "prompts/*.toml",
               describe: "Glob pattern for prompt files",
+            })
+            .option("filter", {
+              alias: "f",
+              type: "string",
+              array: true,
+              describe:
+                "Filter prompts by id or category (e.g. --filter sermon fiction)",
             })
             .option("outputs", {
               alias: "n",
@@ -88,23 +105,33 @@ export async function parseArgs(): Promise<Command> {
               default: false,
               describe: "Show raw tok/s speed per model",
             })
-            .option("no-reasoning", {
+            .option("reasoning", {
               type: "boolean",
-              default: false,
-              describe: "Skip reasoning in judgments (reduces output tokens)",
+              default: true,
+              describe:
+                "Include reasoning in judgments (use --no-reasoning to skip)",
+            })
+            .option("cache", {
+              type: "boolean",
+              default: true,
+              describe:
+                "Read from sample cache (use --no-cache to skip, still writes to cache)",
             }),
         (argv) => {
           resolve({
             command: "run",
             args: {
               models: argv.models,
+              judges: argv.judges,
               prompts: argv.prompts,
+              filter: argv.filter,
               outputs: Math.min(Math.max(argv.outputs, 1), 3),
               concurrency: argv.concurrency,
               resume: argv.resume,
               dryRun: argv.dryRun,
               speed: argv.speed,
-              reasoning: !argv.noReasoning,
+              reasoning: argv.reasoning,
+              noCache: !argv.cache,
             },
           });
         }
