@@ -60,7 +60,7 @@ function makeJudgment(
 function makeRunResult(opts: {
   samples: WritingSample[];
   judgments: PairwiseJudgment[];
-  categories: Array<{ id: string; category: string }>;
+  prompts: Array<{ id: string; tags: string[] }>;
 }): RunResult {
   return {
     config: {
@@ -69,10 +69,10 @@ function makeRunResult(opts: {
         { provider: "openai", model: "gpt-4o", label: "modelA" },
         { provider: "anthropic", model: "claude-sonnet-4-20250514", label: "modelB" },
       ],
-      prompts: opts.categories.map((c) => ({
-        id: c.id,
-        name: c.id,
-        category: c.category,
+      prompts: opts.prompts.map((p) => ({
+        id: p.id,
+        name: p.id,
+        tags: p.tags,
         description: "test",
         prompt: "test",
         judgingCriteria: ["quality"],
@@ -143,7 +143,7 @@ describe("updateCumulativeElo - feedback ELO", () => {
         // feedbackY did not help (original beat revision)
         makeJudgment("j2", "sermon", "origB", "revB", "A", "improvement"),
       ],
-      categories: [{ id: "sermon", category: "sermon" }],
+      prompts: [{ id: "sermon", tags: ["sermon"] }],
     });
 
     const elo = await updateCumulativeElo(run);
@@ -169,7 +169,7 @@ describe("updateCumulativeElo - feedback ELO", () => {
         // Revised judgment: same feedback provider for both → no feedback competition
         makeJudgment("j1", "sermon", "revA", "revB", "A", "revised"),
       ],
-      categories: [{ id: "sermon", category: "sermon" }],
+      prompts: [{ id: "sermon", tags: ["sermon"] }],
     });
 
     const elo = await updateCumulativeElo(run);
@@ -192,7 +192,7 @@ describe("updateCumulativeElo - feedback ELO", () => {
         makeJudgment("j1", "sermon", "o1", "r1a", "B", "improvement"),
         makeJudgment("j2", "sermon", "o1", "r1b", "A", "improvement"),
       ],
-      categories: [{ id: "sermon", category: "sermon" }],
+      prompts: [{ id: "sermon", tags: ["sermon"] }],
     });
     await updateCumulativeElo(run1);
 
@@ -207,7 +207,7 @@ describe("updateCumulativeElo - feedback ELO", () => {
         makeJudgment("j3", "essay", "o2", "r2a", "A", "improvement"),
         makeJudgment("j4", "essay", "o2", "r2b", "B", "improvement"),
       ],
-      categories: [{ id: "essay", category: "essay" }],
+      prompts: [{ id: "essay", tags: ["essay"] }],
     });
     const elo = await updateCumulativeElo(run2);
 
@@ -247,7 +247,7 @@ describe("updateCumulativeElo - per-category", () => {
     }
   });
 
-  it("creates writingByCategory entries for each category", async () => {
+  it("creates writingByTag entries for each category", async () => {
     const run = makeRunResult({
       samples: [
         makeSample("sa1", "modelA", "sermon"),
@@ -259,26 +259,26 @@ describe("updateCumulativeElo - per-category", () => {
         makeJudgment("j1", "sermon", "sa1", "sb1", "A"),
         makeJudgment("j2", "essay", "ea1", "eb1", "B"),
       ],
-      categories: [
-        { id: "sermon", category: "sermon" },
-        { id: "essay", category: "essay" },
+      prompts: [
+        { id: "sermon", tags: ["sermon"] },
+        { id: "essay", tags: ["essay"] },
       ],
     });
 
     const elo = await updateCumulativeElo(run);
 
-    expect(elo.writingByCategory).toBeDefined();
-    expect(elo.writingByCategory["sermon"]).toBeDefined();
-    expect(elo.writingByCategory["essay"]).toBeDefined();
+    expect(elo.writingByTag).toBeDefined();
+    expect(elo.writingByTag["sermon"]).toBeDefined();
+    expect(elo.writingByTag["essay"]).toBeDefined();
 
     // modelA should lead in sermons
-    const sermonA = elo.writingByCategory["sermon"]["modelA"];
-    const sermonB = elo.writingByCategory["sermon"]["modelB"];
+    const sermonA = elo.writingByTag["sermon"]["modelA"];
+    const sermonB = elo.writingByTag["sermon"]["modelB"];
     expect(sermonA.rating).toBeGreaterThan(sermonB.rating);
 
     // modelB should lead in essays
-    const essayA = elo.writingByCategory["essay"]["modelA"];
-    const essayB = elo.writingByCategory["essay"]["modelB"];
+    const essayA = elo.writingByTag["essay"]["modelA"];
+    const essayB = elo.writingByTag["essay"]["modelB"];
     expect(essayB.rating).toBeGreaterThan(essayA.rating);
   });
 
@@ -292,7 +292,7 @@ describe("updateCumulativeElo - per-category", () => {
       judgments: [
         makeJudgment("j1", "sermon", "s1a", "s1b", "A"),
       ],
-      categories: [{ id: "sermon", category: "sermon" }],
+      prompts: [{ id: "sermon", tags: ["sermon"] }],
     });
     await updateCumulativeElo(run1);
 
@@ -305,13 +305,13 @@ describe("updateCumulativeElo - per-category", () => {
       judgments: [
         makeJudgment("j2", "sermon", "s2a", "s2b", "B"),
       ],
-      categories: [{ id: "sermon", category: "sermon" }],
+      prompts: [{ id: "sermon", tags: ["sermon"] }],
     });
     const elo = await updateCumulativeElo(run2);
 
     // After 1 win each, ratings should be close to 1500
-    const sermonA = elo.writingByCategory["sermon"]["modelA"];
-    const sermonB = elo.writingByCategory["sermon"]["modelB"];
+    const sermonA = elo.writingByTag["sermon"]["modelA"];
+    const sermonB = elo.writingByTag["sermon"]["modelB"];
     expect(Math.abs(sermonA.rating - sermonB.rating)).toBeLessThan(10);
     expect(sermonA.matchCount).toBe(2);
     expect(sermonB.matchCount).toBe(2);
@@ -327,20 +327,20 @@ describe("updateCumulativeElo - per-category", () => {
         // Only improvement judgments — should NOT affect category ELO
         makeJudgment("j1", "sermon", "s1", "s2", "A", "improvement"),
       ],
-      categories: [{ id: "sermon", category: "sermon" }],
+      prompts: [{ id: "sermon", tags: ["sermon"] }],
     });
     const elo = await updateCumulativeElo(run);
 
-    const sermonA = elo.writingByCategory["sermon"]["modelA"];
-    const sermonB = elo.writingByCategory["sermon"]["modelB"];
+    const sermonA = elo.writingByTag["sermon"]["modelA"];
+    const sermonB = elo.writingByTag["sermon"]["modelB"];
     // No matches processed since improvement judgments are excluded
     expect(sermonA.matchCount).toBe(0);
     expect(sermonB.matchCount).toBe(0);
     expect(sermonA.rating).toBe(1500);
   });
 
-  it("initializes writingByCategory on old elo.json without it", async () => {
-    // Write an old-format elo.json without writingByCategory
+  it("initializes writingByTag on old elo.json without it", async () => {
+    // Write an old-format elo.json without writingByTag
     const oldElo = {
       lastUpdated: new Date().toISOString(),
       writing: {},
@@ -357,11 +357,11 @@ describe("updateCumulativeElo - per-category", () => {
       judgments: [
         makeJudgment("j1", "sermon", "s1", "s2", "A"),
       ],
-      categories: [{ id: "sermon", category: "sermon" }],
+      prompts: [{ id: "sermon", tags: ["sermon"] }],
     });
 
     const elo = await updateCumulativeElo(run);
-    expect(elo.writingByCategory).toBeDefined();
-    expect(elo.writingByCategory["sermon"]).toBeDefined();
+    expect(elo.writingByTag).toBeDefined();
+    expect(elo.writingByTag["sermon"]).toBeDefined();
   });
 });

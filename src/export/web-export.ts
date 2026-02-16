@@ -23,7 +23,7 @@ interface RunsIndex {
   cumulativeElo: {
     writing: Array<{ model: string; rating: number; matchCount: number }>;
     feedback: Array<{ model: string; rating: number; matchCount: number }>;
-    byCategory: Record<
+    byTag: Record<
       string,
       Array<{ model: string; rating: number; matchCount: number }>
     >;
@@ -104,8 +104,8 @@ export async function exportForWeb(outDir: string): Promise<number> {
           rating: r.rating,
           matchCount: r.matchCount,
         })),
-      byCategory: Object.fromEntries(
-        Object.entries(cumElo.writingByCategory ?? {}).map(
+      byTag: Object.fromEntries(
+        Object.entries(cumElo.writingByTag ?? {}).map(
           ([cat, ratings]) => [
             cat,
             Object.values(ratings)

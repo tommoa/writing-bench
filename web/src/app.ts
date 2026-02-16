@@ -169,12 +169,12 @@ function renderDashboard(index: RunsIndex): void {
   }
 
   if (
-    index.cumulativeElo.byCategory &&
-    Object.keys(index.cumulativeElo.byCategory).length > 0
+    index.cumulativeElo.byTag &&
+    Object.keys(index.cumulativeElo.byTag).length > 0
   ) {
-    frag.appendChild(el("h2", {}, "ELO by Category"));
+    frag.appendChild(el("h2", {}, "ELO by Tag"));
     for (const [cat, ratings] of Object.entries(
-      index.cumulativeElo.byCategory
+      index.cumulativeElo.byTag
     )) {
       const d = el("details");
       d.appendChild(el("summary", {}, cat));
@@ -358,20 +358,20 @@ function renderRunDetail(run: RunResult): void {
 
   // ELO by category
   if (
-    run.elo.initial.byCategory &&
-    Object.keys(run.elo.initial.byCategory).length > 0
+    run.elo.initial.byTag &&
+    Object.keys(run.elo.initial.byTag).length > 0
   ) {
-    frag.appendChild(el("h2", {}, "ELO by Category"));
-    for (const [cat, ratings] of Object.entries(run.elo.initial.byCategory)) {
+    frag.appendChild(el("h2", {}, "ELO by Tag"));
+    for (const [cat, ratings] of Object.entries(run.elo.initial.byTag)) {
       const d = el("details");
       d.appendChild(el("summary", {}, cat));
       const inner = el("div", { className: "details-content" });
       inner.appendChild(el("h4", {}, "Initial"));
       inner.appendChild(renderRunEloTable(ratings));
-      if (run.elo.revised.byCategory?.[cat]) {
+      if (run.elo.revised.byTag?.[cat]) {
         inner.appendChild(el("h4", {}, "Revised"));
         inner.appendChild(
-          renderRunEloTable(run.elo.revised.byCategory[cat])
+          renderRunEloTable(run.elo.revised.byTag[cat])
         );
       }
       d.appendChild(inner);
@@ -386,10 +386,10 @@ function renderRunDetail(run: RunResult): void {
   const promptFilterSelect = document.createElement("select");
   promptFilterSelect.className = "prompt-filter-select";
   promptFilterSelect.appendChild(new Option("All prompts", "all"));
-  const categories = [...new Set(run.config.prompts.map((p) => p.category))].sort();
-  if (categories.length > 1) {
-    for (const cat of categories) {
-      promptFilterSelect.appendChild(new Option(`Category: ${cat}`, `cat:${cat}`));
+  const tags = [...new Set(run.config.prompts.flatMap((p) => p.tags))].sort();
+  if (tags.length > 1) {
+    for (const tag of tags) {
+      promptFilterSelect.appendChild(new Option(`Tag: ${tag}`, `tag:${tag}`));
     }
   }
   for (const p of run.config.prompts) {
@@ -402,7 +402,7 @@ function renderRunDetail(run: RunResult): void {
   for (const prompt of run.config.prompts) {
     const section = renderPromptSection(run, prompt);
     section.setAttribute("data-prompt-id", prompt.id);
-    section.setAttribute("data-prompt-category", prompt.category);
+    section.setAttribute("data-prompt-tags", prompt.tags.join(","));
     promptSections.appendChild(section);
   }
   frag.appendChild(promptSections);
@@ -412,10 +412,11 @@ function renderRunDetail(run: RunResult): void {
     for (const child of $$("[data-prompt-id]", promptSections)) {
       if (val === "all") {
         (child as HTMLElement).style.display = "";
-      } else if (val.startsWith("cat:")) {
-        const cat = val.slice(4);
+      } else if (val.startsWith("tag:")) {
+        const tag = val.slice(4);
+        const childTags = (child.getAttribute("data-prompt-tags") ?? "").split(",");
         (child as HTMLElement).style.display =
-          child.getAttribute("data-prompt-category") === cat ? "" : "none";
+          childTags.includes(tag) ? "" : "none";
       } else if (val.startsWith("id:")) {
         const id = val.slice(3);
         (child as HTMLElement).style.display =
@@ -508,7 +509,7 @@ function renderRunEloTable(ratings: EloRating[]): HTMLElement {
 function renderPromptSection(run: RunResult, prompt: PromptConfig): HTMLElement {
   const outerDetails = el("details");
   outerDetails.appendChild(
-    el("summary", {}, `${prompt.name} (${prompt.category})`)
+    el("summary", {}, `${prompt.name} (${prompt.tags.join(", ")})`)
   );
 
   const content = el("div", { className: "details-content" });
@@ -857,7 +858,7 @@ function renderJudgmentsSection(run: RunResult): HTMLElement {
   const judges = [...new Set(judgments.map((j) => j.judgeModel))].sort();
   const allModels = [...new Set(run.samples.map((s) => s.model))].sort();
   const allPrompts = run.config.prompts;
-  const judgmentCategories = [...new Set(allPrompts.map((p) => p.category))].sort();
+  const judgmentTags = [...new Set(allPrompts.flatMap((p) => p.tags))].sort();
 
   // Filter state
   let filterStage = "all";
@@ -872,9 +873,9 @@ function renderJudgmentsSection(run: RunResult): HTMLElement {
 
   const promptSelect = document.createElement("select");
   promptSelect.appendChild(new Option("All prompts", "all"));
-  if (judgmentCategories.length > 1) {
-    for (const cat of judgmentCategories) {
-      promptSelect.appendChild(new Option(`Category: ${cat}`, `cat:${cat}`));
+  if (judgmentTags.length > 1) {
+    for (const tag of judgmentTags) {
+      promptSelect.appendChild(new Option(`Tag: ${tag}`, `tag:${tag}`));
     }
   }
   for (const p of allPrompts) {
@@ -960,10 +961,10 @@ function renderJudgmentsSection(run: RunResult): HTMLElement {
     }
 
     if (filterPrompt !== "all") {
-      if (filterPrompt.startsWith("cat:")) {
-        const cat = filterPrompt.slice(4);
+      if (filterPrompt.startsWith("tag:")) {
+        const tag = filterPrompt.slice(4);
         const promptIds = new Set(
-          allPrompts.filter((p) => p.category === cat).map((p) => p.id)
+          allPrompts.filter((p) => p.tags.includes(tag)).map((p) => p.id)
         );
         filtered = filtered.filter((j) => promptIds.has(j.promptId));
       } else if (filterPrompt.startsWith("id:")) {

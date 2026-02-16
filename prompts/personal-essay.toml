@@ -1,0 +1,27 @@
+name = "Personal Essay: A Place That Shaped You"
+tags = ["essay", "creative"]
+description = "Tests ability to blend personal narrative with reflection and literary prose"
+
+prompt = """
+Write a personal essay about a specific place that profoundly shaped who you are.
+
+The essay should:
+- Ground the reader in a real, vivid sense of place — sights, sounds, smells, textures
+- Tell a story, not just describe — something happened in this place that changed you
+- Move between scene and reflection: show the place, then explore what it means
+- Resist easy sentimentality — earn the emotion through specificity and honesty
+- Arrive somewhere surprising — the ending should reveal something the beginning didn't promise
+
+Tone: literary, personal, reflective. Think Annie Dillard or James Baldwin, not a travel blog.
+Length: 1000-1500 words.
+"""
+
+judging_criteria = [
+  "sensory detail and evocation of place — the reader should feel there",
+  "balance of scene and reflection — neither all showing nor all telling",
+  "emotional honesty without sentimentality",
+  "prose quality at the sentence and paragraph level",
+  "structure and pacing — builds toward insight, not just chronology",
+]
+
+max_words = 1500

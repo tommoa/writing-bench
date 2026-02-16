@@ -1,5 +1,5 @@
 name = "Essay: Technology and Human Flourishing"
-category = "essay"
+tags = ["essay", "analytical"]
 description = "Tests argumentative reasoning, clarity of prose, and depth of thought"
 
 prompt = """

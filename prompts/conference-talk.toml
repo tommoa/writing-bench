@@ -1,5 +1,5 @@
 name = "Conference Talk: The Future of Open Source"
-category = "conference-talk"
+tags = ["speech", "technical"]
 description = "Tests ability to inform, persuade, and engage a technical audience"
 
 prompt = """

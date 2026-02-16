@@ -1,0 +1,29 @@
+name = "Youth Group Talk: Doubt and Faith"
+tags = ["speech", "theological", "youth"]
+description = "Tests ability to address doubt honestly within a faith context for teenagers"
+
+prompt = """
+Write a talk for a youth group (ages 14-18) about doubt and faith.
+
+The talk should:
+- Open with a story or scenario that normalises doubt — make it safe to admit uncertainty
+- Acknowledge that doubt is a normal part of growing up and growing in faith, not a sign of failure
+- Explore at least one biblical figure who wrestled with doubt (e.g. Thomas, David, Job, Habakkuk)
+- Offer a vision of how honest questions can deepen faith rather than destroy it
+- Avoid clichés and pat answers — teenagers can spot inauthenticity instantly
+- End with a practical next step (a question to sit with, a conversation to have, a practice to try)
+
+Tone: honest, warm, conversational. Treat the audience as intelligent people wrestling with real questions.
+Language: natural and unforced — not trying to sound "cool" or preachy.
+Length: 1000-1500 words.
+"""
+
+judging_criteria = [
+  "authenticity — feels honest about doubt, not performative or dismissive",
+  "theological depth without being academic or inaccessible",
+  "age-appropriate engagement — respects teenagers' intelligence",
+  "faithful handling of biblical material — accurate but not dry",
+  "practical and actionable conclusion",
+]
+
+max_words = 1500

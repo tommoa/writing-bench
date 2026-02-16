@@ -72,7 +72,7 @@ export interface ModelInfo {
 export interface PromptConfig {
   id: string; // Derived from filename
   name: string;
-  category: string;
+  tags: string[];
   description: string;
   prompt: string;
   judgingCriteria: string[];
@@ -150,7 +150,7 @@ export interface EloSnapshot {
   stage: "initial" | "revised";
   ratings: EloRating[];
   feedbackRatings?: EloRating[]; // Only in revised stage
-  byCategory?: Record<string, EloRating[]>; // ELO per prompt category
+  byTag?: Record<string, EloRating[]>; // ELO per prompt tag
 }
 
 // ── Run Result ──────────────────────────────────────
@@ -192,7 +192,7 @@ export interface CumulativeElo {
   lastUpdated: string;
   writing: Record<string, EloRating>;
   feedbackGiving: Record<string, EloRating>;
-  writingByCategory: Record<string, Record<string, EloRating>>; // category -> model -> rating
+  writingByTag: Record<string, Record<string, EloRating>>; // tag -> model -> rating
   history: Array<{
     runId: string;
     timestamp: string;

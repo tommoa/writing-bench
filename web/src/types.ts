@@ -37,7 +37,7 @@ export interface ModelInfo {
 export interface PromptConfig {
   id: string;
   name: string;
-  category: string;
+  tags: string[];
   description: string;
   prompt: string;
   judgingCriteria: string[];
@@ -62,7 +62,7 @@ export interface EloSnapshot {
   stage: "initial" | "revised";
   ratings: EloRating[];
   feedbackRatings?: EloRating[];
-  byCategory?: Record<string, EloRating[]>;
+  byTag?: Record<string, EloRating[]>;
 }
 
 export interface WritingSample {
@@ -161,7 +161,7 @@ export interface RunsIndex {
   cumulativeElo: {
     writing: EloEntry[];
     feedback: EloEntry[];
-    byCategory?: Record<string, EloEntry[]>;
+    byTag?: Record<string, EloEntry[]>;
   };
   eloHistory: Array<{
     runId: string;

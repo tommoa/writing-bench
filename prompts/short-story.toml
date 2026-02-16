@@ -1,5 +1,5 @@
 name = "Short Story: The Last Library"
-category = "fiction"
+tags = ["creative", "fiction"]
 description = "Tests narrative voice, atmosphere, pacing, and character development"
 
 prompt = """

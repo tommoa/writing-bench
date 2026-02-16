@@ -333,33 +333,33 @@ export class BenchmarkRunner {
       sampleToFeedbackModel
     );
 
-    // Compute per-category ELO
-    this.emitProgress("Computing per-category ELO...");
+    // Compute per-tag ELO
+    this.emitProgress("Computing per-tag ELO...");
 
-    const promptToCategory = new Map(
-      this.config.prompts.map((p) => [p.id, p.category])
+    const promptToTags = new Map(
+      this.config.prompts.map((p) => [p.id, p.tags])
     );
-    const categories = [
-      ...new Set(this.config.prompts.map((p) => p.category)),
+    const allTags = [
+      ...new Set(this.config.prompts.flatMap((p) => p.tags)),
     ];
 
-    const initialByCategory: Record<string, EloRating[]> = {};
-    const revisedByCategory: Record<string, EloRating[]> = {};
+    const initialByTag: Record<string, EloRating[]> = {};
+    const revisedByTag: Record<string, EloRating[]> = {};
 
-    for (const cat of categories) {
-      const catInitialJudgments = this.initialJudgments.filter(
-        (j) => promptToCategory.get(j.promptId) === cat
+    for (const tag of allTags) {
+      const tagInitialJudgments = this.initialJudgments.filter(
+        (j) => promptToTags.get(j.promptId)?.includes(tag)
       );
-      initialByCategory[cat] = computeEloFromJudgments(
-        catInitialJudgments,
+      initialByTag[tag] = computeEloFromJudgments(
+        tagInitialJudgments,
         sampleToModel
       );
 
-      const catRevisedJudgments = this.revisedJudgments.filter(
-        (j) => promptToCategory.get(j.promptId) === cat
+      const tagRevisedJudgments = this.revisedJudgments.filter(
+        (j) => promptToTags.get(j.promptId)?.includes(tag)
       );
-      revisedByCategory[cat] = computeEloFromJudgments(
-        catRevisedJudgments,
+      revisedByTag[tag] = computeEloFromJudgments(
+        tagRevisedJudgments,
         revisedSampleToModel
       );
     }
@@ -391,13 +391,13 @@ export class BenchmarkRunner {
         initial: {
           stage: "initial",
           ratings: initialElo,
-          byCategory: initialByCategory,
+          byTag: initialByTag,
         },
         revised: {
           stage: "revised",
           ratings: revisedElo,
           feedbackRatings: feedbackElo,
-          byCategory: revisedByCategory,
+          byTag: revisedByTag,
         },
       },
       meta: {

@@ -10,7 +10,7 @@ import { parseModelSpec } from "./providers/registry.js";
 
 const PromptTomlSchema = z.object({
   name: z.string(),
-  category: z.string(),
+  tags: z.array(z.string()).min(1),
   description: z.string(),
   prompt: z.string(),
   judging_criteria: z.array(z.string()),
@@ -36,7 +36,7 @@ async function loadPromptFile(path: string): Promise<PromptConfig> {
   return {
     id,
     name: validated.name,
-    category: validated.category,
+    tags: validated.tags,
     description: validated.description,
     prompt: validated.prompt,
     judgingCriteria: validated.judging_criteria,
@@ -85,9 +85,9 @@ export function parseModelConfigs(specs: string[]): ModelConfig[] {
 // ── Prompt filtering ────────────────────────────────
 
 /**
- * Filter prompts by id or category.
+ * Filter prompts by id or tag.
  * Each filter value is matched case-insensitively against both
- * the prompt's `id` (filename) and `category`.
+ * the prompt's `id` (filename) and its `tags`.
  */
 export function filterPrompts(
   prompts: PromptConfig[],
@@ -97,7 +97,7 @@ export function filterPrompts(
   return prompts.filter(
     (p) =>
       normalized.has(p.id.toLowerCase()) ||
-      normalized.has(p.category.toLowerCase())
+      p.tags.some((t) => normalized.has(t.toLowerCase()))
   );
 }
 

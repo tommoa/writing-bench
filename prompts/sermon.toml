@@ -1,5 +1,5 @@
 name = "Sermon: The Prodigal Son"
-category = "sermon"
+tags = ["speech", "theological"]
 description = "Tests theological depth, pastoral tone, and rhetorical structure"
 
 prompt = """

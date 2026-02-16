@@ -1,5 +1,5 @@
 name = "Kids Talk: Kindness and the Good Samaritan"
-category = "kids-talk"
+tags = ["speech", "theological", "kids"]
 description = "Tests ability to teach a biblical concept to young children in a vivid, engaging way"
 
 prompt = """

@@ -10,7 +10,7 @@ describe("loadPrompts", () => {
     for (const p of prompts) {
       expect(p.id).toBeTruthy();
       expect(p.name).toBeTruthy();
-      expect(p.category).toBeTruthy();
+      expect(p.tags.length).toBeGreaterThan(0);
       expect(p.prompt).toBeTruthy();
       expect(p.judgingCriteria.length).toBeGreaterThan(0);
     }
@@ -89,7 +89,7 @@ describe("filterPrompts", () => {
     {
       id: "sermon",
       name: "Sunday Sermon",
-      category: "sermon",
+      tags: ["speech", "theological"],
       description: "test",
       prompt: "test",
       judgingCriteria: ["quality"],
@@ -97,7 +97,7 @@ describe("filterPrompts", () => {
     {
       id: "short-story",
       name: "Short Story",
-      category: "fiction",
+      tags: ["creative", "fiction"],
       description: "test",
       prompt: "test",
       judgingCriteria: ["quality"],
@@ -105,7 +105,7 @@ describe("filterPrompts", () => {
     {
       id: "essay",
       name: "Essay",
-      category: "essay",
+      tags: ["essay", "analytical"],
       description: "test",
       prompt: "test",
       judgingCriteria: ["quality"],
@@ -113,7 +113,7 @@ describe("filterPrompts", () => {
     {
       id: "youth-talk",
       name: "Youth Talk",
-      category: "youth-talk",
+      tags: ["speech", "youth"],
       description: "test",
       prompt: "test",
       judgingCriteria: ["quality"],
@@ -126,7 +126,7 @@ describe("filterPrompts", () => {
     expect(result[0].id).toBe("sermon");
   });
 
-  it("filters by category", () => {
+  it("filters by tag", () => {
     const result = filterPrompts(prompts, ["fiction"]);
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("short-story");
@@ -144,11 +144,11 @@ describe("filterPrompts", () => {
     expect(result.map((p) => p.id).sort()).toEqual(["essay", "sermon"]);
   });
 
-  it("matches by id even when category differs", () => {
-    // "short-story" has category "fiction" — filter by id should still work
+  it("matches by id even when tags differ", () => {
+    // "short-story" has tags ["creative", "fiction"] — filter by id should still work
     const result = filterPrompts(prompts, ["short-story"]);
     expect(result).toHaveLength(1);
-    expect(result[0].category).toBe("fiction");
+    expect(result[0].tags).toContain("fiction");
   });
 
   it("returns empty array when nothing matches", () => {
@@ -156,21 +156,11 @@ describe("filterPrompts", () => {
     expect(result).toHaveLength(0);
   });
 
-  it("returns all when a category matches multiple prompts", () => {
-    // Add a second sermon-category prompt
-    const extended = [
-      ...prompts,
-      {
-        id: "kids-talk",
-        name: "Kids Talk",
-        category: "sermon",
-        description: "test",
-        prompt: "test",
-        judgingCriteria: ["quality"],
-      },
-    ];
-    const result = filterPrompts(extended, ["sermon"]);
-    // Matches both "sermon" (by id) and "kids-talk" (by category "sermon")
+  it("returns all prompts sharing a tag", () => {
+    // sermon and youth-talk both have the "speech" tag
+    const result = filterPrompts(prompts, ["speech"]);
+    // Matches both "sermon" and "youth-talk" by tag
     expect(result).toHaveLength(2);
+    expect(result.map((p) => p.id).sort()).toEqual(["sermon", "youth-talk"]);
   });
 });

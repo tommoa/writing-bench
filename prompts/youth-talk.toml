@@ -1,5 +1,5 @@
 name = "Youth Talk: Identity and Purpose"
-category = "youth-talk"
+tags = ["speech", "youth"]
 description = "Tests ability to communicate profound ideas accessibly to a younger audience"
 
 prompt = """

@@ -26,7 +26,7 @@ export interface ExportArgs {
 }
 
 export interface EloArgs {
-  category?: string;
+  tag?: string;
   format: "table" | "json";
 }
 
@@ -78,7 +78,7 @@ export async function parseArgs(): Promise<Command> {
               type: "string",
               array: true,
               describe:
-                "Filter prompts by id or category (e.g. --filter sermon fiction)",
+                "Filter prompts by id or tag (e.g. --filter sermon theological)",
             })
             .option("outputs", {
               alias: "n",
@@ -188,9 +188,9 @@ export async function parseArgs(): Promise<Command> {
         "Show cumulative ELO leaderboard",
         (y) =>
           y
-            .option("category", {
+            .option("tag", {
               type: "string",
-              describe: "Filter by prompt category",
+              describe: "Filter by prompt tag",
             })
             .option("format", {
               type: "string",
@@ -202,7 +202,7 @@ export async function parseArgs(): Promise<Command> {
           resolve({
             command: "elo",
             args: {
-              category: argv.category,
+              tag: argv.tag,
               format: argv.format,
             },
           });

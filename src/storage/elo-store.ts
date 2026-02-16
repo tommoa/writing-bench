@@ -19,7 +19,7 @@ export async function loadCumulativeElo(): Promise<CumulativeElo> {
       lastUpdated: new Date().toISOString(),
       writing: {},
       feedbackGiving: {},
-      writingByCategory: {},
+      writingByTag: {},
       history: [],
     };
   }
@@ -84,31 +84,31 @@ export async function updateCumulativeElo(
     sampleToFeedbackModel
   );
 
-  // Update per-category writing ELO
-  const promptToCategory = new Map<string, string>();
+  // Update per-tag writing ELO
+  const promptToTags = new Map<string, string[]>();
   for (const p of run.config.prompts) {
-    promptToCategory.set(p.id, p.category);
+    promptToTags.set(p.id, p.tags);
   }
-  const categories = new Set(run.config.prompts.map((p) => p.category));
+  const allTags = new Set(run.config.prompts.flatMap((p) => p.tags));
 
-  if (!elo.writingByCategory) {
-    elo.writingByCategory = {};
+  if (!elo.writingByTag) {
+    elo.writingByTag = {};
   }
 
-  for (const category of categories) {
-    const catRatings = new Map<string, EloRating>();
-    const existing = elo.writingByCategory[category] ?? {};
+  for (const tag of allTags) {
+    const tagRatings = new Map<string, EloRating>();
+    const existing = elo.writingByTag[tag] ?? {};
     for (const [model, rating] of Object.entries(existing)) {
-      catRatings.set(model, { ...rating });
+      tagRatings.set(model, { ...rating });
     }
-    // Use initial + revised judgments for this category
-    const catJudgments = run.judgments.filter(
+    // Use initial + revised judgments for this tag
+    const tagJudgments = run.judgments.filter(
       (j) =>
         j.stage !== "improvement" &&
-        promptToCategory.get(j.promptId) === category
+        (promptToTags.get(j.promptId)?.includes(tag) ?? false)
     );
-    applyCumulativeJudgments(catRatings, catJudgments, sampleToModel);
-    elo.writingByCategory[category] = Object.fromEntries(catRatings);
+    applyCumulativeJudgments(tagRatings, tagJudgments, sampleToModel);
+    elo.writingByTag[tag] = Object.fromEntries(tagRatings);
   }
 
   // Build snapshot for history

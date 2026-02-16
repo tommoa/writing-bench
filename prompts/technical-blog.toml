@@ -1,0 +1,28 @@
+name = "Technical Blog: Database Migration at Scale"
+tags = ["technical", "analytical"]
+description = "Tests ability to explain complex technical concepts clearly and engagingly"
+
+prompt = """
+Write a technical blog post about migrating a production database from PostgreSQL to a distributed database (e.g. CockroachDB, TiDB, or YugabyteDB) at a company processing 50,000 requests per second.
+
+The post should:
+- Open with the business problem that motivated the migration (not just "we needed to scale")
+- Walk through the key technical decisions: schema changes, data migration strategy, dual-write vs CDC, rollback plan
+- Include at least one specific technical challenge encountered and how it was solved
+- Discuss the trade-offs honestly — what was gained, what was lost
+- End with lessons learned that readers can apply to their own migrations
+
+Tone: technically precise but human — the voice of an experienced engineer sharing hard-won knowledge, not a product marketing piece.
+Audience: senior backend engineers and infrastructure leads.
+Length: 1500-2000 words.
+"""
+
+judging_criteria = [
+  "technical accuracy and depth — decisions and trade-offs ring true",
+  "clarity of explanation — complex concepts made accessible without dumbing down",
+  "narrative structure — reads as a coherent story, not a bullet list",
+  "practical value — readers come away with actionable insights",
+  "authentic voice — sounds like a real engineer, not marketing copy",
+]
+
+max_words = 2000
