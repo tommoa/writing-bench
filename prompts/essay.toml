@@ -1,0 +1,26 @@
+name = "Essay: Technology and Human Flourishing"
+category = "essay"
+description = "Tests argumentative reasoning, clarity of prose, and depth of thought"
+
+prompt = """
+Write a thoughtful essay exploring the relationship between technology and human flourishing.
+
+Consider questions such as:
+- Does increasing technological capability necessarily lead to a better human experience?
+- What are the trade-offs we make when we adopt new technologies?
+- How should we think about what it means to flourish in an age of AI and automation?
+
+The essay should take a clear position while engaging honestly with counterarguments.
+Tone: thoughtful, measured, intellectually rigorous.
+Length: 1200-1800 words.
+"""
+
+judging_criteria = [
+  "clarity and strength of the central argument",
+  "depth of reasoning and engagement with counterarguments",
+  "quality of prose at the sentence level",
+  "effective structure and logical flow",
+  "originality and insight",
+]
+
+max_words = 1800

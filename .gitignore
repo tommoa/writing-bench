@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data/runs/
+data/elo.json
+data/models-cache.json
+web/data/
+.env
+*.log

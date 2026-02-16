@@ -1,0 +1,26 @@
+name = "Sermon: The Prodigal Son"
+category = "sermon"
+description = "Tests theological depth, pastoral tone, and rhetorical structure"
+
+prompt = """
+Write a sermon on the parable of the Prodigal Son (Luke 15:11-32).
+Target audience: general congregation.
+Tone: pastoral, warm, theologically grounded.
+Length: 1500-2000 words.
+
+The sermon should include:
+- An engaging opening illustration or hook
+- Careful exegesis of the passage
+- Application to the lives of the hearers
+- A clear, compelling conclusion
+"""
+
+judging_criteria = [
+  "theological accuracy and depth of scriptural engagement",
+  "rhetorical effectiveness and persuasive structure",
+  "pastoral warmth and accessibility for a general audience",
+  "overall structure, flow, and coherence",
+  "effective use of illustration and application",
+]
+
+max_words = 2000

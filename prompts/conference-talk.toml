@@ -1,0 +1,28 @@
+name = "Conference Talk: The Future of Open Source"
+category = "conference-talk"
+description = "Tests ability to inform, persuade, and engage a technical audience"
+
+prompt = """
+Write the script for a 15-minute conference talk titled "The Future of Open Source: Sustainability, Community, and the AI Question."
+
+The talk should:
+- Open with a compelling hook that draws in a technical audience
+- Examine the current sustainability challenges facing open source projects
+- Explore how AI-generated code is changing the open source landscape
+- Propose a vision for how open source communities can thrive in the next decade
+- End with a memorable, quotable conclusion
+
+Audience: software developers and engineering leaders at a tech conference.
+Tone: informed, passionate, forward-looking.
+Length: 1500-2000 words.
+"""
+
+judging_criteria = [
+  "strength of the opening hook and audience engagement",
+  "depth of analysis on open source sustainability",
+  "nuanced treatment of AI's impact on open source",
+  "coherent and compelling vision for the future",
+  "overall polish, pacing, and memorability",
+]
+
+max_words = 2000

@@ -1,0 +1,27 @@
+name = "Youth Talk: Identity and Purpose"
+category = "youth-talk"
+description = "Tests ability to communicate profound ideas accessibly to a younger audience"
+
+prompt = """
+Write a talk for a youth group (ages 14-18) on the topic of identity and purpose.
+
+The talk should:
+- Open with something relatable to teenagers (a story, cultural reference, or question)
+- Address the pressure young people feel to define themselves by achievement, appearance, or social media
+- Offer a compelling vision of identity grounded in something deeper
+- Include practical takeaways they can apply this week
+- Use language that is authentic and non-patronising
+
+Tone: warm, honest, conversational but substantive.
+Length: 1000-1500 words.
+"""
+
+judging_criteria = [
+  "authenticity and relatability for a teenage audience",
+  "depth of content without being condescending",
+  "engaging opening and compelling structure",
+  "practical and actionable application",
+  "appropriate tone — warm and honest, not preachy",
+]
+
+max_words = 1500

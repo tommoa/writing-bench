@@ -1,0 +1,26 @@
+name = "Short Story: The Last Library"
+category = "fiction"
+description = "Tests narrative voice, atmosphere, pacing, and character development"
+
+prompt = """
+Write a short story about the last physical library in a world where all books have been digitised. A young archivist discovers a book that cannot be scanned — every attempt produces only blank pages.
+
+Focus on:
+- Atmosphere and sensory detail (the smell of old paper, the silence, the light)
+- The archivist's internal experience — curiosity, wonder, perhaps unease
+- Building tension around the mystery of the unscannable book
+- A satisfying ending that doesn't over-explain
+
+The story should feel literary, not genre. Prioritise prose quality and emotional resonance over plot complexity.
+Length: 800-1200 words.
+"""
+
+judging_criteria = [
+  "narrative voice — distinctive, consistent, and engaging",
+  "atmosphere and sensory detail",
+  "character interiority and emotional resonance",
+  "pacing, structure, and tension",
+  "prose quality at the sentence level",
+]
+
+max_words = 1200
