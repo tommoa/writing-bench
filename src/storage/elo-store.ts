@@ -3,10 +3,15 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import type {
   CumulativeElo,
-  EloRating,
   RunResult,
 } from "../types.js";
-import { applyCumulativeJudgments, applyCumulativeFeedbackJudgments, createRating } from "../engine/elo.js";
+import {
+  createRating,
+  extractPairwiseRecords,
+  extractFeedbackPairwiseRecords,
+  mergeRecords,
+  computeRatingsFromRecords,
+} from "../engine/elo.js";
 
 const ELO_FILE = join(process.cwd(), "data", "elo.json");
 
@@ -44,6 +49,10 @@ export async function saveCumulativeElo(
 
 /**
  * Update cumulative ELO ratings with results from a new run.
+ * Uses Bradley-Terry: extracts pairwise records from the run,
+ * merges with existing accumulated records, and recomputes
+ * ratings from scratch. This is order-independent — the same
+ * set of judgments always produces the same ratings.
  */
 export async function updateCumulativeElo(
   run: RunResult
@@ -61,30 +70,42 @@ export async function updateCumulativeElo(
     }
   }
 
-  // Update writing ELO with all judgments (initial + revised)
-  const writingRatings = new Map<string, EloRating>();
-  for (const [model, rating] of Object.entries(elo.writing)) {
-    writingRatings.set(model, { ...rating });
+  // Initialize pairwise storage if missing (e.g. migrating from old format)
+  if (!elo.pairwise) {
+    elo.pairwise = { writing: [], feedbackGiving: [], writingByTag: {} };
   }
-  applyCumulativeJudgments(writingRatings, run.judgments, sampleToModel);
 
-  // Update feedback ELO with improvement judgments (revision vs original).
-  // Groups by (prompt, judge) and compares improvement rates across
-  // different feedback providers.
-  const feedbackRatings = new Map<string, EloRating>();
-  for (const [model, rating] of Object.entries(elo.feedbackGiving)) {
-    feedbackRatings.set(model, { ...rating });
+  // ── Writing ELO ────────────────────────────────────
+  const newWritingRecords = extractPairwiseRecords(run.judgments, sampleToModel);
+  elo.pairwise.writing = mergeRecords(elo.pairwise.writing, newWritingRecords);
+  const writingRatings = computeRatingsFromRecords(elo.pairwise.writing);
+  elo.writing = Object.fromEntries(writingRatings.map((r) => [r.model, r]));
+
+  // Backfill models from this run that have no matches yet
+  for (const model of new Set(sampleToModel.values())) {
+    if (!elo.writing[model]) {
+      elo.writing[model] = createRating(model);
+    }
   }
+
+  // ── Feedback ELO ───────────────────────────────────
   const improvementJudgments = run.judgments.filter(
     (j) => j.stage === "improvement"
   );
-  applyCumulativeFeedbackJudgments(
-    feedbackRatings,
+  const newFeedbackRecords = extractFeedbackPairwiseRecords(
     improvementJudgments,
     sampleToFeedbackModel
   );
+  elo.pairwise.feedbackGiving = mergeRecords(
+    elo.pairwise.feedbackGiving,
+    newFeedbackRecords
+  );
+  const feedbackRatings = computeRatingsFromRecords(elo.pairwise.feedbackGiving);
+  elo.feedbackGiving = Object.fromEntries(
+    feedbackRatings.map((r) => [r.model, r])
+  );
 
-  // Update per-tag writing ELO
+  // ── Per-tag Writing ELO ────────────────────────────
   const promptToTags = new Map<string, string[]>();
   for (const p of run.config.prompts) {
     promptToTags.set(p.id, p.tags);
@@ -95,32 +116,53 @@ export async function updateCumulativeElo(
     elo.writingByTag = {};
   }
 
-  for (const tag of allTags) {
-    const tagRatings = new Map<string, EloRating>();
-    const existing = elo.writingByTag[tag] ?? {};
-    for (const [model, rating] of Object.entries(existing)) {
-      tagRatings.set(model, { ...rating });
+  // Build per-tag model sets for backfilling
+  const tagModels = new Map<string, Set<string>>();
+  for (const s of run.samples) {
+    const tags = promptToTags.get(s.promptId) ?? [];
+    for (const tag of tags) {
+      const models = tagModels.get(tag) ?? new Set<string>();
+      models.add(s.model);
+      tagModels.set(tag, models);
     }
-    // Use initial + revised judgments for this tag
+  }
+
+  for (const tag of allTags) {
+    // Use initial + revised judgments for this tag (exclude improvement)
     const tagJudgments = run.judgments.filter(
       (j) =>
         j.stage !== "improvement" &&
         (promptToTags.get(j.promptId)?.includes(tag) ?? false)
     );
-    applyCumulativeJudgments(tagRatings, tagJudgments, sampleToModel);
-    elo.writingByTag[tag] = Object.fromEntries(tagRatings);
+    const newTagRecords = extractPairwiseRecords(tagJudgments, sampleToModel);
+    const existingTagRecords = elo.pairwise.writingByTag[tag] ?? [];
+    elo.pairwise.writingByTag[tag] = mergeRecords(
+      existingTagRecords,
+      newTagRecords
+    );
+    const tagRatings = computeRatingsFromRecords(
+      elo.pairwise.writingByTag[tag]
+    );
+    elo.writingByTag[tag] = Object.fromEntries(
+      tagRatings.map((r) => [r.model, r])
+    );
+
+    // Backfill models that have samples for this tag
+    for (const model of tagModels.get(tag) ?? []) {
+      if (!elo.writingByTag[tag][model]) {
+        elo.writingByTag[tag][model] = createRating(model);
+      }
+    }
   }
 
   // Build snapshot for history
   const snapshot: Record<string, number> = {};
-  for (const [model, rating] of writingRatings) {
+  for (const [model, rating] of Object.entries(elo.writing)) {
     snapshot[model] = rating.rating;
   }
 
   // Update state
   elo.lastUpdated = new Date().toISOString();
-  elo.writing = Object.fromEntries(writingRatings);
-  elo.feedbackGiving = Object.fromEntries(feedbackRatings);
   elo.history.push({
     runId: run.config.id,
     timestamp: run.config.timestamp,

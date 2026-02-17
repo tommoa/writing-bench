@@ -243,6 +243,17 @@ export interface RunResult {
   modelInfo: Record<string, ModelInfo>;
 }
 
+// ── Pairwise Records (for Bradley-Terry) ────────────
+
+/** Accumulated pairwise outcomes between two models. */
+export interface PairwiseRecord {
+  modelA: string;
+  modelB: string;
+  winsA: number;
+  winsB: number;
+  ties: number;
+}
+
 // ── Cumulative ELO ──────────────────────────────────
 
 export interface CumulativeElo {
@@ -250,6 +261,12 @@ export interface CumulativeElo {
   writing: Record<string, EloRating>;
   feedbackGiving: Record<string, EloRating>;
   writingByTag: Record<string, Record<string, EloRating>>; // tag -> model -> rating
+  /** Accumulated pairwise outcomes for Bradley-Terry recomputation. */
+  pairwise?: {
+    writing: PairwiseRecord[];
+    feedbackGiving: PairwiseRecord[];
+    writingByTag: Record<string, PairwiseRecord[]>;
+  };
   history: Array<{
     runId: string;
     timestamp: string;

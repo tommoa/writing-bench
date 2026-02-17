@@ -1,12 +1,13 @@
 import { describe, it, expect } from "bun:test";
 import {
   expectedScore,
-  updateElo,
   computeEloFromJudgments,
   computeFeedbackElo,
   computeFeedbackEloFromImprovements,
-  applyCumulativeFeedbackJudgments,
-  createRating,
+  extractPairwiseRecords,
+  extractFeedbackPairwiseRecords,
+  mergeRecords,
+  computeRatingsFromRecords,
 } from "./elo.js";
 import type { PairwiseJudgment } from "../types.js";
 
@@ -34,34 +35,41 @@ describe("expectedScore", () => {
   });
 });
 
-describe("updateElo", () => {
-  it("winner gains, loser loses for equal ratings", () => {
-    const [newA, newB] = updateElo(1500, 1500, "A");
-    expect(newA).toBeGreaterThan(1500);
-    expect(newB).toBeLessThan(1500);
-  });
+describe("Bradley-Terry order independence", () => {
+  it("produces identical ratings regardless of judgment order", () => {
+    const sampleToModel = new Map([
+      ["s1", "modelA"],
+      ["s2", "modelB"],
+      ["s3", "modelC"],
+    ]);
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "s1", "s2", "A"),
+      makeJudgment("j2", "s2", "s3", "B"),
+      makeJudgment("j3", "s1", "s3", "A"),
+      makeJudgment("j4", "s1", "s2", "B"),
+      makeJudgment("j5", "s2", "s3", "A"),
+    ];
 
-  it("tie preserves equal ratings", () => {
-    const [newA, newB] = updateElo(1500, 1500, "tie");
-    expect(newA).toBe(1500);
-    expect(newB).toBe(1500);
-  });
+    const forward = computeEloFromJudgments(judgments, sampleToModel);
+    const reversed = computeEloFromJudgments(
+      [...judgments].reverse(),
+      sampleToModel
+    );
+    const shuffled = computeEloFromJudgments(
+      [judgments[3], judgments[0], judgments[4], judgments[2], judgments[1]],
+      sampleToModel
+    );
 
-  it("upset causes larger rating change", () => {
-    // Weaker player beats stronger player
-    const [newA, newB] = updateElo(1300, 1700, "A");
-    const gainA = newA - 1300;
-
-    // Expected win causes smaller change
-    const [newC, newD] = updateElo(1700, 1300, "A");
-    const gainC = newC - 1700;
-
-    expect(gainA).toBeGreaterThan(gainC);
-  });
-
-  it("total rating points are conserved", () => {
-    const [newA, newB] = updateElo(1600, 1400, "A");
-    expect(newA + newB).toBe(1600 + 1400);
+    for (const model of ["modelA", "modelB", "modelC"]) {
+      const fwd = forward.find((r) => r.model === model)!;
+      const rev = reversed.find((r) => r.model === model)!;
+      const shf = shuffled.find((r) => r.model === model)!;
+      expect(fwd.rating).toBe(rev.rating);
+      expect(fwd.rating).toBe(shf.rating);
+      expect(fwd.wins).toBe(rev.wins);
+      expect(fwd.losses).toBe(rev.losses);
+      expect(fwd.ties).toBe(rev.ties);
+    }
   });
 });
 
@@ -150,9 +158,6 @@ describe("computeFeedbackElo", () => {
 
 describe("computeFeedbackEloFromImprovements", () => {
   it("credits feedback model whose revision beat the original", () => {
-    // Two improvement judgments for the same prompt+judge:
-    // feedbackA's revision wins (B wins = revision beat original)
-    // feedbackB's revision loses (A wins = original beat revision)
     const sampleToFeedbackModel = new Map([
       ["rev1", "feedbackA"],
       ["rev2", "feedbackB"],
@@ -179,7 +184,6 @@ describe("computeFeedbackEloFromImprovements", () => {
       ["rev1", "feedbackA"],
       ["rev2", "feedbackB"],
     ]);
-    // Both revisions beat the original
     const judgments: PairwiseJudgment[] = [
       makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
       makeJudgment("j2", "orig2", "rev2", "B", "improvement", "p1"),
@@ -204,7 +208,6 @@ describe("computeFeedbackEloFromImprovements", () => {
       ["rev3", "feedbackA"],
       ["rev4", "feedbackB"],
     ]);
-    // Different prompts — should be separate groups, each producing one match
     const judgments: PairwiseJudgment[] = [
       makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
       makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
@@ -218,7 +221,6 @@ describe("computeFeedbackEloFromImprovements", () => {
     );
     const fbA = ratings.find((r) => r.model === "feedbackA")!;
 
-    // Two groups (p1:judge, p2:judge), each produces one A win → 2 matches total
     expect(fbA.matchCount).toBe(2);
     expect(fbA.wins).toBe(2);
   });
@@ -242,89 +244,133 @@ describe("computeFeedbackEloFromImprovements", () => {
   });
 });
 
-describe("applyCumulativeFeedbackJudgments", () => {
-  it("updates existing ratings from improvement judgments", () => {
-    const ratings = new Map([
-      ["feedbackA", createRating("feedbackA")],
-      ["feedbackB", createRating("feedbackB")],
-    ]);
-    const sampleToFeedbackModel = new Map([
-      ["rev1", "feedbackA"],
-      ["rev2", "feedbackB"],
+describe("pairwise record extraction and merging", () => {
+  it("extractPairwiseRecords captures win/loss/tie counts", () => {
+    const sampleToModel = new Map([
+      ["s1", "modelA"],
+      ["s2", "modelB"],
     ]);
     const judgments: PairwiseJudgment[] = [
-      makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
-      makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
+      makeJudgment("j1", "s1", "s2", "A"),
+      makeJudgment("j2", "s1", "s2", "B"),
+      makeJudgment("j3", "s1", "s2", "tie"),
     ];
 
-    applyCumulativeFeedbackJudgments(ratings, judgments, sampleToFeedbackModel);
+    const records = extractPairwiseRecords(judgments, sampleToModel);
+    expect(records).toHaveLength(1);
 
-    expect(ratings.get("feedbackA")!.rating).toBeGreaterThan(1500);
-    expect(ratings.get("feedbackB")!.rating).toBeLessThan(1500);
-    expect(ratings.get("feedbackA")!.wins).toBe(1);
-    expect(ratings.get("feedbackB")!.losses).toBe(1);
+    const r = records[0];
+    expect(r.winsA + r.winsB).toBe(2);
+    expect(r.ties).toBe(1);
   });
 
-  it("preserves pre-existing ratings and accumulates", () => {
-    // feedbackA already has a high rating from prior runs
-    const ratings = new Map([
-      [
-        "feedbackA",
-        { model: "feedbackA", rating: 1600, wins: 5, losses: 1, ties: 0, matchCount: 6 },
-      ],
-      [
-        "feedbackB",
-        { model: "feedbackB", rating: 1400, wins: 1, losses: 5, ties: 0, matchCount: 6 },
-      ],
-    ]);
-    const sampleToFeedbackModel = new Map([
-      ["rev1", "feedbackA"],
-      ["rev2", "feedbackB"],
-    ]);
-    // feedbackB's revision wins this time
-    const judgments: PairwiseJudgment[] = [
-      makeJudgment("j1", "orig1", "rev1", "A", "improvement", "p1"),
-      makeJudgment("j2", "orig2", "rev2", "B", "improvement", "p1"),
+  it("mergeRecords accumulates counts", () => {
+    const existing = [
+      { modelA: "modelA", modelB: "modelB", winsA: 2, winsB: 1, ties: 0 },
+    ];
+    const incoming = [
+      { modelA: "modelA", modelB: "modelB", winsA: 0, winsB: 3, ties: 1 },
     ];
 
-    applyCumulativeFeedbackJudgments(ratings, judgments, sampleToFeedbackModel);
+    const merged = mergeRecords(existing, incoming);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].winsA).toBe(2);
+    expect(merged[0].winsB).toBe(4);
+    expect(merged[0].ties).toBe(1);
+  });
 
-    const a = ratings.get("feedbackA")!;
-    const b = ratings.get("feedbackB")!;
-    // feedbackA still ahead but gap narrowed
+  it("mergeRecords handles flipped model order", () => {
+    const existing = [
+      { modelA: "modelB", modelB: "modelA", winsA: 3, winsB: 1, ties: 0 },
+    ];
+    const incoming = [
+      { modelA: "modelA", modelB: "modelB", winsA: 2, winsB: 0, ties: 1 },
+    ];
+
+    const merged = mergeRecords(existing, incoming);
+    expect(merged).toHaveLength(1);
+    // Normalized to sorted order: modelA, modelB
+    // existing flipped: modelA=1 win, modelB=3 wins
+    // incoming: modelA=2 wins, modelB=0 wins
+    // merged: modelA=3, modelB=3
+    expect(merged[0].modelA).toBe("modelA");
+    expect(merged[0].winsA).toBe(3);
+    expect(merged[0].winsB).toBe(3);
+    expect(merged[0].ties).toBe(1);
+  });
+
+  it("mergeRecords adds new pairs", () => {
+    const existing = [
+      { modelA: "modelA", modelB: "modelB", winsA: 1, winsB: 0, ties: 0 },
+    ];
+    const incoming = [
+      { modelA: "modelA", modelB: "modelC", winsA: 0, winsB: 2, ties: 0 },
+    ];
+
+    const merged = mergeRecords(existing, incoming);
+    expect(merged).toHaveLength(2);
+  });
+
+  it("computeRatingsFromRecords produces correct relative rankings", () => {
+    const records = [
+      { modelA: "modelA", modelB: "modelB", winsA: 5, winsB: 1, ties: 0 },
+      { modelA: "modelA", modelB: "modelC", winsA: 3, winsB: 3, ties: 0 },
+      { modelA: "modelB", modelB: "modelC", winsA: 0, winsB: 4, ties: 0 },
+    ];
+
+    const ratings = computeRatingsFromRecords(records);
+    const a = ratings.find((r) => r.model === "modelA")!;
+    const b = ratings.find((r) => r.model === "modelB")!;
+    const c = ratings.find((r) => r.model === "modelC")!;
+
+    // A beats B convincingly, C beats B convincingly, A ties with C
     expect(a.rating).toBeGreaterThan(b.rating);
-    expect(a.matchCount).toBe(7);
-    expect(b.matchCount).toBe(7);
-    expect(b.wins).toBe(2);
+    expect(c.rating).toBeGreaterThan(b.rating);
   });
 
-  it("creates entries for new feedback models not yet in ratings", () => {
-    const ratings = new Map<string, import("../types.js").EloRating>();
+  it("computeRatingsFromRecords returns empty for empty records", () => {
+    const ratings = computeRatingsFromRecords([]);
+    expect(ratings).toHaveLength(0);
+  });
+
+  it("computeRatingsFromRecords is order-independent", () => {
+    const records = [
+      { modelA: "modelA", modelB: "modelB", winsA: 3, winsB: 1, ties: 0 },
+      { modelA: "modelB", modelB: "modelC", winsA: 2, winsB: 2, ties: 1 },
+      { modelA: "modelA", modelB: "modelC", winsA: 1, winsB: 4, ties: 0 },
+    ];
+
+    const forward = computeRatingsFromRecords(records);
+    const reversed = computeRatingsFromRecords([...records].reverse());
+
+    for (const model of ["modelA", "modelB", "modelC"]) {
+      const fwd = forward.find((r) => r.model === model)!;
+      const rev = reversed.find((r) => r.model === model)!;
+      expect(fwd.rating).toBe(rev.rating);
+    }
+  });
+
+  it("extractFeedbackPairwiseRecords works for improvement judgments", () => {
     const sampleToFeedbackModel = new Map([
-      ["rev1", "newModelA"],
-      ["rev2", "newModelB"],
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackB"],
     ]);
     const judgments: PairwiseJudgment[] = [
       makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
       makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
     ];
 
-    applyCumulativeFeedbackJudgments(ratings, judgments, sampleToFeedbackModel);
+    const records = extractFeedbackPairwiseRecords(
+      judgments,
+      sampleToFeedbackModel
+    );
+    expect(records).toHaveLength(1);
 
-    expect(ratings.has("newModelA")).toBe(true);
-    expect(ratings.has("newModelB")).toBe(true);
-    expect(ratings.get("newModelA")!.rating).toBeGreaterThan(1500);
-  });
-
-  it("does nothing with empty judgments", () => {
-    const ratings = new Map([
-      ["feedbackA", createRating("feedbackA")],
-    ]);
-
-    applyCumulativeFeedbackJudgments(ratings, [], new Map());
-
-    expect(ratings.get("feedbackA")!.rating).toBe(1500);
-    expect(ratings.get("feedbackA")!.matchCount).toBe(0);
+    // feedbackA improved (B won), feedbackB didn't (A won)
+    // So feedbackA beat feedbackB in this pairing
+    const r = records[0];
+    const total = r.winsA + r.winsB + r.ties;
+    expect(total).toBe(1);
   });
 });
 
