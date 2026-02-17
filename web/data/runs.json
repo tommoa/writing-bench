@@ -1,0 +1,509 @@
+{
+  "runs": [
+    {
+      "id": "2026-02-17T05-15-19-624Z",
+      "timestamp": "2026-02-17T05:15:19.624Z",
+      "models": [
+        "Gemini Flash Latest",
+        "Gemini Flash-Lite Latest",
+        "Kimi K2.5",
+        "Kimi K2",
+        "Kimi K2 Thinking",
+        "GLM-4.7",
+        "MiniMax M2.5"
+      ],
+      "promptCount": 10,
+      "outputsPerModel": 2,
+      "totalCost": 0,
+      "durationMs": 13729,
+      "elo": {
+        "initial": [
+          {
+            "model": "Kimi K2",
+            "rating": 1770
+          },
+          {
+            "model": "Kimi K2.5",
+            "rating": 1723
+          },
+          {
+            "model": "Kimi K2 Thinking",
+            "rating": 1665
+          },
+          {
+            "model": "GLM-4.7",
+            "rating": 1397
+          },
+          {
+            "model": "Gemini Flash Latest",
+            "rating": 1389
+          },
+          {
+            "model": "Gemini Flash-Lite Latest",
+            "rating": 1330
+          },
+          {
+            "model": "MiniMax M2.5",
+            "rating": 1225
+          }
+        ],
+        "revised": [
+          {
+            "model": "Kimi K2.5",
+            "rating": 1728
+          },
+          {
+            "model": "Kimi K2",
+            "rating": 1696
+          },
+          {
+            "model": "Kimi K2 Thinking",
+            "rating": 1610
+          },
+          {
+            "model": "GLM-4.7",
+            "rating": 1416
+          },
+          {
+            "model": "Gemini Flash Latest",
+            "rating": 1400
+          },
+          {
+            "model": "Gemini Flash-Lite Latest",
+            "rating": 1353
+          },
+          {
+            "model": "MiniMax M2.5",
+            "rating": 1297
+          }
+        ]
+      }
+    }
+  ],
+  "cumulativeElo": {
+    "writing": [
+      {
+        "model": "Kimi K2.5",
+        "rating": 1727,
+        "matchCount": 5760
+      },
+      {
+        "model": "Kimi K2",
+        "rating": 1704,
+        "matchCount": 5760
+      },
+      {
+        "model": "Kimi K2 Thinking",
+        "rating": 1617,
+        "matchCount": 5760
+      },
+      {
+        "model": "GLM-4.7",
+        "rating": 1414,
+        "matchCount": 5760
+      },
+      {
+        "model": "Gemini Flash Latest",
+        "rating": 1399,
+        "matchCount": 5760
+      },
+      {
+        "model": "Gemini Flash-Lite Latest",
+        "rating": 1350,
+        "matchCount": 5760
+      },
+      {
+        "model": "MiniMax M2.5",
+        "rating": 1289,
+        "matchCount": 5760
+      }
+    ],
+    "feedback": [
+      {
+        "model": "Kimi K2",
+        "rating": 1517,
+        "matchCount": 35280
+      },
+      {
+        "model": "Kimi K2.5",
+        "rating": 1512,
+        "matchCount": 35280
+      },
+      {
+        "model": "Gemini Flash-Lite Latest",
+        "rating": 1510,
+        "matchCount": 35280
+      },
+      {
+        "model": "Gemini Flash Latest",
+        "rating": 1500,
+        "matchCount": 35280
+      },
+      {
+        "model": "Kimi K2 Thinking",
+        "rating": 1494,
+        "matchCount": 35280
+      },
+      {
+        "model": "GLM-4.7",
+        "rating": 1491,
+        "matchCount": 35280
+      },
+      {
+        "model": "MiniMax M2.5",
+        "rating": 1476,
+        "matchCount": 35280
+      }
+    ],
+    "byTag": {
+      "speech": [
+        {
+          "model": "Kimi K2",
+          "rating": 1695,
+          "matchCount": 2880
+        },
+        {
+          "model": "Kimi K2.5",
+          "rating": 1674,
+          "matchCount": 2880
+        },
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1618,
+          "matchCount": 2880
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1451,
+          "matchCount": 2880
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1442,
+          "matchCount": 2880
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1351,
+          "matchCount": 2880
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1269,
+          "matchCount": 2880
+        }
+      ],
+      "technical": [
+        {
+          "model": "Kimi K2",
+          "rating": 1863,
+          "matchCount": 1152
+        },
+        {
+          "model": "Kimi K2.5",
+          "rating": 1748,
+          "matchCount": 1152
+        },
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1617,
+          "matchCount": 1152
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1389,
+          "matchCount": 1152
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1346,
+          "matchCount": 1152
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1295,
+          "matchCount": 1152
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1242,
+          "matchCount": 1152
+        }
+      ],
+      "essay": [
+        {
+          "model": "Kimi K2.5",
+          "rating": 1778,
+          "matchCount": 1728
+        },
+        {
+          "model": "Kimi K2",
+          "rating": 1736,
+          "matchCount": 1728
+        },
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1615,
+          "matchCount": 1728
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1405,
+          "matchCount": 1728
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1336,
+          "matchCount": 1728
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1324,
+          "matchCount": 1728
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1306,
+          "matchCount": 1728
+        }
+      ],
+      "analytical": [
+        {
+          "model": "Kimi K2.5",
+          "rating": 1831,
+          "matchCount": 1728
+        },
+        {
+          "model": "Kimi K2",
+          "rating": 1804,
+          "matchCount": 1728
+        },
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1677,
+          "matchCount": 1728
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1341,
+          "matchCount": 1728
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1323,
+          "matchCount": 1728
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1281,
+          "matchCount": 1728
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1243,
+          "matchCount": 1728
+        }
+      ],
+      "theological": [
+        {
+          "model": "Kimi K2",
+          "rating": 1694,
+          "matchCount": 2304
+        },
+        {
+          "model": "Kimi K2.5",
+          "rating": 1686,
+          "matchCount": 2304
+        },
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1630,
+          "matchCount": 2304
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1459,
+          "matchCount": 2304
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1410,
+          "matchCount": 2304
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1311,
+          "matchCount": 2304
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1310,
+          "matchCount": 2304
+        }
+      ],
+      "kids": [
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1675,
+          "matchCount": 576
+        },
+        {
+          "model": "Kimi K2",
+          "rating": 1607,
+          "matchCount": 576
+        },
+        {
+          "model": "Kimi K2.5",
+          "rating": 1592,
+          "matchCount": 576
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1490,
+          "matchCount": 576
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1438,
+          "matchCount": 576
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1428,
+          "matchCount": 576
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1271,
+          "matchCount": 576
+        }
+      ],
+      "creative": [
+        {
+          "model": "Kimi K2.5",
+          "rating": 1776,
+          "matchCount": 1152
+        },
+        {
+          "model": "Kimi K2",
+          "rating": 1637,
+          "matchCount": 1152
+        },
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1560,
+          "matchCount": 1152
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1454,
+          "matchCount": 1152
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1440,
+          "matchCount": 1152
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1319,
+          "matchCount": 1152
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1314,
+          "matchCount": 1152
+        }
+      ],
+      "fiction": [
+        {
+          "model": "Kimi K2.5",
+          "rating": 1874,
+          "matchCount": 576
+        },
+        {
+          "model": "Kimi K2",
+          "rating": 1633,
+          "matchCount": 576
+        },
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1549,
+          "matchCount": 576
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1448,
+          "matchCount": 576
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1443,
+          "matchCount": 576
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1293,
+          "matchCount": 576
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1261,
+          "matchCount": 576
+        }
+      ],
+      "youth": [
+        {
+          "model": "Kimi K2.5",
+          "rating": 1779,
+          "matchCount": 1152
+        },
+        {
+          "model": "Kimi K2",
+          "rating": 1652,
+          "matchCount": 1152
+        },
+        {
+          "model": "Kimi K2 Thinking",
+          "rating": 1604,
+          "matchCount": 1152
+        },
+        {
+          "model": "Gemini Flash Latest",
+          "rating": 1494,
+          "matchCount": 1152
+        },
+        {
+          "model": "GLM-4.7",
+          "rating": 1439,
+          "matchCount": 1152
+        },
+        {
+          "model": "Gemini Flash-Lite Latest",
+          "rating": 1314,
+          "matchCount": 1152
+        },
+        {
+          "model": "MiniMax M2.5",
+          "rating": 1218,
+          "matchCount": 1152
+        }
+      ]
+    }
+  },
+  "eloHistory": [
+    {
+      "runId": "2026-02-17T05-15-19-624Z",
+      "timestamp": "2026-02-17T05:15:19.624Z",
+      "ratings": {
+        "Kimi K2.5": 1727,
+        "Kimi K2": 1704,
+        "Kimi K2 Thinking": 1617,
+        "GLM-4.7": 1414,
+        "Gemini Flash Latest": 1399,
+        "Gemini Flash-Lite Latest": 1350,
+        "MiniMax M2.5": 1289
+      }
+    }
+  ]
+}
