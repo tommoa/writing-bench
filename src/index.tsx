@@ -10,9 +10,40 @@ import { BenchmarkRunner } from "./engine/runner.js";
 import { saveRun, loadRun, loadLatestRun, listRuns } from "./storage/run-store.js";
 import { updateCumulativeElo, loadCumulativeElo } from "./storage/elo-store.js";
 import { exportForWeb } from "./export/web-export.js";
+import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson } from "./storage/cache-status.js";
+import { modelKey } from "./storage/sample-cache.js";
+import { parseModelSpec } from "./providers/registry.js";
 import { checkProviderEnv } from "./providers/models.js";
 import { App } from "./ui/App.js";
-import type { BenchmarkEvent, EloRating, TaskError } from "./types.js";
+import type { BenchmarkEvent, EloRating, PromptConfig, TaskError } from "./types.js";
+
+/** Convert a CLI model spec ("provider:model") to a cache-safe key. */
+function specToKey(spec: string): string {
+  const { provider, model } = parseModelSpec(spec);
+  return modelKey(provider, model);
+}
+
+/** Load prompts from a glob, optionally filter, and exit if none match. */
+async function loadAndFilterPrompts(
+  glob: string,
+  filter?: string[]
+): Promise<PromptConfig[]> {
+  let prompts = await loadPrompts(glob);
+  if (filter && filter.length > 0) {
+    const before = prompts.length;
+    prompts = filterPrompts(prompts, filter);
+    if (prompts.length === 0) {
+      console.error(`No prompts matched filter: ${filter.join(", ")}`);
+      process.exit(1);
+    }
+    if (prompts.length < before) {
+      console.log(
+        `Filtered to ${prompts.length} prompt(s): ${prompts.map((p) => p.name).join(", ")}`
+      );
+    }
+  }
+  return prompts;
+}
 
 async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
   const models = parseModelConfigs(args.models);
@@ -24,24 +55,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
   await resolveModelLabels(models);
   if (judges) await resolveModelLabels(judges);
 
-  let prompts = await loadPrompts(args.prompts);
-
-  // Apply prompt filter (match against id or category)
-  if (args.filter && args.filter.length > 0) {
-    const before = prompts.length;
-    prompts = filterPrompts(prompts, args.filter);
-    if (prompts.length === 0) {
-      console.error(
-        `No prompts matched filter: ${args.filter.join(", ")}`
-      );
-      process.exit(1);
-    }
-    if (prompts.length < before) {
-      console.log(
-        `Filtered to ${prompts.length} prompt(s): ${prompts.map((p) => p.name).join(", ")}`
-      );
-    }
-  }
+  const prompts = await loadAndFilterPrompts(args.prompts, args.filter);
 
   // Check provider env vars and warn about missing ones
   const allProviders = [...new Set([
@@ -328,21 +342,37 @@ function printEloTable(title: string, ratings: EloRating[]) {
   }
 }
 
-async function handleClearCache(
-  args: Extract<Command, { command: "clear-cache" }>["args"]
+async function handleCacheStatus(
+  args: Extract<Command, { command: "cache-status" }>["args"]
 ) {
-  // Parse "provider:model" into a filesystem-safe key
-  const parts = args.model.split(":");
-  if (parts.length < 2) {
-    console.error(
-      'Invalid model spec. Use provider:model format (e.g. opencode:glm-4.7)'
-    );
-    process.exit(1);
+  const prompts = await loadAndFilterPrompts(args.prompts, args.filter);
+
+  const writerKeys = args.models?.map(specToKey);
+  const judgeKeys = args.judges?.map(specToKey);
+
+  const result = await analyzeCacheStatus({
+    prompts,
+    outputsPerModel: args.outputs,
+    writerKeys,
+    judgeKeys,
+  });
+
+  if (result.writerKeys.length === 0) {
+    console.log("No cache data found.");
+    return;
   }
-  const modelKey = `${parts[0]}_${parts.slice(1).join("_")}`.replace(
-    /[:/\\]/g,
-    "_"
-  );
+
+  if (args.format === "json") {
+    console.log(formatCacheStatusJson(result));
+  } else {
+    console.log(formatCacheStatusTable(result));
+  }
+}
+
+async function handleClearCache(
+  args: Extract<Command, { command: "cache-clear" }>["args"]
+) {
+  const mk = specToKey(args.model);
 
   const cacheBase = join(process.cwd(), "data", "cache");
   let totalRemoved = 0;
@@ -350,10 +380,10 @@ async function handleClearCache(
   if (!args.judgmentsOnly) {
     const categories = ["writes", "feedback", "revisions"] as const;
     for (const category of categories) {
-      const dir = join(cacheBase, category, modelKey);
+      const dir = join(cacheBase, category, mk);
       if (existsSync(dir)) {
         await rm(dir, { recursive: true });
-        console.log(`  Removed ${category}/${modelKey}/`);
+        console.log(`  Removed ${category}/${mk}/`);
         totalRemoved++;
       }
     }
@@ -397,8 +427,11 @@ async function main() {
       case "serve":
         await handleServe(cmd.args);
         break;
-      case "clear-cache":
+      case "cache-clear":
         await handleClearCache(cmd.args);
+        break;
+      case "cache-status":
+        await handleCacheStatus(cmd.args);
         break;
     }
   } catch (error) {

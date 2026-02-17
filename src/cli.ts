@@ -1,4 +1,5 @@
 import yargs from "yargs";
+import type { Argv, ArgumentsCamelCase } from "yargs";
 import { hideBin } from "yargs/helpers";
 
 export interface RunArgs {
@@ -40,16 +41,121 @@ export interface ClearCacheArgs {
   judgmentsOnly: boolean;
 }
 
+export interface CacheStatusArgs {
+  prompts: string;
+  filter?: string[];
+  outputs: number;
+  models?: string[];
+  judges?: string[];
+  format: "table" | "json";
+}
+
 export type Command =
   | { command: "run"; args: RunArgs }
   | { command: "results"; args: ResultsArgs }
   | { command: "export"; args: ExportArgs }
   | { command: "elo"; args: EloArgs }
   | { command: "serve"; args: ServeArgs }
-  | { command: "clear-cache"; args: ClearCacheArgs };
+  | { command: "cache-clear"; args: ClearCacheArgs }
+  | { command: "cache-status"; args: CacheStatusArgs };
+
+function buildCacheCommand(resolve: (cmd: Command) => void) {
+  const statusOpts = <T>(sy: Argv<T>) =>
+    sy
+      .option("prompts", {
+        alias: "p",
+        type: "string",
+        default: "prompts/*.toml",
+        describe: "Glob pattern for prompt files",
+      })
+      .option("filter", {
+        alias: "f",
+        type: "string",
+        array: true,
+        describe:
+          "Filter prompts by id or tag (e.g. --filter sermon theological)",
+      })
+      .option("outputs", {
+        alias: "n",
+        type: "number",
+        default: 3,
+        describe: "Max outputs per model per prompt (tries N down to 1)",
+      })
+      .option("models", {
+        alias: "m",
+        type: "string",
+        array: true,
+        describe:
+          "Restrict to specific writer models (auto-discovers from cache if omitted)",
+      })
+      .option("judges", {
+        alias: "j",
+        type: "string",
+        array: true,
+        describe:
+          "Separate judge models (assumes judges=writers if omitted)",
+      })
+      .option("format", {
+        type: "string",
+        choices: ["table", "json"] as const,
+        default: "table" as const,
+        describe: "Output format",
+      });
+
+  const resolveCacheStatus = (argv: ArgumentsCamelCase<CacheStatusArgs>) => {
+    resolve({
+      command: "cache-status",
+      args: {
+        prompts: argv.prompts,
+        filter: argv.filter,
+        outputs: Math.min(Math.max(argv.outputs, 1), 3),
+        models: argv.models,
+        judges: argv.judges,
+        format: argv.format,
+      },
+    });
+  };
+
+  // Builder: apply status options to the parent (so bare "cache" works)
+  // and register subcommands.
+  const builder = <T>(y: Argv<T>) =>
+    statusOpts(y)
+      .command("status", "Show what runs are possible from cache without API calls", statusOpts, resolveCacheStatus)
+      .command(
+        "clear <model>",
+        "Clear cached outputs for a model (e.g. opencode:glm-4.7)",
+        <U>(sy: Argv<U>) =>
+          sy
+            .positional("model", {
+              type: "string",
+              demandOption: true,
+              describe:
+                "Model spec: provider:model (e.g. opencode:glm-4.7)",
+            })
+            .option("judgments-only", {
+              type: "boolean",
+              default: false,
+              describe:
+                "Only clear judgment caches, keep writes/feedback/revisions",
+            }),
+        (argv: ArgumentsCamelCase<ClearCacheArgs>) => {
+          resolve({
+            command: "cache-clear",
+            args: {
+              model: argv.model,
+              judgmentsOnly: argv.judgmentsOnly,
+            },
+          });
+        }
+      );
+
+  // Bare "cache" (no subcommand) defaults to "cache status"
+  return { builder, handler: resolveCacheStatus };
+}
 
 export async function parseArgs(): Promise<Command> {
   return new Promise((resolve, reject) => {
+    const cache = buildCacheCommand(resolve);
     yargs(hideBin(process.argv))
       .scriptName("writing-bench")
       .usage("$0 <command> [options]")
@@ -239,33 +345,7 @@ export async function parseArgs(): Promise<Command> {
           });
         }
       )
-      .command(
-        "clear-cache <model>",
-        "Clear cached outputs for a model (e.g. opencode:glm-4.7)",
-        (y) =>
-          y
-            .positional("model", {
-              type: "string",
-              demandOption: true,
-              describe:
-                "Model spec: provider:model (e.g. opencode:glm-4.7)",
-            })
-            .option("judgments-only", {
-              type: "boolean",
-              default: false,
-              describe:
-                "Only clear judgment caches, keep writes/feedback/revisions",
-            }),
-        (argv) => {
-          resolve({
-            command: "clear-cache",
-            args: {
-              model: argv.model,
-              judgmentsOnly: argv.judgmentsOnly,
-            },
-          });
-        }
-      )
+      .command("cache", "Cache management commands (defaults to status)", cache.builder, cache.handler)
       .demandCommand(1, "Please specify a command")
       .strict()
       .help()

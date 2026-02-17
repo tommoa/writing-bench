@@ -63,7 +63,7 @@ export function hashPromptContent(promptText: string): string {
  * Convert a model identity string to a filesystem-safe directory name.
  * e.g., "openai:gpt-4o" -> "openai_gpt-4o"
  */
-function modelKey(provider: string, model: string): string {
+export function modelKey(provider: string, model: string): string {
   return `${provider}_${model}`.replace(/[:/\\]/g, "_");
 }
 
@@ -71,7 +71,7 @@ function modelKey(provider: string, model: string): string {
  * Hash a judgment pair key (stage + two sorted cache IDs) into a
  * filesystem-safe name.
  */
-function judgmentPairHash(
+export function judgmentPairHash(
   stage: string,
   cacheIdA: string,
   cacheIdB: string
