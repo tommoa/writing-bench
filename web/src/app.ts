@@ -61,7 +61,7 @@ let judgmentApi: {
 // ── Router ──────────────────────────────────────────
 
 interface Page {
-  page: "dashboard" | "runs" | "run";
+  page: "dashboard" | "runs" | "run" | "methodology";
   id?: string;
 }
 
@@ -70,6 +70,7 @@ function getPage(): Page {
   const runId = params.get("run");
   if (runId) return { page: "run", id: runId };
   if (params.get("page") === "runs") return { page: "runs" };
+  if (params.get("page") === "methodology") return { page: "methodology" };
   return { page: "dashboard" };
 }
 
@@ -1319,16 +1320,220 @@ function renderRunMetadata(run: RunResult): HTMLElement {
   return container;
 }
 
+// ── Methodology Page ────────────────────────────────
+
+function renderMethodologyPage(): void {
+  const container = el("div", { className: "methodology" },
+
+    // ── How Models Are Compared ──────────────────────
+    el("h2", {}, "How Models Are Compared"),
+    el("p", {},
+      "Writing quality is evaluated through pairwise blind judging. " +
+      "For each prompt, an LLM judge is shown two writing samples labeled " +
+      "\"Sample A\" and \"Sample B\" with no indication of which model produced " +
+      "which text. The judge decides which sample is better (A, B, or tie) " +
+      "and provides reasoning."
+    ),
+    el("p", {},
+      "Each prompt defines its own judging criteria tailored to the genre. " +
+      "A sermon prompt might specify theological accuracy and pastoral warmth, " +
+      "while a short story prompt might focus on narrative voice and character " +
+      "interiority. The judge evaluates against all listed criteria holistically."
+    ),
+    el("p", {},
+      "Judging uses structured JSON output (a Zod schema requesting " +
+      "winner and reasoning). If a judge model does not support structured " +
+      "output, the system falls back to free-text generation and extracts " +
+      "JSON from the response."
+    ),
+    el("h3", {}, "Position Bias Mitigation"),
+    el("p", {},
+      "LLMs can exhibit position bias \u2014 a tendency to favor whichever sample " +
+      "appears first. To counteract this, the benchmark randomly swaps the " +
+      "presentation order of each pair with 50% probability. After the judge " +
+      "responds, the winner is mapped back to the canonical ordering. This " +
+      "ensures that any position preference cancels out over many comparisons."
+    ),
+
+    // ── The Benchmark Pipeline ──────────────────────
+    el("h2", {}, "The Benchmark Pipeline"),
+    el("p", {},
+      "The benchmark runs as a reactive pipeline. Tasks fire as soon as " +
+      "their dependencies are met rather than waiting for entire stages to " +
+      "complete. Judging begins as soon as two samples for the same prompt " +
+      "exist; feedback starts as soon as a sample is written; revisions " +
+      "start as soon as feedback arrives."
+    ),
+    el("ol", {},
+      el("li", {},
+        el("strong", {}, "Write"),
+        " \u2014 Each model generates an output for each prompt."
+      ),
+      el("li", {},
+        el("strong", {}, "Judge (initial)"),
+        " \u2014 Pairwise blind comparison of initial outputs. Every unique " +
+        "pair of samples for a prompt is judged by every judge model."
+      ),
+      el("li", {},
+        el("strong", {}, "Feedback"),
+        " \u2014 Each model critiques every other model\u2019s initial output, " +
+        "identifying strengths and areas for improvement."
+      ),
+      el("li", {},
+        el("strong", {}, "Revise"),
+        " \u2014 The original writer revises its piece using another model\u2019s " +
+        "feedback."
+      ),
+      el("li", {},
+        el("strong", {}, "Judge (revised)"),
+        " \u2014 Revised outputs are compared head-to-head. Only revisions " +
+        "that used feedback from the same source model are compared, so " +
+        "the comparison isolates writing ability from feedback quality."
+      ),
+      el("li", {},
+        el("strong", {}, "Judge (improvement)"),
+        " \u2014 Each revision is compared against its own original to " +
+        "measure whether the feedback actually helped improve the writing."
+      ),
+    ),
+
+    // ── Bradley-Terry Rating System ─────────────────
+    el("h2", {}, "Bradley-Terry Rating System"),
+    el("p", {},
+      "Ratings are computed using the Bradley-Terry model, a maximum " +
+      "likelihood estimation method for pairwise comparison data. Unlike " +
+      "sequential ELO (where processing the same judgments in a different " +
+      "order gives different ratings), Bradley-Terry computes strength " +
+      "parameters from all outcomes simultaneously. The same set of " +
+      "judgments always produces the same ratings."
+    ),
+    el("h3", {}, "The Algorithm"),
+    el("p", {},
+      "Each model is assigned a strength parameter p, initially set to 1. " +
+      "The algorithm iterates:"
+    ),
+    el("div", { className: "formula" },
+      "For each model i:\n" +
+      "  score\u1d62 = wins\u1d62 + 0.5 \u00d7 ties\u1d62\n" +
+      "  expected\u1d62 = \u03a3\u2c7c N\u1d62\u2c7c \u00d7 p\u1d62 / (p\u1d62 + p\u2c7c)\n" +
+      "  p\u1d62 \u2190 (score\u1d62 / expected\u1d62) \u00d7 p\u1d62\n\n" +
+      "Normalize all strengths by their geometric mean.\n" +
+      "Repeat until convergence (max relative change < 10\u207b\u2076, up to 50 iterations)."
+    ),
+    el("p", {},
+      "A model\u2019s strength increases when its observed win " +
+      "rate exceeds what the current strength estimates predict, and " +
+      "decreases when it falls short. Ties count as half a win for each " +
+      "side. The geometric mean normalization prevents strengths from " +
+      "drifting to infinity."
+    ),
+    el("h3", {}, "ELO-Scale Conversion"),
+    el("p", {},
+      "Bradley-Terry strengths are converted to a familiar ELO-like scale:"
+    ),
+    el("div", { className: "formula" },
+      "rating = 400 \u00d7 log\u2081\u2080(strength) + 1500"
+    ),
+    el("p", {},
+      "This means a model whose BT strength is 10\u00d7 another\u2019s will be " +
+      "rated 400 points higher, matching the standard ELO interpretation " +
+      "where a 400-point gap implies roughly 10:1 win odds."
+    ),
+
+    // ── Three Rating Types ──────────────────────────
+    el("h2", {}, "Three Rating Types"),
+    el("h3", {}, "Writing ELO"),
+    el("p", {},
+      "Direct head-to-head writing quality. Two writing samples for the " +
+      "same prompt are shown to a judge; the winning model gets credit. " +
+      "Both initial and revised stage judgments contribute to writing " +
+      "ratings."
+    ),
+    el("h3", {}, "Feedback ELO"),
+    el("p", {},
+      "How useful a model\u2019s editorial feedback is, measured indirectly. " +
+      "The system does not compare feedback texts directly. Instead, it " +
+      "uses improvement judgments (revision vs. original) to determine " +
+      "whether feedback led to a better revision."
+    ),
+    el("p", {},
+      "The algorithm groups improvement judgments by prompt and judge, " +
+      "then pairs up different feedback providers within each group. If " +
+      "feedback model A\u2019s revision beat the original but feedback model " +
+      "B\u2019s did not, A wins. If both improved or both failed, it\u2019s a tie. " +
+      "These synthetic pairwise outcomes are then fed into the same " +
+      "Bradley-Terry computation."
+    ),
+    el("h3", {}, "Per-Tag ELO"),
+    el("p", {},
+      "Each prompt has genre tags (e.g. \"speech\", \"theological\", " +
+      "\"creative\"). Per-tag ratings run the same Bradley-Terry computation " +
+      "restricted to judgments from prompts with a given tag. This reveals " +
+      "category-specific strengths \u2014 a model might excel at essays but " +
+      "struggle with creative fiction."
+    ),
+
+    // ── Cumulative Ratings ──────────────────────────
+    el("h2", {}, "Cumulative Ratings"),
+    el("p", {},
+      "Ratings accumulate across multiple benchmark runs. Rather than " +
+      "applying sequential updates (which would be order-dependent), the " +
+      "system stores pairwise records: for each pair of models, the total " +
+      "number of wins for each side and ties."
+    ),
+    el("p", {},
+      "When a new run completes, its pairwise outcomes are merged with " +
+      "the existing accumulated records. Ratings are then recomputed " +
+      "from scratch using Bradley-Terry on the full merged dataset. This " +
+      "means the order in which runs are processed does not affect the " +
+      "final ratings."
+    ),
+    el("p", {},
+      "The leaderboard on the dashboard page always reflects the " +
+      "cumulative ratings across all runs. Individual run pages show " +
+      "ratings computed from that run\u2019s judgments alone."
+    ),
+
+    // ── Reading the Results ─────────────────────────
+    el("h2", {}, "Reading the Results"),
+    el("ul", {},
+      el("li", {},
+        el("strong", {}, "1500"),
+        " is the baseline rating. A model with no wins or losses, or one " +
+        "at the geometric mean of all model strengths, sits at 1500."
+      ),
+      el("li", {},
+        el("strong", {}, "400-point gap"),
+        " corresponds to roughly 10:1 expected win odds. A model rated " +
+        "1900 is expected to beat a 1500-rated model about 90% of the time."
+      ),
+      el("li", {},
+        el("strong", {}, "W / L / T"),
+        " are raw win, loss, and tie counts from all pairwise matches " +
+        "the model participated in. These are the direct inputs to the " +
+        "Bradley-Terry computation."
+      ),
+      el("li", {},
+        el("strong", {}, "Matches"),
+        " is the total number of pairwise comparisons involving the model " +
+        "(W + L + T). More matches produce more reliable ratings."
+      ),
+    ),
+    el("p", { className: "note" },
+      "Ratings from a small number of matches should be interpreted " +
+      "cautiously. As more runs accumulate, the cumulative ratings " +
+      "converge toward stable values."
+    ),
+  );
+
+  render(container.outerHTML);
+}
+
 // ── Init ────────────────────────────────────────────
 
 async function init(): Promise<void> {
-  try {
-    state.index = await fetchIndex();
-  } catch (e) {
-    renderError(e instanceof Error ? e.message : String(e));
-    return;
-  }
-
+  // Set up navigation first — the methodology page is pure static
+  // content and must work even when no benchmark data exists.
   $$(".nav a").forEach((a) => {
     a.addEventListener("click", (e) => {
       e.preventDefault();
@@ -1336,8 +1541,18 @@ async function init(): Promise<void> {
       route();
     });
   });
-
   window.addEventListener("popstate", route);
+
+  try {
+    state.index = await fetchIndex();
+  } catch (e) {
+    // Methodology page doesn't need data — let it render
+    if (getPage().page !== "methodology") {
+      renderError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+  }
+
   route();
 }
 
@@ -1361,6 +1576,9 @@ function route(): void {
       break;
     case "run":
       renderRunDetailPage(id!);
+      break;
+    case "methodology":
+      renderMethodologyPage();
       break;
   }
 }

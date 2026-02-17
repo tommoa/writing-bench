@@ -661,3 +661,49 @@ select option:hover {
   padding: 2em;
   text-align: center;
 }
+
+/* Methodology page */
+.methodology p {
+  margin: 0.5em 0;
+  line-height: 1.8;
+}
+
+.methodology h2 {
+  margin-top: 2em;
+}
+
+.methodology h2:first-child {
+  margin-top: 0;
+}
+
+.methodology h3 {
+  margin-top: 1.5em;
+}
+
+.methodology ul,
+.methodology ol {
+  margin: 0.5em 0 1em 1.5em;
+}
+
+.methodology li {
+  margin: 0.3em 0;
+  line-height: 1.6;
+}
+
+.methodology .formula {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1em;
+  margin: 0.75em 0;
+  font-family: monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.methodology .note {
+  color: var(--comment);
+  font-style: italic;
+  margin: 0.5em 0;
+}
