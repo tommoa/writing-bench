@@ -945,6 +945,10 @@ function renderJudgmentsSection(run: RunResult): HTMLElement {
   let filterPrompt = "all";
   let filterSampleId: string | null = null;
 
+  // Pagination state
+  let pageSize = 25;
+  let currentPage = 0;
+
   // Build filter bar
   const filterBar = el("div", { className: "judgment-filters" });
 
@@ -1119,15 +1123,22 @@ function renderJudgmentsSection(run: RunResult): HTMLElement {
     }
 
     listContainer.innerHTML = "";
+
+    // Pagination
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (currentPage >= totalPages) currentPage = totalPages - 1;
+    const start = currentPage * pageSize;
+    const pageItems = filtered.slice(start, start + pageSize);
+
     listContainer.appendChild(
       el(
         "p",
         { className: "muted small mb-1" },
-        `${filtered.length} of ${judgments.length} judgments`
+        `${start + 1}–${Math.min(start + pageSize, filtered.length)} of ${filtered.length} judgments`
       )
     );
 
-    for (const j of filtered) {
+    for (const j of pageItems) {
       const prompt = run.config.prompts.find((p) => p.id === j.promptId);
       const { labelA, labelB, winnerLabel } = buildJudgmentLabel(
         j,
@@ -1212,31 +1223,78 @@ function renderJudgmentsSection(run: RunResult): HTMLElement {
 
       listContainer.appendChild(judgEl);
     }
+
+    // Pagination controls
+    if (filtered.length > 10) {
+      const nav = el("div", { className: "pagination" });
+      const prevBtn = el(
+        "button",
+        {
+          disabled: currentPage === 0,
+          onClick: () => { currentPage--; rerender(); },
+        },
+        "< prev"
+      );
+      const nextBtn = el(
+        "button",
+        {
+          disabled: currentPage >= totalPages - 1,
+          onClick: () => { currentPage++; rerender(); },
+        },
+        "next >"
+      );
+      nav.appendChild(prevBtn);
+      nav.appendChild(
+        el("span", { className: "muted" }, ` page ${currentPage + 1} of ${totalPages} `)
+      );
+      nav.appendChild(nextBtn);
+
+      const sizeSelect = document.createElement("select");
+      sizeSelect.className = "page-size-select";
+      for (const size of [10, 25, 50, 100]) {
+        const opt = new Option(`${size} per page`, String(size));
+        if (size === pageSize) opt.selected = true;
+        sizeSelect.appendChild(opt);
+      }
+      sizeSelect.addEventListener("change", () => {
+        pageSize = Number(sizeSelect.value);
+        currentPage = 0;
+        rerender();
+      });
+      nav.appendChild(sizeSelect);
+
+      listContainer.appendChild(nav);
+    }
   };
 
   promptSelect.addEventListener("change", () => {
     filterPrompt = promptSelect.value;
     filterSampleId = null;
+    currentPage = 0;
     rerender();
   });
   stageSelect.addEventListener("change", () => {
     filterStage = stageSelect.value;
     filterSampleId = null;
+    currentPage = 0;
     rerender();
   });
   judgeSelect.addEventListener("change", () => {
     filterJudge = judgeSelect.value;
     filterSampleId = null;
+    currentPage = 0;
     rerender();
   });
   modelASelect.addEventListener("change", () => {
     filterModelA = modelASelect.value;
     filterSampleId = null;
+    currentPage = 0;
     rerender();
   });
   modelBSelect.addEventListener("change", () => {
     filterModelB = modelBSelect.value;
     filterSampleId = null;
+    currentPage = 0;
     rerender();
   });
 

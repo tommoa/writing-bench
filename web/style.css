@@ -494,6 +494,36 @@ details[open] summary {
   border-color: var(--accent);
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 1em 0;
+}
+
+.pagination button {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 0.3em 0.8em;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.pagination button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pagination button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.page-size-select {
+  margin-left: auto;
+}
+
 /* Scroll target highlight */
 .scroll-highlight {
   animation: highlight-fade 2s ease-out;
