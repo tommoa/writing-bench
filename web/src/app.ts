@@ -211,20 +211,35 @@ function renderDashboard(index: RunsIndex): void {
 
 function renderEloTable(ratings: EloEntry[]): HTMLElement {
   const table = el("table");
-  table.appendChild(
-    el(
-      "thead",
-      {},
-      el(
-        "tr",
-        {},
-        el("th", { className: "rank" }, "#"),
-        el("th", {}, "Model"),
-        el("th", { className: "sortable" }, "ELO"),
-        el("th", {}, "Matches")
-      )
-    )
+
+  // Determine which stage cost columns have data
+  const stageCols = [
+    { key: "initial", label: "Write" },
+    { key: "initialJudging", label: "Judge" },
+    { key: "feedback", label: "Feedback" },
+    { key: "revised", label: "Revise" },
+    { key: "revisedJudging", label: "Re-Judge" },
+  ];
+  const activeStages = stageCols.filter((s) =>
+    ratings.some((r) => (r.costByStage?.[s.key] ?? 0) > 0)
   );
+  const hasCosts = ratings.some((r) => r.totalCost != null && r.totalCost > 0);
+
+  const headerCells = [
+    el("th", { className: "rank" }, "#"),
+    el("th", {}, "Model"),
+    el("th", { className: "sortable" }, "ELO"),
+    el("th", {}, "Matches"),
+  ];
+  if (hasCosts) {
+    for (const s of activeStages) {
+      headerCells.push(el("th", { className: "cost" }, s.label));
+    }
+    headerCells.push(el("th", { className: "cost" }, "Total"));
+  }
+
+  table.appendChild(el("thead", {}, el("tr", {}, ...headerCells)));
+
   const tbody = el("tbody");
   ratings.forEach((r, i) => {
     const cls =
@@ -233,16 +248,29 @@ function renderEloTable(ratings: EloEntry[]): HTMLElement {
         : i === ratings.length - 1
           ? "rating bottom"
           : "rating";
-    tbody.appendChild(
-      el(
-        "tr",
-        {},
-        el("td", { className: "rank" }, String(i + 1)),
-        el("td", {}, r.model),
-        el("td", { className: cls }, String(r.rating)),
-        el("td", { className: "muted" }, String(r.matchCount))
-      )
-    );
+    const cells = [
+      el("td", { className: "rank" }, String(i + 1)),
+      el("td", {}, r.model),
+      el("td", { className: cls }, String(r.rating)),
+      el("td", { className: "muted" }, String(r.matchCount)),
+    ];
+    if (hasCosts) {
+      for (const s of activeStages) {
+        const c = r.costByStage?.[s.key] ?? 0;
+        cells.push(
+          el("td", { className: "cost" }, c > 0 ? `$${c.toFixed(4)}` : "-")
+        );
+      }
+      const total = r.totalCost ?? 0;
+      cells.push(
+        el(
+          "td",
+          { className: "cost total" },
+          total > 0 ? `$${total.toFixed(4)}` : "-"
+        )
+      );
+    }
+    tbody.appendChild(el("tr", {}, ...cells));
   });
   table.appendChild(tbody);
   return table;
@@ -297,7 +325,7 @@ function renderRunList(runs: RunIndexEntry[]): HTMLElement {
     const meta = el(
       "span",
       { className: "run-meta" },
-      `${run.models.join(", ")} | ${run.promptCount} prompts | $${run.totalCost.toFixed(4)}`
+      `${run.models.join(", ")} | ${run.promptCount} prompts | $${(run.totalCostUncached ?? run.totalCost).toFixed(4)}`
     );
     list.appendChild(el("li", {}, link, meta));
   }
@@ -343,18 +371,21 @@ function renderRunDetail(run: RunResult): void {
   }
 
   // ELO tables
+  const uncachedCosts = run.meta.costByModelByStageUncached ?? {};
+  const speeds = run.meta.speedByModel;
+
   frag.appendChild(el("h2", {}, "Initial Writer ELO"));
-  frag.appendChild(renderRunEloTable(run.elo.initial.ratings));
+  frag.appendChild(renderRunEloTable(run.elo.initial.ratings, uncachedCosts, speeds));
 
   frag.appendChild(el("h2", {}, "Revised Writer ELO"));
-  frag.appendChild(renderRunEloTable(run.elo.revised.ratings));
+  frag.appendChild(renderRunEloTable(run.elo.revised.ratings, uncachedCosts, speeds));
 
   if (
     run.elo.revised.feedbackRatings &&
     run.elo.revised.feedbackRatings.length > 0
   ) {
     frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
-    frag.appendChild(renderRunEloTable(run.elo.revised.feedbackRatings));
+    frag.appendChild(renderRunEloTable(run.elo.revised.feedbackRatings, uncachedCosts, speeds));
   }
 
   // ELO by category
@@ -368,11 +399,11 @@ function renderRunDetail(run: RunResult): void {
       d.appendChild(el("summary", {}, cat));
       const inner = el("div", { className: "details-content" });
       inner.appendChild(el("h4", {}, "Initial"));
-      inner.appendChild(renderRunEloTable(ratings));
+      inner.appendChild(renderRunEloTable(ratings, uncachedCosts, speeds));
       if (run.elo.revised.byTag?.[cat]) {
         inner.appendChild(el("h4", {}, "Revised"));
         inner.appendChild(
-          renderRunEloTable(run.elo.revised.byTag[cat])
+          renderRunEloTable(run.elo.revised.byTag[cat], uncachedCosts, speeds)
         );
       }
       d.appendChild(inner);
@@ -446,23 +477,46 @@ function renderCostItem(label: string, value: string): HTMLElement {
   );
 }
 
-function renderRunEloTable(ratings: EloRating[]): HTMLElement {
+function renderRunEloTable(
+  ratings: EloRating[],
+  costByModelByStage?: Record<string, Record<string, number>>,
+  speedByModel?: Record<string, ModelSpeed>
+): HTMLElement {
   const table = el("table");
 
-  table.appendChild(
-    el(
-      "thead",
-      {},
-      el(
-        "tr",
-        {},
-        el("th", { className: "rank" }, "#"),
-        el("th", {}, "Model"),
-        el("th", {}, "ELO"),
-        el("th", {}, "W/L/T")
-      )
-    )
+  // Determine which stage cost columns have data
+  const stageCols = [
+    { key: "initial", label: "Write" },
+    { key: "initialJudging", label: "Judge" },
+    { key: "feedback", label: "Feedback" },
+    { key: "revised", label: "Revise" },
+    { key: "revisedJudging", label: "Re-Judge" },
+  ];
+  const mbms = costByModelByStage ?? {};
+  const models = ratings.map((r) => r.model);
+  const activeStages = stageCols.filter((s) =>
+    models.some((m) => (mbms[m]?.[s.key] ?? 0) > 0)
   );
+  const hasCosts = activeStages.length > 0;
+  const hasSpeed = speedByModel != null && Object.keys(speedByModel).length > 0;
+
+  const headerCells = [
+    el("th", { className: "rank" }, "#"),
+    el("th", {}, "Model"),
+    el("th", {}, "ELO"),
+    el("th", {}, "W/L/T"),
+  ];
+  if (hasCosts) {
+    for (const s of activeStages) {
+      headerCells.push(el("th", { className: "cost" }, s.label));
+    }
+    headerCells.push(el("th", { className: "cost" }, "Total"));
+  }
+  if (hasSpeed) {
+    headerCells.push(el("th", {}, "Speed"));
+  }
+
+  table.appendChild(el("thead", {}, el("tr", {}, ...headerCells)));
 
   const tbody = el("tbody");
   ratings.forEach((r, i) => {
@@ -474,16 +528,38 @@ function renderRunEloTable(ratings: EloRating[]): HTMLElement {
           : "rating";
     const wlt = `${r.wins}/${r.losses}/${r.ties}`;
 
-    tbody.appendChild(
-      el(
-        "tr",
-        {},
-        el("td", { className: "rank" }, String(i + 1)),
-        el("td", {}, r.model),
-        el("td", { className: cls }, String(r.rating)),
-        el("td", { className: "wlt" }, wlt)
-      )
-    );
+    const cells = [
+      el("td", { className: "rank" }, String(i + 1)),
+      el("td", {}, r.model),
+      el("td", { className: cls }, String(r.rating)),
+      el("td", { className: "wlt" }, wlt),
+    ];
+    if (hasCosts) {
+      const stages = mbms[r.model] ?? {};
+      for (const s of activeStages) {
+        const c = stages[s.key] ?? 0;
+        cells.push(
+          el("td", { className: "cost" }, c > 0 ? `$${c.toFixed(4)}` : "-")
+        );
+      }
+      let total = 0;
+      for (const cost of Object.values(stages)) total += cost;
+      cells.push(
+        el(
+          "td",
+          { className: "cost total" },
+          total > 0 ? `$${total.toFixed(4)}` : "-"
+        )
+      );
+    }
+    if (hasSpeed) {
+      const speed = speedByModel![r.model];
+      const speedStr = speed
+        ? `${formatSpeed(speed.tokensPerSecond)} tok/s`
+        : "-";
+      cells.push(el("td", { className: "speed" }, speedStr));
+    }
+    tbody.appendChild(el("tr", {}, ...cells));
   });
   table.appendChild(tbody);
   return table;
@@ -1209,20 +1285,10 @@ function renderRunMetadata(run: RunResult): HTMLElement {
   const container = el("div");
 
   const costGrid = el("div", { className: "cost-grid" });
+  const displayCost = run.meta.totalCostUncached ?? run.meta.totalCost;
   costGrid.appendChild(
-    renderCostItem("Total Cost", `$${run.meta.totalCost.toFixed(4)}`)
+    renderCostItem("Total Cost", `$${displayCost.toFixed(4)}`)
   );
-  if (
-    run.meta.totalCostUncached != null &&
-    run.meta.totalCostUncached > run.meta.totalCost + 0.00005
-  ) {
-    costGrid.appendChild(
-      renderCostItem(
-        "Uncached Cost",
-        `$${run.meta.totalCostUncached.toFixed(4)}`
-      )
-    );
-  }
   costGrid.appendChild(
     renderCostItem(
       "Duration",
@@ -1233,59 +1299,6 @@ function renderRunMetadata(run: RunResult): HTMLElement {
     renderCostItem("Total Tokens", run.meta.totalTokens.toLocaleString())
   );
   container.appendChild(costGrid);
-
-  // Cost breakdown table (model × stage), matching TUI layout
-  const stageCols = [
-    { key: "initial", label: "Write" },
-    { key: "initialJudging", label: "Judge" },
-    { key: "feedback", label: "Feedback" },
-    { key: "revised", label: "Revise" },
-    { key: "revisedJudging", label: "Re-Judge" },
-  ];
-
-  const models = Object.keys(run.meta.costByModel).sort();
-  const mbms = run.meta.costByModelByStage ?? {};
-
-  // Only show stage columns that have data
-  const activeStages = stageCols.filter((s) =>
-    models.some((m) => (mbms[m]?.[s.key] ?? 0) > 0)
-  );
-
-  if (models.length > 0 && activeStages.length > 0) {
-    container.appendChild(el("h3", {}, "Cost Breakdown"));
-
-    const table = el("table", { className: "cost-breakdown-table" });
-    const headerCells = [
-      el("th", {}, "Model"),
-      ...activeStages.map((s) => el("th", {}, s.label)),
-      el("th", {}, "Total"),
-      el("th", {}, "Speed"),
-    ];
-    table.appendChild(el("thead", {}, el("tr", {}, ...headerCells)));
-
-    const tbody = el("tbody");
-    for (const model of models) {
-      const stages = mbms[model] ?? {};
-      const total = run.meta.costByModel[model] ?? 0;
-      const speed = run.meta.speedByModel?.[model];
-      const speedStr = speed
-        ? `${formatSpeed(speed.tokensPerSecond)} tok/s`
-        : "-";
-
-      const cells = [
-        el("td", {}, model),
-        ...activeStages.map((s) => {
-          const c = stages[s.key] ?? 0;
-          return el("td", { className: "cost" }, c > 0 ? `$${c.toFixed(4)}` : "-");
-        }),
-        el("td", { className: "cost total" }, `$${total.toFixed(4)}`),
-        el("td", { className: "speed" }, speedStr),
-      ];
-      tbody.appendChild(el("tr", {}, ...cells));
-    }
-    table.appendChild(tbody);
-    container.appendChild(table);
-  }
 
   if (run.modelInfo && Object.keys(run.modelInfo).length > 0) {
     container.appendChild(el("h3", {}, "Models"));
