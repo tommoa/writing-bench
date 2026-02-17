@@ -243,7 +243,6 @@ function renderEloTable(
     for (const s of visibleStages) {
       headerCells.push(el("th", { className: "cost" }, s.label));
     }
-    headerCells.push(el("th", { className: "cost" }, "Total"));
   }
 
   table.appendChild(el("thead", {}, el("tr", {}, ...headerCells)));
@@ -269,14 +268,6 @@ function renderEloTable(
           el("td", { className: "cost" }, c > 0 ? `$${c.toFixed(4)}` : "-")
         );
       }
-      const total = r.totalCost ?? 0;
-      cells.push(
-        el(
-          "td",
-          { className: "cost total" },
-          total > 0 ? `$${total.toFixed(4)}` : "-"
-        )
-      );
     }
     tbody.appendChild(el("tr", {}, ...cells));
   });
@@ -490,9 +481,8 @@ function renderCostItem(label: string, value: string): HTMLElement {
 
 /**
  * Render an ELO table for a run with optional cost and speed columns.
- * `costStages` controls which stage costs to show as columns (e.g.
- * ["initial"] for write cost only). The "Total" column sums all stages
- * for the model (including judging), not just the visible ones.
+ * `costStages` controls which stage costs to show (e.g. ["initial"]
+ * for write cost only). Only the specified stages appear as columns.
  */
 function renderRunEloTable(
   ratings: EloRating[],
@@ -530,7 +520,6 @@ function renderRunEloTable(
     for (const s of visibleStages) {
       headerCells.push(el("th", { className: "cost" }, s.label));
     }
-    headerCells.push(el("th", { className: "cost" }, "Total"));
   }
   if (hasSpeed) {
     headerCells.push(el("th", {}, "Speed"));
@@ -562,16 +551,6 @@ function renderRunEloTable(
           el("td", { className: "cost" }, c > 0 ? `$${c.toFixed(4)}` : "-")
         );
       }
-      // Total includes all stages for the model, not just visible ones
-      let total = 0;
-      for (const cost of Object.values(stages)) total += cost;
-      cells.push(
-        el(
-          "td",
-          { className: "cost total" },
-          total > 0 ? `$${total.toFixed(4)}` : "-"
-        )
-      );
     }
     if (hasSpeed) {
       const speed = speedByModel![r.model];
