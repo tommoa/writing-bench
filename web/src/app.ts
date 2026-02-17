@@ -1130,13 +1130,59 @@ function renderJudgmentsSection(run: RunResult): HTMLElement {
     const start = currentPage * pageSize;
     const pageItems = filtered.slice(start, start + pageSize);
 
-    listContainer.appendChild(
-      el(
-        "p",
-        { className: "muted small mb-1" },
-        `${start + 1}–${Math.min(start + pageSize, filtered.length)} of ${filtered.length} judgments`
-      )
-    );
+    function buildPaginationNav(): HTMLElement {
+      const nav = el("div", { className: "pagination" });
+      const prevBtn = el(
+        "button",
+        {
+          disabled: currentPage === 0,
+          onClick: () => { currentPage--; rerender(); },
+        },
+        "< prev"
+      );
+      const nextBtn = el(
+        "button",
+        {
+          disabled: currentPage >= totalPages - 1,
+          onClick: () => { currentPage++; rerender(); },
+        },
+        "next >"
+      );
+      nav.appendChild(prevBtn);
+      nav.appendChild(
+        el("span", { className: "muted" }, ` page ${currentPage + 1} of ${totalPages} `)
+      );
+      nav.appendChild(nextBtn);
+
+      const sizeSelect = document.createElement("select");
+      sizeSelect.className = "page-size-select";
+      for (const size of [10, 25, 50, 100]) {
+        const opt = new Option(`${size} per page`, String(size));
+        if (size === pageSize) opt.selected = true;
+        sizeSelect.appendChild(opt);
+      }
+      sizeSelect.addEventListener("change", () => {
+        pageSize = Number(sizeSelect.value);
+        currentPage = 0;
+        rerender();
+      });
+      nav.appendChild(sizeSelect);
+      return nav;
+    }
+
+    const showPagination = filtered.length > 10;
+
+    if (showPagination) {
+      listContainer.appendChild(buildPaginationNav());
+    } else {
+      listContainer.appendChild(
+        el(
+          "p",
+          { className: "muted small mb-1" },
+          `${filtered.length} judgments`
+        )
+      );
+    }
 
     for (const j of pageItems) {
       const prompt = run.config.prompts.find((p) => p.id === j.promptId);
@@ -1224,46 +1270,8 @@ function renderJudgmentsSection(run: RunResult): HTMLElement {
       listContainer.appendChild(judgEl);
     }
 
-    // Pagination controls
-    if (filtered.length > 10) {
-      const nav = el("div", { className: "pagination" });
-      const prevBtn = el(
-        "button",
-        {
-          disabled: currentPage === 0,
-          onClick: () => { currentPage--; rerender(); },
-        },
-        "< prev"
-      );
-      const nextBtn = el(
-        "button",
-        {
-          disabled: currentPage >= totalPages - 1,
-          onClick: () => { currentPage++; rerender(); },
-        },
-        "next >"
-      );
-      nav.appendChild(prevBtn);
-      nav.appendChild(
-        el("span", { className: "muted" }, ` page ${currentPage + 1} of ${totalPages} `)
-      );
-      nav.appendChild(nextBtn);
-
-      const sizeSelect = document.createElement("select");
-      sizeSelect.className = "page-size-select";
-      for (const size of [10, 25, 50, 100]) {
-        const opt = new Option(`${size} per page`, String(size));
-        if (size === pageSize) opt.selected = true;
-        sizeSelect.appendChild(opt);
-      }
-      sizeSelect.addEventListener("change", () => {
-        pageSize = Number(sizeSelect.value);
-        currentPage = 0;
-        rerender();
-      });
-      nav.appendChild(sizeSelect);
-
-      listContainer.appendChild(nav);
+    if (showPagination) {
+      listContainer.appendChild(buildPaginationNav());
     }
   };
 
