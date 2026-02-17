@@ -71,6 +71,38 @@ function sumCosts(
   return { byModel, total };
 }
 
+/**
+ * Compute total tokens (input + output) per model per stage from a
+ * run's raw data. Includes all items regardless of cache status,
+ * since usage is preserved from cache. Uses the same stage keys as
+ * computeUncachedCosts().
+ */
+function computeTokensByModelByStage(
+  run: RunResult
+): Record<string, Record<string, number>> {
+  const result: Record<string, Record<string, number>> = {};
+
+  function add(model: string, stage: string, usage: TokenUsage): void {
+    const tokens = usage.inputTokens + usage.outputTokens;
+    const modelStages = result[model] ?? {};
+    modelStages[stage] = (modelStages[stage] ?? 0) + tokens;
+    result[model] = modelStages;
+  }
+
+  for (const s of run.samples) {
+    add(s.model, s.stage === "initial" ? "initial" : "revised", s.usage);
+  }
+  for (const f of run.feedback) {
+    add(f.sourceModel, "feedback", f.usage);
+  }
+  for (const j of run.judgments) {
+    const stage = j.stage === "initial" ? "initialJudging" : "revisedJudging";
+    add(j.judgeModel, stage, j.usage);
+  }
+
+  return result;
+}
+
 // ── Index Types ───────────────────────────────────────
 
 interface RunIndexEntry {
@@ -83,6 +115,9 @@ interface RunIndexEntry {
   totalCostUncached: number;
   costByModel: Record<string, number>;
   costByModelByStage: Record<string, Record<string, number>>;
+  tokensByModel: Record<string, number>;
+  tokensByModelByStage: Record<string, Record<string, number>>;
+  totalTokens: number;
   durationMs: number;
   elo: {
     initial: Array<{ model: string; rating: number }>;
@@ -96,6 +131,8 @@ interface EloEntryWithCost {
   matchCount: number;
   costByStage?: Record<string, number>;
   totalCost?: number;
+  tokensByStage?: Record<string, number>;
+  totalTokens?: number;
 }
 
 interface RunsIndex {
@@ -140,14 +177,22 @@ export async function exportForWeb(outDir: string): Promise<number> {
     const { byModel: uncachedByModel, total: totalUncached } =
       sumCosts(uncachedByModelByStage);
 
-    // Enrich run data with computed uncached costs
+    // Compute tokens from raw data (includes cached items)
+    const tokensByModelByStage = computeTokensByModelByStage(run);
+    const { byModel: tokensByModel, total: totalTokens } =
+      sumCosts(tokensByModelByStage);
+
+    // Enrich run data with computed values
     const enrichedRun = {
       ...run,
       meta: {
         ...run.meta,
+        totalTokens,
         totalCostUncached: totalUncached,
         costByModelUncached: uncachedByModel,
         costByModelByStageUncached: uncachedByModelByStage,
+        tokensByModel,
+        tokensByModelByStage,
       },
     };
 
@@ -168,6 +213,9 @@ export async function exportForWeb(outDir: string): Promise<number> {
       totalCostUncached: totalUncached,
       costByModel: uncachedByModel,
       costByModelByStage: uncachedByModelByStage,
+      tokensByModel,
+      tokensByModelByStage,
+      totalTokens,
       durationMs: run.meta.durationMs,
       elo: {
         initial: run.elo.initial.ratings.map((r) => ({
@@ -195,12 +243,16 @@ export async function exportForWeb(outDir: string): Promise<number> {
   ): EloEntryWithCost {
     const costByStage = latestEntry?.costByModelByStage[r.model];
     const totalCost = latestEntry?.costByModel[r.model];
+    const tokensByStage = latestEntry?.tokensByModelByStage[r.model];
+    const totalTokens = latestEntry?.tokensByModel[r.model];
     return {
       model: r.model,
       rating: r.rating,
       matchCount: r.matchCount,
       ...(costByStage ? { costByStage } : {}),
       ...(totalCost != null ? { totalCost } : {}),
+      ...(tokensByStage ? { tokensByStage } : {}),
+      ...(totalTokens != null ? { totalTokens } : {}),
     };
   }
 

@@ -68,6 +68,59 @@
           "revisedJudging": 16.913814599999995
         }
       },
+      "tokensByModel": {
+        "Gemini Flash Latest": 51935814,
+        "Gemini Flash-Lite Latest": 42171105,
+        "GLM-4.7": 2044230,
+        "Kimi K2": 1350678,
+        "Kimi K2 Thinking": 1884296,
+        "Kimi K2.5": 1712123,
+        "MiniMax M2.5": 45593651
+      },
+      "tokensByModelByStage": {
+        "Gemini Flash Latest": {
+          "initial": 66509,
+          "revised": 1107260,
+          "feedback": 728829,
+          "initialJudging": 5140118,
+          "revisedJudging": 44893098
+        },
+        "Gemini Flash-Lite Latest": {
+          "initial": 47454,
+          "revised": 911065,
+          "feedback": 557002,
+          "initialJudging": 4116853,
+          "revisedJudging": 36538731
+        },
+        "GLM-4.7": {
+          "initial": 77469,
+          "revised": 1154620,
+          "feedback": 812141
+        },
+        "Kimi K2": {
+          "initial": 42196,
+          "revised": 807014,
+          "feedback": 501468
+        },
+        "Kimi K2 Thinking": {
+          "initial": 60643,
+          "revised": 1014110,
+          "feedback": 809543
+        },
+        "Kimi K2.5": {
+          "initial": 58894,
+          "revised": 919668,
+          "feedback": 733561
+        },
+        "MiniMax M2.5": {
+          "initial": 45688,
+          "revised": 821270,
+          "feedback": 635167,
+          "initialJudging": 4507479,
+          "revisedJudging": 39584047
+        }
+      },
+      "totalTokens": 146691897,
       "durationMs": 13729,
       "elo": {
         "initial": [
@@ -144,7 +197,13 @@
           "revised": 1.5641279999999995,
           "feedback": 1.447932600000001
         },
-        "totalCost": 3.1797282000000004
+        "totalCost": 3.1797282000000004,
+        "tokensByStage": {
+          "initial": 58894,
+          "revised": 919668,
+          "feedback": 733561
+        },
+        "totalTokens": 1712123
       },
       {
         "model": "Kimi K2",
@@ -155,7 +214,13 @@
           "revised": 0.8762186000000002,
           "feedback": 0.5953074000000002
         },
-        "totalCost": 1.5691704000000004
+        "totalCost": 1.5691704000000004,
+        "tokensByStage": {
+          "initial": 42196,
+          "revised": 807014,
+          "feedback": 501468
+        },
+        "totalTokens": 1350678
       },
       {
         "model": "Kimi K2 Thinking",
@@ -166,7 +231,13 @@
           "revised": 1.3428215,
           "feedback": 1.3654949000000005
         },
-        "totalCost": 2.8520783000000005
+        "totalCost": 2.8520783000000005,
+        "tokensByStage": {
+          "initial": 60643,
+          "revised": 1014110,
+          "feedback": 809543
+        },
+        "totalTokens": 1884296
       },
       {
         "model": "GLM-4.7",
@@ -177,7 +248,13 @@
           "revised": 1.6267912000000002,
           "feedback": 1.2835582000000008
         },
-        "totalCost": 3.074902800000001
+        "totalCost": 3.074902800000001,
+        "tokensByStage": {
+          "initial": 77469,
+          "revised": 1154620,
+          "feedback": 812141
+        },
+        "totalTokens": 2044230
       },
       {
         "model": "Gemini Flash Latest",
@@ -190,7 +267,15 @@
           "initialJudging": 4.004972800000002,
           "revisedJudging": 33.557363599999874
         },
-        "totalCost": 40.285254799999876
+        "totalCost": 40.285254799999876,
+        "tokensByStage": {
+          "initial": 66509,
+          "revised": 1107260,
+          "feedback": 728829,
+          "initialJudging": 5140118,
+          "revisedJudging": 44893098
+        },
+        "totalTokens": 51935814
       },
       {
         "model": "Gemini Flash-Lite Latest",
@@ -203,7 +288,15 @@
           "initialJudging": 0.4405609000000004,
           "revisedJudging": 3.887031300000003
         },
-        "totalCost": 4.660569000000003
+        "totalCost": 4.660569000000003,
+        "tokensByStage": {
+          "initial": 47454,
+          "revised": 911065,
+          "feedback": 557002,
+          "initialJudging": 4116853,
+          "revisedJudging": 36538731
+        },
+        "totalTokens": 42171105
       },
       {
         "model": "MiniMax M2.5",
@@ -216,7 +309,15 @@
           "initialJudging": 1.9685663999999967,
           "revisedJudging": 16.913814599999995
         },
-        "totalCost": 19.97214629999999
+        "totalCost": 19.97214629999999,
+        "tokensByStage": {
+          "initial": 45688,
+          "revised": 821270,
+          "feedback": 635167,
+          "initialJudging": 4507479,
+          "revisedJudging": 39584047
+        },
+        "totalTokens": 45593651
       }
     ],
     "feedback": [
@@ -229,7 +330,13 @@
           "revised": 0.8762186000000002,
           "feedback": 0.5953074000000002
         },
-        "totalCost": 1.5691704000000004
+        "totalCost": 1.5691704000000004,
+        "tokensByStage": {
+          "initial": 42196,
+          "revised": 807014,
+          "feedback": 501468
+        },
+        "totalTokens": 1350678
       },
       {
         "model": "Kimi K2.5",
@@ -240,7 +347,13 @@
           "revised": 1.5641279999999995,
           "feedback": 1.447932600000001
         },
-        "totalCost": 3.1797282000000004
+        "totalCost": 3.1797282000000004,
+        "tokensByStage": {
+          "initial": 58894,
+          "revised": 919668,
+          "feedback": 733561
+        },
+        "totalTokens": 1712123
       },
       {
         "model": "Gemini Flash-Lite Latest",
@@ -253,7 +366,15 @@
           "initialJudging": 0.4405609000000004,
           "revisedJudging": 3.887031300000003
         },
-        "totalCost": 4.660569000000003
+        "totalCost": 4.660569000000003,
+        "tokensByStage": {
+          "initial": 47454,
+          "revised": 911065,
+          "feedback": 557002,
+          "initialJudging": 4116853,
+          "revisedJudging": 36538731
+        },
+        "totalTokens": 42171105
       },
       {
         "model": "Gemini Flash Latest",
@@ -266,7 +387,15 @@
           "initialJudging": 4.004972800000002,
           "revisedJudging": 33.557363599999874
         },
-        "totalCost": 40.285254799999876
+        "totalCost": 40.285254799999876,
+        "tokensByStage": {
+          "initial": 66509,
+          "revised": 1107260,
+          "feedback": 728829,
+          "initialJudging": 5140118,
+          "revisedJudging": 44893098
+        },
+        "totalTokens": 51935814
       },
       {
         "model": "Kimi K2 Thinking",
@@ -277,7 +406,13 @@
           "revised": 1.3428215,
           "feedback": 1.3654949000000005
         },
-        "totalCost": 2.8520783000000005
+        "totalCost": 2.8520783000000005,
+        "tokensByStage": {
+          "initial": 60643,
+          "revised": 1014110,
+          "feedback": 809543
+        },
+        "totalTokens": 1884296
       },
       {
         "model": "GLM-4.7",
@@ -288,7 +423,13 @@
           "revised": 1.6267912000000002,
           "feedback": 1.2835582000000008
         },
-        "totalCost": 3.074902800000001
+        "totalCost": 3.074902800000001,
+        "tokensByStage": {
+          "initial": 77469,
+          "revised": 1154620,
+          "feedback": 812141
+        },
+        "totalTokens": 2044230
       },
       {
         "model": "MiniMax M2.5",
@@ -301,7 +442,15 @@
           "initialJudging": 1.9685663999999967,
           "revisedJudging": 16.913814599999995
         },
-        "totalCost": 19.97214629999999
+        "totalCost": 19.97214629999999,
+        "tokensByStage": {
+          "initial": 45688,
+          "revised": 821270,
+          "feedback": 635167,
+          "initialJudging": 4507479,
+          "revisedJudging": 39584047
+        },
+        "totalTokens": 45593651
       }
     ],
     "byTag": {
@@ -315,7 +464,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2.5",
@@ -326,7 +481,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Kimi K2 Thinking",
@@ -337,7 +498,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "Gemini Flash Latest",
@@ -350,7 +517,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "GLM-4.7",
@@ -361,7 +536,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -374,7 +555,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         },
         {
           "model": "MiniMax M2.5",
@@ -387,7 +576,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         }
       ],
       "technical": [
@@ -400,7 +597,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2.5",
@@ -411,7 +614,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Kimi K2 Thinking",
@@ -422,7 +631,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "Gemini Flash Latest",
@@ -435,7 +650,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -448,7 +671,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         },
         {
           "model": "GLM-4.7",
@@ -459,7 +690,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "MiniMax M2.5",
@@ -472,7 +709,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         }
       ],
       "essay": [
@@ -485,7 +730,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Kimi K2",
@@ -496,7 +747,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2 Thinking",
@@ -507,7 +764,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "GLM-4.7",
@@ -518,7 +781,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "Gemini Flash Latest",
@@ -531,7 +800,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "MiniMax M2.5",
@@ -544,7 +821,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -557,7 +842,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         }
       ],
       "analytical": [
@@ -570,7 +863,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Kimi K2",
@@ -581,7 +880,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2 Thinking",
@@ -592,7 +897,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "Gemini Flash Latest",
@@ -605,7 +916,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "GLM-4.7",
@@ -616,7 +935,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "MiniMax M2.5",
@@ -629,7 +954,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -642,7 +975,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         }
       ],
       "theological": [
@@ -655,7 +996,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2.5",
@@ -666,7 +1013,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Kimi K2 Thinking",
@@ -677,7 +1030,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "GLM-4.7",
@@ -688,7 +1047,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "Gemini Flash Latest",
@@ -701,7 +1066,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -714,7 +1087,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         },
         {
           "model": "MiniMax M2.5",
@@ -727,7 +1108,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         }
       ],
       "kids": [
@@ -740,7 +1129,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "Kimi K2",
@@ -751,7 +1146,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2.5",
@@ -762,7 +1163,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Gemini Flash Latest",
@@ -775,7 +1182,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -788,7 +1203,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         },
         {
           "model": "GLM-4.7",
@@ -799,7 +1222,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "MiniMax M2.5",
@@ -812,7 +1241,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         }
       ],
       "creative": [
@@ -825,7 +1262,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Kimi K2",
@@ -836,7 +1279,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2 Thinking",
@@ -847,7 +1296,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -860,7 +1315,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         },
         {
           "model": "GLM-4.7",
@@ -871,7 +1334,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "Gemini Flash Latest",
@@ -884,7 +1353,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "MiniMax M2.5",
@@ -897,7 +1374,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         }
       ],
       "fiction": [
@@ -910,7 +1395,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Kimi K2",
@@ -921,7 +1412,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2 Thinking",
@@ -932,7 +1429,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -945,7 +1448,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         },
         {
           "model": "GLM-4.7",
@@ -956,7 +1467,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "Gemini Flash Latest",
@@ -969,7 +1486,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "MiniMax M2.5",
@@ -982,7 +1507,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         }
       ],
       "youth": [
@@ -995,7 +1528,13 @@
             "revised": 1.5641279999999995,
             "feedback": 1.447932600000001
           },
-          "totalCost": 3.1797282000000004
+          "totalCost": 3.1797282000000004,
+          "tokensByStage": {
+            "initial": 58894,
+            "revised": 919668,
+            "feedback": 733561
+          },
+          "totalTokens": 1712123
         },
         {
           "model": "Kimi K2",
@@ -1006,7 +1545,13 @@
             "revised": 0.8762186000000002,
             "feedback": 0.5953074000000002
           },
-          "totalCost": 1.5691704000000004
+          "totalCost": 1.5691704000000004,
+          "tokensByStage": {
+            "initial": 42196,
+            "revised": 807014,
+            "feedback": 501468
+          },
+          "totalTokens": 1350678
         },
         {
           "model": "Kimi K2 Thinking",
@@ -1017,7 +1562,13 @@
             "revised": 1.3428215,
             "feedback": 1.3654949000000005
           },
-          "totalCost": 2.8520783000000005
+          "totalCost": 2.8520783000000005,
+          "tokensByStage": {
+            "initial": 60643,
+            "revised": 1014110,
+            "feedback": 809543
+          },
+          "totalTokens": 1884296
         },
         {
           "model": "Gemini Flash Latest",
@@ -1030,7 +1581,15 @@
             "initialJudging": 4.004972800000002,
             "revisedJudging": 33.557363599999874
           },
-          "totalCost": 40.285254799999876
+          "totalCost": 40.285254799999876,
+          "tokensByStage": {
+            "initial": 66509,
+            "revised": 1107260,
+            "feedback": 728829,
+            "initialJudging": 5140118,
+            "revisedJudging": 44893098
+          },
+          "totalTokens": 51935814
         },
         {
           "model": "GLM-4.7",
@@ -1041,7 +1600,13 @@
             "revised": 1.6267912000000002,
             "feedback": 1.2835582000000008
           },
-          "totalCost": 3.074902800000001
+          "totalCost": 3.074902800000001,
+          "tokensByStage": {
+            "initial": 77469,
+            "revised": 1154620,
+            "feedback": 812141
+          },
+          "totalTokens": 2044230
         },
         {
           "model": "Gemini Flash-Lite Latest",
@@ -1054,7 +1619,15 @@
             "initialJudging": 0.4405609000000004,
             "revisedJudging": 3.887031300000003
           },
-          "totalCost": 4.660569000000003
+          "totalCost": 4.660569000000003,
+          "tokensByStage": {
+            "initial": 47454,
+            "revised": 911065,
+            "feedback": 557002,
+            "initialJudging": 4116853,
+            "revisedJudging": 36538731
+          },
+          "totalTokens": 42171105
         },
         {
           "model": "MiniMax M2.5",
@@ -1067,7 +1640,15 @@
             "initialJudging": 1.9685663999999967,
             "revisedJudging": 16.913814599999995
           },
-          "totalCost": 19.97214629999999
+          "totalCost": 19.97214629999999,
+          "tokensByStage": {
+            "initial": 45688,
+            "revised": 821270,
+            "feedback": 635167,
+            "initialJudging": 4507479,
+            "revisedJudging": 39584047
+          },
+          "totalTokens": 45593651
         }
       ]
     }

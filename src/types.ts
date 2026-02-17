@@ -244,6 +244,8 @@ export interface RunResult {
     costByModelByStage: Record<string, Record<string, number>>;
     costByModelUncached?: Record<string, number>;
     costByModelByStageUncached?: Record<string, Record<string, number>>;
+    tokensByModel?: Record<string, number>;
+    tokensByModelByStage?: Record<string, Record<string, number>>;
     speedByModel: Record<string, ModelSpeed>;
     durationMs: number;
     errors?: TaskError[];

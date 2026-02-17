@@ -132,6 +132,8 @@ export interface RunResult {
     costByModelByStage: Record<string, Record<string, number>>;
     costByModelUncached?: Record<string, number>;
     costByModelByStageUncached?: Record<string, Record<string, number>>;
+    tokensByModel?: Record<string, number>;
+    tokensByModelByStage?: Record<string, Record<string, number>>;
     speedByModel: Record<string, ModelSpeed>;
     durationMs: number;
   };
@@ -144,6 +146,8 @@ export interface EloEntry {
   matchCount: number;
   costByStage?: Record<string, number>;
   totalCost?: number;
+  tokensByStage?: Record<string, number>;
+  totalTokens?: number;
 }
 
 export interface RunIndexEntry {
@@ -156,6 +160,9 @@ export interface RunIndexEntry {
   totalCostUncached?: number;
   costByModel?: Record<string, number>;
   costByModelByStage?: Record<string, Record<string, number>>;
+  tokensByModel?: Record<string, number>;
+  tokensByModelByStage?: Record<string, Record<string, number>>;
+  totalTokens?: number;
   durationMs: number;
   elo: {
     initial: Array<{ model: string; rating: number }>;

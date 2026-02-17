@@ -231,7 +231,10 @@ function renderEloTable(
   const visibleStages = (costStages ?? [])
     .filter((key) => ratings.some((r) => (r.costByStage?.[key] ?? 0) > 0))
     .map((key) => ({ key, label: allStageCols[key] ?? key }));
-  const hasCosts = visibleStages.length > 0;
+  const hasCosts = visibleStages.length > 0 &&
+    ratings.some((r) => visibleStages.some((s) => (r.costByStage?.[s.key] ?? 0) > 0));
+  const hasTokens = visibleStages.length > 0 &&
+    ratings.some((r) => visibleStages.some((s) => (r.tokensByStage?.[s.key] ?? 0) > 0));
 
   const headerCells = [
     el("th", { className: "rank" }, "#"),
@@ -242,6 +245,11 @@ function renderEloTable(
   if (hasCosts) {
     for (const s of visibleStages) {
       headerCells.push(el("th", { className: "cost" }, s.label));
+    }
+  }
+  if (hasTokens) {
+    for (const s of visibleStages) {
+      headerCells.push(el("th", {}, `${s.label} Tokens`));
     }
   }
 
@@ -266,6 +274,14 @@ function renderEloTable(
         const c = r.costByStage?.[s.key] ?? 0;
         cells.push(
           el("td", { className: "cost" }, c > 0 ? `$${c.toFixed(4)}` : "-")
+        );
+      }
+    }
+    if (hasTokens) {
+      for (const s of visibleStages) {
+        const t = r.tokensByStage?.[s.key] ?? 0;
+        cells.push(
+          el("td", { className: "muted" }, t > 0 ? t.toLocaleString() : "-")
         );
       }
     }
@@ -373,21 +389,24 @@ function renderRunDetail(run: RunResult): void {
   }
 
   // ELO tables
-  const uncachedCosts = run.meta.costByModelByStageUncached ?? {};
-  const speeds = run.meta.speedByModel;
+  const eloOpts = {
+    costByModelByStage: run.meta.costByModelByStageUncached ?? {},
+    tokensByModelByStage: run.meta.tokensByModelByStage ?? {},
+    speedByModel: run.meta.speedByModel,
+  };
 
   frag.appendChild(el("h2", {}, "Initial Writer ELO"));
-  frag.appendChild(renderRunEloTable(run.elo.initial.ratings, uncachedCosts, ["initial"], speeds));
+  frag.appendChild(renderRunEloTable(run.elo.initial.ratings, { ...eloOpts, costStages: ["initial"] }));
 
   frag.appendChild(el("h2", {}, "Revised Writer ELO"));
-  frag.appendChild(renderRunEloTable(run.elo.revised.ratings, uncachedCosts, ["revised"], speeds));
+  frag.appendChild(renderRunEloTable(run.elo.revised.ratings, { ...eloOpts, costStages: ["revised"] }));
 
   if (
     run.elo.revised.feedbackRatings &&
     run.elo.revised.feedbackRatings.length > 0
   ) {
     frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
-    frag.appendChild(renderRunEloTable(run.elo.revised.feedbackRatings, uncachedCosts, ["feedback"], speeds));
+    frag.appendChild(renderRunEloTable(run.elo.revised.feedbackRatings, { ...eloOpts, costStages: ["feedback"] }));
   }
 
   // ELO by category
@@ -401,11 +420,11 @@ function renderRunDetail(run: RunResult): void {
       d.appendChild(el("summary", {}, cat));
       const inner = el("div", { className: "details-content" });
       inner.appendChild(el("h4", {}, "Initial"));
-      inner.appendChild(renderRunEloTable(ratings, uncachedCosts, ["initial"], speeds));
+      inner.appendChild(renderRunEloTable(ratings, { ...eloOpts, costStages: ["initial"] }));
       if (run.elo.revised.byTag?.[cat]) {
         inner.appendChild(el("h4", {}, "Revised"));
         inner.appendChild(
-          renderRunEloTable(run.elo.revised.byTag[cat], uncachedCosts, ["revised"], speeds)
+          renderRunEloTable(run.elo.revised.byTag[cat], { ...eloOpts, costStages: ["revised"] })
         );
       }
       d.appendChild(inner);
@@ -486,9 +505,12 @@ function renderCostItem(label: string, value: string): HTMLElement {
  */
 function renderRunEloTable(
   ratings: EloRating[],
-  costByModelByStage?: Record<string, Record<string, number>>,
-  costStages?: string[],
-  speedByModel?: Record<string, ModelSpeed>
+  opts?: {
+    costByModelByStage?: Record<string, Record<string, number>>;
+    tokensByModelByStage?: Record<string, Record<string, number>>;
+    costStages?: string[];
+    speedByModel?: Record<string, ModelSpeed>;
+  }
 ): HTMLElement {
   const table = el("table");
 
@@ -500,15 +522,21 @@ function renderRunEloTable(
     revisedJudging: "Re-Judge",
   };
 
-  const mbms = costByModelByStage ?? {};
+  const costMbms = opts?.costByModelByStage ?? {};
+  const tokenMbms = opts?.tokensByModelByStage ?? {};
   const models = ratings.map((r) => r.model);
 
   // Only show the requested stages that actually have data
-  const visibleStages = (costStages ?? [])
-    .filter((key) => models.some((m) => (mbms[m]?.[key] ?? 0) > 0))
+  const visibleStages = (opts?.costStages ?? [])
+    .filter((key) => models.some((m) =>
+      (costMbms[m]?.[key] ?? 0) > 0 || (tokenMbms[m]?.[key] ?? 0) > 0
+    ))
     .map((key) => ({ key, label: allStageCols[key] ?? key }));
-  const hasCosts = visibleStages.length > 0;
-  const hasSpeed = speedByModel != null && Object.keys(speedByModel).length > 0;
+  const hasCosts = visibleStages.length > 0 &&
+    models.some((m) => visibleStages.some((s) => (costMbms[m]?.[s.key] ?? 0) > 0));
+  const hasTokens = visibleStages.length > 0 &&
+    models.some((m) => visibleStages.some((s) => (tokenMbms[m]?.[s.key] ?? 0) > 0));
+  const hasSpeed = opts?.speedByModel != null && Object.keys(opts.speedByModel).length > 0;
 
   const headerCells = [
     el("th", { className: "rank" }, "#"),
@@ -519,6 +547,11 @@ function renderRunEloTable(
   if (hasCosts) {
     for (const s of visibleStages) {
       headerCells.push(el("th", { className: "cost" }, s.label));
+    }
+  }
+  if (hasTokens) {
+    for (const s of visibleStages) {
+      headerCells.push(el("th", {}, `${s.label} Tokens`));
     }
   }
   if (hasSpeed) {
@@ -544,7 +577,7 @@ function renderRunEloTable(
       el("td", { className: "wlt" }, wlt),
     ];
     if (hasCosts) {
-      const stages = mbms[r.model] ?? {};
+      const stages = costMbms[r.model] ?? {};
       for (const s of visibleStages) {
         const c = stages[s.key] ?? 0;
         cells.push(
@@ -552,8 +585,17 @@ function renderRunEloTable(
         );
       }
     }
+    if (hasTokens) {
+      const stages = tokenMbms[r.model] ?? {};
+      for (const s of visibleStages) {
+        const t = stages[s.key] ?? 0;
+        cells.push(
+          el("td", { className: "muted" }, t > 0 ? t.toLocaleString() : "-")
+        );
+      }
+    }
     if (hasSpeed) {
-      const speed = speedByModel![r.model];
+      const speed = opts!.speedByModel![r.model];
       const speedStr = speed
         ? `${formatSpeed(speed.tokensPerSecond)} tok/s`
         : "-";

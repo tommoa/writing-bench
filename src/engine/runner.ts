@@ -507,7 +507,7 @@ export class BenchmarkRunner {
             toGenerate = outputsPerModel - cached.length;
           }
 
-          // Inject cached samples (no cost/speed tracking, but trigger pipeline)
+           // Inject cached samples (no cost/speed tracking, but trigger pipeline)
           for (let i = 0; i < samplesToReuse.length; i++) {
             const cs = samplesToReuse[i];
             const zeroCost: CostBreakdown = { input: 0, output: 0, total: 0, totalUncached: 0 };
