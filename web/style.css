@@ -106,6 +106,10 @@ a:hover {
   color: var(--accent);
 }
 
+.nav-github {
+  margin-left: auto;
+}
+
 /* Tables */
 table {
   width: 100%;

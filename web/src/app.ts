@@ -1534,7 +1534,7 @@ function renderMethodologyPage(): void {
 async function init(): Promise<void> {
   // Set up navigation first — the methodology page is pure static
   // content and must work even when no benchmark data exists.
-  $$(".nav a").forEach((a) => {
+  $$(".nav a[data-page]").forEach((a) => {
     a.addEventListener("click", (e) => {
       e.preventDefault();
       history.pushState(null, "", a.getAttribute("href"));
