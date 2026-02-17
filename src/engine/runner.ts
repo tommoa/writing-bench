@@ -2,22 +2,7 @@ import { streamText } from "ai";
 import { nanoid } from "nanoid";
 import { resolveModel } from "../providers/registry.js";
 import { withRetry, OutputTruncatedError } from "./retry.js";
-
-/** Global cap — same as opencode's OUTPUT_TOKEN_MAX. */
-const OUTPUT_TOKEN_CAP = 32_000;
-
-/**
- * Resolve maxOutputTokens: explicit config > min(model limit, cap) > cap.
- * Mirrors opencode's approach: min(model.limit.output, 32_000).
- */
-function resolveMaxOutputTokens(
-  configMax: number | undefined,
-  modelInfo: ModelInfo | null,
-): number {
-  if (configMax) return configMax;
-  if (modelInfo?.outputLimit) return Math.min(modelInfo.outputLimit, OUTPUT_TOKEN_CAP);
-  return OUTPUT_TOKEN_CAP;
-}
+import { resolveMaxOutputTokens, resolveTemperature } from "./model-utils.js";
 import {
   getModelInfoMap,
   calculateCost,
@@ -247,18 +232,39 @@ export class BenchmarkRunner {
     return result;
   }
 
+  /** Cached ELO ratings to avoid recomputing on every progress update. */
+  private cachedElo: {
+    initial: EloRating[];
+    revised: EloRating[];
+    feedback: EloRating[];
+  } = { initial: [], revised: [], feedback: [] };
+  private lastEloComputeMs = 0;
+
+  /** Minimum interval between expensive ELO recomputation (ms). */
+  private static readonly ELO_THROTTLE_MS = 100;
+
   private emitProgress(currentOp: string): void {
-    const sampleToModel = new Map(
-      this.initialSamples.map((s) => [s.id, s.model])
-    );
-    const revisedSampleToModel = new Map(
-      this.revisedSamples.map((s) => [s.id, s.model])
-    );
-    const sampleToFeedbackModel = new Map(
-      this.revisedSamples
-        .filter((s) => s.feedbackModel)
-        .map((s) => [s.id, s.feedbackModel!])
-    );
+    const now = Date.now();
+    if (now - this.lastEloComputeMs >= BenchmarkRunner.ELO_THROTTLE_MS) {
+      const sampleToModel = new Map(
+        this.initialSamples.map((s) => [s.id, s.model])
+      );
+      const revisedSampleToModel = new Map(
+        this.revisedSamples.map((s) => [s.id, s.model])
+      );
+      const sampleToFeedbackModel = new Map(
+        this.revisedSamples
+          .filter((s) => s.feedbackModel)
+          .map((s) => [s.id, s.feedbackModel!])
+      );
+
+      this.cachedElo = {
+        initial: computeEloFromJudgments(this.initialJudgments, sampleToModel),
+        revised: computeEloFromJudgments(this.revisedJudgments, revisedSampleToModel),
+        feedback: computeFeedbackEloFromImprovements(this.improvementJudgments, sampleToFeedbackModel),
+      };
+      this.lastEloComputeMs = now;
+    }
 
     const activeStages = (Object.entries(this.inflight)
       .filter(([, count]) => count > 0)
@@ -273,11 +279,7 @@ export class BenchmarkRunner {
         stageTotal: this.opsTotal,
         stageDone: this.opsDone,
         currentOp,
-        elo: {
-          initial: computeEloFromJudgments(this.initialJudgments, sampleToModel),
-          revised: computeEloFromJudgments(this.revisedJudgments, revisedSampleToModel),
-          feedback: computeFeedbackEloFromImprovements(this.improvementJudgments, sampleToFeedbackModel),
-        },
+        elo: this.cachedElo,
         totalCost: this.totalCost,
         totalCostUncached: this.totalCostUncached,
         costByModel: { ...this.costByModel },
@@ -1192,7 +1194,7 @@ export class BenchmarkRunner {
         model,
         system: systemPrompt,
         prompt: prompt.prompt,
-        temperature: modelCfg.temperature ?? 0.7,
+        temperature: resolveTemperature(modelCfg.temperature, 0.7, modelInfo),
         maxOutputTokens,
         maxRetries: 0,
       });
@@ -1261,7 +1263,7 @@ Please provide your detailed feedback.`;
         model,
         system: systemPrompt,
         prompt: userPrompt,
-        temperature: feedbackModelCfg.temperature ?? 0.3,
+        temperature: resolveTemperature(feedbackModelCfg.temperature, 0.3, modelInfo),
         maxOutputTokens,
         maxRetries: 0,
       });
@@ -1329,7 +1331,7 @@ Please write an improved version incorporating this feedback.`;
         model,
         system: systemPrompt,
         prompt: userPrompt,
-        temperature: writerCfg.temperature ?? 0.7,
+        temperature: resolveTemperature(writerCfg.temperature, 0.7, modelInfo),
         maxOutputTokens,
         maxRetries: 0,
       });

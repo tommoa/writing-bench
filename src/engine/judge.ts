@@ -1,7 +1,8 @@
 import { generateObject, streamText } from "ai";
 import { z } from "zod";
 import { resolveModel } from "../providers/registry.js";
-import { withRetry, isRetryable } from "./retry.js";
+import { withRetry, isRetryable, MalformedOutputError } from "./retry.js";
+import { resolveTemperature } from "./model-utils.js";
 import {
   extractUsage,
   type WritingSample,
@@ -141,44 +142,51 @@ export async function judgePair(
   const systemPrompt = buildJudgingSystemPrompt(prompt, reasoning);
   const userPrompt = buildJudgingUserPrompt(prompt, sampleA, sampleB);
 
-  let winner!: "A" | "B" | "tie";
+  let winner: "A" | "B" | "tie" | undefined;
   let reasoningText = "";
   let usage!: TokenUsage;
   let cost!: CostBreakdown;
 
-  try {
-    // Primary path: structured output via generateObject (with retry)
-    await withRetry(async () => {
-      const result = await generateObject({
-        model,
-        schema,
-        system: systemPrompt,
-        prompt: userPrompt,
-        temperature: judgeConfig.temperature ?? 0.2,
-        maxRetries: 0,
+  if (!modelInfo || modelInfo.supportsStructuredOutput) {
+    try {
+      // Primary path: structured output via generateObject (with retry)
+      await withRetry(async () => {
+        const result = await generateObject({
+          model,
+          schema,
+          system: systemPrompt,
+          prompt: userPrompt,
+          temperature: resolveTemperature(judgeConfig.temperature, 0.2, modelInfo),
+          maxRetries: 0,
+        });
+
+        usage = extractUsage(result.usage);
+        cost = calculateCost(modelInfo, usage);
+        winner = result.object.winner;
+        reasoningText =
+          "reasoning" in result.object
+            ? String(result.object.reasoning)
+            : "";
       });
+    } catch (err) {
+      // Transient errors already exhausted retries — propagate rather than
+      // falling through to the streamText path (which would also fail).
+      if (isRetryable(err)) throw err;
 
-      usage = extractUsage(result.usage);
-      cost = calculateCost(modelInfo, usage);
-      winner = result.object.winner;
-      reasoningText =
-        "reasoning" in result.object
-          ? String(result.object.reasoning)
-          : "";
-    });
-  } catch (err) {
-    // Transient errors already exhausted retries — propagate rather than
-    // falling through to the streamText path (which would also fail).
-    if (isRetryable(err)) throw err;
+      // Non-retryable error (schema/format issue) → streamText fallback
+      // handled below.
+    }
+  }
 
-    // Non-retryable error (schema/format issue) → streamText fallback
-    // with its own retry for transient failures.
+  if (!winner) {
+    // Fallback: streamText + JSON extraction (with retry).
+    // Used when generateObject fails or model lacks structured output support.
     await withRetry(async () => {
       const result = streamText({
         model,
         system: systemPrompt,
         prompt: userPrompt,
-        temperature: judgeConfig.temperature ?? 0.2,
+        temperature: resolveTemperature(judgeConfig.temperature, 0.2, modelInfo),
         maxRetries: 0,
       });
 
@@ -188,14 +196,14 @@ export async function judgePair(
 
       const parsed = extractJson(text);
       if (!parsed) {
-        throw new Error(
+        throw new MalformedOutputError(
           `${judgeConfig.label}: could not extract JSON from judgment response`
         );
       }
 
       const validated = schema.safeParse(parsed);
       if (!validated.success) {
-        throw new Error(
+        throw new MalformedOutputError(
           `${judgeConfig.label}: judgment JSON did not match schema: ${validated.error.message}`
         );
       }
@@ -209,6 +217,10 @@ export async function judgePair(
   }
 
   const latencyMs = Date.now() - startTime;
+
+  if (!winner) {
+    throw new Error(`${judgeConfig.label}: judgment produced no winner`);
+  }
 
   return {
     id: nanoid(),
