@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Glob } from "bun";
 import type { PromptConfig, ModelConfig, RunConfig } from "./types.js";
 import { parseModelSpec } from "./providers/registry.js";
+import { getModelDisplayName, getProviderDisplayName } from "./providers/models.js";
 
 // ── Zod schemas for TOML prompt validation ──────────
 
@@ -78,8 +79,48 @@ export function parseModelConfigs(specs: string[]): ModelConfig[] {
       model,
       label,
       registryId,
-    } as ModelConfig;
+    };
   });
+}
+
+/**
+ * Resolve auto-generated labels to models.dev display names.
+ * Explicit labels (user-provided via :label suffix) are preserved.
+ * Collisions between different models sharing a display name are
+ * disambiguated by appending the provider display name.
+ */
+export async function resolveModelLabels(
+  models: ModelConfig[]
+): Promise<void> {
+  // Phase 1: Replace auto-labels (label === model) with display names
+  for (const m of models) {
+    if (m.label !== m.model) continue; // explicit label, keep it
+    const displayName = await getModelDisplayName(m.provider, m.model);
+    if (displayName) {
+      m.label = displayName;
+    }
+  }
+
+  // Phase 2: Disambiguate collisions
+  const byLabel = new Map<string, ModelConfig[]>();
+  for (const m of models) {
+    const group = byLabel.get(m.label) ?? [];
+    group.push(m);
+    byLabel.set(m.label, group);
+  }
+
+  for (const [, group] of byLabel) {
+    if (group.length <= 1) continue;
+    // Same registryId sharing a label is fine (same model via same provider)
+    const uniqueIds = new Set(group.map((m) => m.registryId));
+    if (uniqueIds.size <= 1) continue;
+
+    // Different models with same display name — append provider name
+    for (const m of group) {
+      const providerName = await getProviderDisplayName(m.provider);
+      m.label = `${m.label} (${providerName ?? m.provider})`;
+    }
+  }
 }
 
 // ── Prompt filtering ────────────────────────────────

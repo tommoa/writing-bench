@@ -25,19 +25,25 @@ bun run start serve
 Models are specified as `provider:model[:label]`:
 
 ```
-openai:gpt-4o
-anthropic:claude-sonnet-4-20250514:sonnet
-google-vertex-anthropic:claude-sonnet-4-20250514
+openai:gpt-4o                                        # displayed as "GPT-4o"
+anthropic:claude-sonnet-4-20250514:sonnet             # displayed as "sonnet"
+google-vertex-anthropic:claude-sonnet-4-20250514      # displayed as "Claude Sonnet 4"
 ollama:llama3.1
 ```
+
+Display names are resolved from [models.dev](https://models.dev)
+automatically (e.g. `openai:gpt-4o` becomes "GPT-4o" in all output).
+An explicit `:label` suffix overrides this. When different providers
+serve the same model and produce the same display name, the provider
+name is appended for disambiguation (e.g. "Claude Sonnet 4 (Google
+Vertex AI)").
 
 Supported providers: `openai`, `anthropic`, `google`, `google-vertex`,
 `google-vertex-anthropic`, `openrouter`, `opencode`, `ollama`.
 
-Provider resolution uses [models.dev](https://models.dev) for metadata
-(pricing, output limits, provider npm packages). API keys are read from
-standard environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-etc.).
+Provider resolution uses models.dev for metadata (pricing, output
+limits, provider npm packages). API keys are read from standard
+environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.).
 
 ## CLI Commands
 

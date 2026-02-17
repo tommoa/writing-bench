@@ -29,7 +29,8 @@ describe("parseModelConfigs", () => {
     expect(configs).toHaveLength(1);
     expect(configs[0].provider).toBe("openai");
     expect(configs[0].model).toBe("gpt-4o");
-    expect(configs[0].label).toBe("openai:gpt-4o");
+    expect(configs[0].label).toBe("gpt-4o");
+    expect(configs[0].registryId).toBe("openai:gpt-4o");
   });
 
   it("parses provider:model:label format", () => {
@@ -38,6 +39,7 @@ describe("parseModelConfigs", () => {
     expect(configs[0].provider).toBe("anthropic");
     expect(configs[0].model).toBe("claude-sonnet-4-20250514");
     expect(configs[0].label).toBe("sonnet4");
+    expect(configs[0].registryId).toBe("anthropic:claude-sonnet-4-20250514");
   });
 
   it("handles multiple models", () => {

@@ -4,13 +4,17 @@ export type ProviderName =
   | "openai"
   | "anthropic"
   | "google"
+  | "google-vertex"
+  | "google-vertex-anthropic"
   | "openrouter"
+  | "opencode"
   | "ollama";
 
 export interface ModelConfig {
   provider: ProviderName;
   model: string;
-  label: string; // Display name (provider:model or custom)
+  label: string; // Display name (resolved from models.dev or explicit)
+  registryId: string; // "provider:model" for SDK resolution and cache
   temperature?: number;
   maxTokens?: number;
   apiBase?: string;

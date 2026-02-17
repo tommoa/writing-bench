@@ -5,7 +5,7 @@ import { join } from "path";
 import { rm } from "fs/promises";
 import { existsSync } from "fs";
 import { parseArgs, type Command } from "./cli.js";
-import { loadPrompts, parseModelConfigs, createRunConfig, filterPrompts } from "./config.js";
+import { loadPrompts, parseModelConfigs, createRunConfig, filterPrompts, resolveModelLabels } from "./config.js";
 import { BenchmarkRunner } from "./engine/runner.js";
 import { saveRun, loadRun, loadLatestRun, listRuns } from "./storage/run-store.js";
 import { updateCumulativeElo, loadCumulativeElo } from "./storage/elo-store.js";
@@ -19,6 +19,11 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
   const judges = args.judges?.length
     ? parseModelConfigs(args.judges)
     : undefined;
+
+  // Resolve display names from models.dev
+  await resolveModelLabels(models);
+  if (judges) await resolveModelLabels(judges);
+
   let prompts = await loadPrompts(args.prompts);
 
   // Apply prompt filter (match against id or category)

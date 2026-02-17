@@ -239,9 +239,7 @@ export function parseModelSpec(spec: string): {
   const labelColonIdx = rest.indexOf(":");
   const model = labelColonIdx >= 0 ? rest.slice(0, labelColonIdx) : rest;
   const label =
-    labelColonIdx >= 0
-      ? rest.slice(labelColonIdx + 1)
-      : `${provider}:${model}`;
+    labelColonIdx >= 0 ? rest.slice(labelColonIdx + 1) : model;
   const registryId = `${provider}:${model}`;
   return { provider, model, label, registryId };
 }

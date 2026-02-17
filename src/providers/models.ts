@@ -64,7 +64,9 @@ export async function fetchModelsDb(): Promise<ModelsDb> {
 
   // Fetch from API
   try {
-    const response = await fetch(MODELS_API_URL);
+    const response = await fetch(MODELS_API_URL, {
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!response.ok) {
       throw new Error(`Failed to fetch models.dev: ${response.status}`);
     }
@@ -113,6 +115,27 @@ export async function getProviderMeta(
   const p = db[providerId];
   if (!p) return null;
   return { name: p.name, api: p.api, npm: p.npm };
+}
+
+/**
+ * Look up the human-friendly model display name from models.dev (e.g. "Claude Sonnet 4").
+ */
+export async function getModelDisplayName(
+  provider: string,
+  model: string
+): Promise<string | null> {
+  const db = await fetchModelsDb();
+  return db[provider]?.models[model]?.name ?? null;
+}
+
+/**
+ * Look up the human-friendly provider display name from models.dev (e.g. "Google Vertex AI").
+ */
+export async function getProviderDisplayName(
+  provider: string
+): Promise<string | null> {
+  const db = await fetchModelsDb();
+  return db[provider]?.name ?? null;
 }
 
 /**
