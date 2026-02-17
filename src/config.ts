@@ -85,7 +85,7 @@ export function parseModelConfigs(specs: string[]): ModelConfig[] {
 
 /**
  * Resolve auto-generated labels to models.dev display names.
- * Explicit labels (user-provided via :label suffix) are preserved.
+ * Explicit labels (user-provided via =label suffix) are preserved.
  * Collisions between different models sharing a display name are
  * disambiguated by appending the provider display name.
  */

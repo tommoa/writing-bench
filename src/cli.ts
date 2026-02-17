@@ -64,14 +64,14 @@ export async function parseArgs(): Promise<Command> {
               array: true,
               demandOption: true,
               describe:
-                "Model specs: provider:model[:label] (repeatable)",
+                "Model specs: provider:model[=label] (repeatable)",
             })
             .option("judges", {
               alias: "j",
               type: "string",
               array: true,
               describe:
-                "Judge model specs: provider:model[:label] (repeatable). If omitted, --models are used for judging.",
+                "Judge model specs: provider:model[=label] (repeatable). If omitted, --models are used for judging.",
             })
             .option("prompts", {
               alias: "p",

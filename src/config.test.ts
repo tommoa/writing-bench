@@ -33,8 +33,8 @@ describe("parseModelConfigs", () => {
     expect(configs[0].registryId).toBe("openai:gpt-4o");
   });
 
-  it("parses provider:model:label format", () => {
-    const configs = parseModelConfigs(["anthropic:claude-sonnet-4-20250514:sonnet4"]);
+  it("parses provider:model=label format", () => {
+    const configs = parseModelConfigs(["anthropic:claude-sonnet-4-20250514=sonnet4"]);
     expect(configs).toHaveLength(1);
     expect(configs[0].provider).toBe("anthropic");
     expect(configs[0].model).toBe("claude-sonnet-4-20250514");
@@ -42,10 +42,28 @@ describe("parseModelConfigs", () => {
     expect(configs[0].registryId).toBe("anthropic:claude-sonnet-4-20250514");
   });
 
+  it("handles ollama model:variant format", () => {
+    const configs = parseModelConfigs(["ollama:llama3.1:8b"]);
+    expect(configs).toHaveLength(1);
+    expect(configs[0].provider).toBe("ollama");
+    expect(configs[0].model).toBe("llama3.1:8b");
+    expect(configs[0].label).toBe("llama3.1:8b");
+    expect(configs[0].registryId).toBe("ollama:llama3.1:8b");
+  });
+
+  it("handles ollama model:variant=label format", () => {
+    const configs = parseModelConfigs(["ollama:llama3.1:8b=my-llama"]);
+    expect(configs).toHaveLength(1);
+    expect(configs[0].provider).toBe("ollama");
+    expect(configs[0].model).toBe("llama3.1:8b");
+    expect(configs[0].label).toBe("my-llama");
+    expect(configs[0].registryId).toBe("ollama:llama3.1:8b");
+  });
+
   it("handles multiple models", () => {
     const configs = parseModelConfigs([
       "openai:gpt-4o",
-      "anthropic:claude-sonnet-4-20250514:sonnet",
+      "anthropic:claude-sonnet-4-20250514=sonnet",
     ]);
     expect(configs).toHaveLength(2);
   });

@@ -188,12 +188,19 @@ export async function resolveModel(modelId: string) {
 }
 
 /**
- * Parse a CLI model spec "provider:model[:label]" into its parts.
- * Provider names are models.dev provider IDs (e.g., google-vertex, google-vertex-anthropic).
+ * Parse a CLI model spec "provider:model[=label]" into its parts.
+ * Provider names are models.dev provider IDs (e.g., google-vertex).
  *
- * Because provider IDs can contain hyphens, we use a general algorithm:
- * try progressively longer prefixes until we find one that exists in
- * models.dev, preferring the longest match.
+ * The first colon separates provider from model. Everything after
+ * that colon is the model ID — which may itself contain colons
+ * (e.g. Ollama's "llama3.1:8b"). An optional "=label" suffix
+ * provides an explicit display name.
+ *
+ * Examples:
+ *   "openai:gpt-4o"              → provider=openai, model=gpt-4o
+ *   "ollama:llama3.1:8b"         → provider=ollama, model=llama3.1:8b
+ *   "openai:gpt-4o=fast"         → provider=openai, model=gpt-4o, label=fast
+ *   "ollama:llama3.1:8b=my-llama"→ provider=ollama, model=llama3.1:8b, label=my-llama
  */
 export function parseModelSpec(spec: string): {
   provider: string;
@@ -201,34 +208,20 @@ export function parseModelSpec(spec: string): {
   label: string;
   registryId: string;
 } {
-  // Find all colon positions
-  const colons: number[] = [];
-  for (let i = 0; i < spec.length; i++) {
-    if (spec[i] === ":") colons.push(i);
-  }
-
-  if (colons.length === 0) {
+  const firstColon = spec.indexOf(":");
+  if (firstColon < 0) {
     throw new Error(
-      `Invalid model spec "${spec}". Expected format: provider:model[:label]`
+      `Invalid model spec "${spec}". Expected format: provider:model[=label]`
     );
   }
 
-  // Try each split point, longest provider first
-  // For "google-vertex-anthropic:claude-sonnet-4-20250514:label" with colons at [25, 44]
-  // we try provider="google-vertex-anthropic:claude-sonnet-4-20250514" (unlikely)
-  // then provider="google-vertex-anthropic" (match!)
-  //
-  // For most specs like "openai:gpt-4o" there's only one colon so it's unambiguous.
+  const provider = spec.slice(0, firstColon);
+  const rest = spec.slice(firstColon + 1);
 
-  // With 2+ colons, the last colon is the label separator.
-  // The first colon that produces a known provider prefix wins.
-  // We check from the first colon since provider IDs don't contain colons in models.dev.
-  const provider = spec.slice(0, colons[0]);
-  const rest = spec.slice(colons[0] + 1);
-  const labelColonIdx = rest.indexOf(":");
-  const model = labelColonIdx >= 0 ? rest.slice(0, labelColonIdx) : rest;
-  const label =
-    labelColonIdx >= 0 ? rest.slice(labelColonIdx + 1) : model;
+  // Split on "=" for optional label; model may contain colons (e.g. ollama variants)
+  const eqIdx = rest.indexOf("=");
+  const model = eqIdx >= 0 ? rest.slice(0, eqIdx) : rest;
+  const label = eqIdx >= 0 ? rest.slice(eqIdx + 1) : model;
   const registryId = `${provider}:${model}`;
   return { provider, model, label, registryId };
 }
