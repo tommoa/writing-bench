@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 import React from "react";
 import { render } from "ink";
+import { join } from "path";
+import { rm } from "fs/promises";
+import { existsSync } from "fs";
 import { parseArgs, type Command } from "./cli.js";
 import { loadPrompts, parseModelConfigs, createRunConfig, filterPrompts } from "./config.js";
 import { BenchmarkRunner } from "./engine/runner.js";
@@ -320,6 +323,54 @@ function printEloTable(title: string, ratings: EloRating[]) {
   }
 }
 
+async function handleClearCache(
+  args: Extract<Command, { command: "clear-cache" }>["args"]
+) {
+  // Parse "provider:model" into a filesystem-safe key
+  const parts = args.model.split(":");
+  if (parts.length < 2) {
+    console.error(
+      'Invalid model spec. Use provider:model format (e.g. opencode:glm-4.7)'
+    );
+    process.exit(1);
+  }
+  const modelKey = `${parts[0]}_${parts.slice(1).join("_")}`.replace(
+    /[:/\\]/g,
+    "_"
+  );
+
+  const cacheBase = join(process.cwd(), "data", "cache");
+  let totalRemoved = 0;
+
+  if (!args.judgmentsOnly) {
+    const categories = ["writes", "feedback", "revisions"] as const;
+    for (const category of categories) {
+      const dir = join(cacheBase, category, modelKey);
+      if (existsSync(dir)) {
+        await rm(dir, { recursive: true });
+        console.log(`  Removed ${category}/${modelKey}/`);
+        totalRemoved++;
+      }
+    }
+  }
+
+  // Always clear judgments involving this model.
+  // Judgments are stored under the judge model's directory, but stale
+  // entries (referencing deleted sample IDs) waste disk. Clear them all.
+  const judgmentsDir = join(cacheBase, "judgments");
+  if (existsSync(judgmentsDir)) {
+    await rm(judgmentsDir, { recursive: true });
+    console.log("  Removed judgments/ (all judges)");
+    totalRemoved++;
+  }
+
+  if (totalRemoved === 0) {
+    console.log(`No cache found for ${args.model}`);
+  } else {
+    console.log(`\nCleared cache for ${args.model}.`);
+  }
+}
+
 // Main
 async function main() {
   try {
@@ -340,6 +391,9 @@ async function main() {
         break;
       case "serve":
         await handleServe(cmd.args);
+        break;
+      case "clear-cache":
+        await handleClearCache(cmd.args);
         break;
     }
   } catch (error) {

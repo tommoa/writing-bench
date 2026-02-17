@@ -35,12 +35,18 @@ export interface ServeArgs {
   open: boolean;
 }
 
+export interface ClearCacheArgs {
+  model: string;
+  judgmentsOnly: boolean;
+}
+
 export type Command =
   | { command: "run"; args: RunArgs }
   | { command: "results"; args: ResultsArgs }
   | { command: "export"; args: ExportArgs }
   | { command: "elo"; args: EloArgs }
-  | { command: "serve"; args: ServeArgs };
+  | { command: "serve"; args: ServeArgs }
+  | { command: "clear-cache"; args: ClearCacheArgs };
 
 export async function parseArgs(): Promise<Command> {
   return new Promise((resolve, reject) => {
@@ -229,6 +235,33 @@ export async function parseArgs(): Promise<Command> {
             args: {
               port: argv.port,
               open: argv.open,
+            },
+          });
+        }
+      )
+      .command(
+        "clear-cache <model>",
+        "Clear cached outputs for a model (e.g. opencode:glm-4.7)",
+        (y) =>
+          y
+            .positional("model", {
+              type: "string",
+              demandOption: true,
+              describe:
+                "Model spec: provider:model (e.g. opencode:glm-4.7)",
+            })
+            .option("judgments-only", {
+              type: "boolean",
+              default: false,
+              describe:
+                "Only clear judgment caches, keep writes/feedback/revisions",
+            }),
+        (argv) => {
+          resolve({
+            command: "clear-cache",
+            args: {
+              model: argv.model,
+              judgmentsOnly: argv.judgmentsOnly,
             },
           });
         }
