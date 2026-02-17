@@ -63,6 +63,8 @@ export interface ModelInfo {
   family: string;
   releaseDate?: string;
   openWeights: boolean;
+  supportsTemperature: boolean;
+  supportsStructuredOutput: boolean;
   contextLimit: number;
   outputLimit: number;
   costPer1MInput: number;

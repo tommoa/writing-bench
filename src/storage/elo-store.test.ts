@@ -66,8 +66,8 @@ function makeRunResult(opts: {
     config: {
       id: "test-run",
       models: [
-        { provider: "openai", model: "gpt-4o", label: "modelA" },
-        { provider: "anthropic", model: "claude-sonnet-4-20250514", label: "modelB" },
+        { provider: "openai", model: "gpt-4o", label: "modelA", registryId: "openai:gpt-4o" },
+        { provider: "anthropic", model: "claude-sonnet-4-20250514", label: "modelB", registryId: "anthropic:claude-sonnet-4-20250514" },
       ],
       prompts: opts.prompts.map((p) => ({
         id: p.id,

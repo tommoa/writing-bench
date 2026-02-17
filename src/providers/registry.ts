@@ -161,36 +161,25 @@ function getSDK(
 // Uses models.dev npm field to find the right SDK factory,
 // custom loaders to configure it, and caches the result.
 
-let providerNpmCache: Record<string, string> | null = null;
-
-async function getProviderNpm(
-  providerId: string
-): Promise<string> {
-  if (!providerNpmCache) {
-    const db = await fetchModelsDb();
-    providerNpmCache = {};
-    for (const [id, provider] of Object.entries(db)) {
-      if (provider.npm) {
-        providerNpmCache[id] = provider.npm;
-      }
-    }
-  }
-
-  const npm = providerNpmCache[providerId];
-  if (!npm) {
-    throw new Error(
-      `Unknown provider "${providerId}". Not found in models.dev database.`
-    );
-  }
-  return npm;
-}
-
 /**
  * Resolve a model string like "google-vertex:gemini-2.5-flash" to an AI SDK LanguageModel.
+ *
+ * SDK package resolution (same chain as OpenCode):
+ *   model.provider.npm > NPM_OVERRIDES[provider] > provider.npm
+ * This allows proxy providers (opencode, openrouter) to use the upstream
+ * SDK for models that need specific streaming format handling.
  */
 export async function resolveModel(modelId: string) {
   const { provider, model } = parseModelSpec(modelId);
-  const npm = NPM_OVERRIDES[provider] ?? await getProviderNpm(provider);
+  const db = await fetchModelsDb();
+  const providerData = db[provider];
+  const modelNpm = providerData?.models[model]?.provider?.npm;
+  const npm = modelNpm ?? NPM_OVERRIDES[provider] ?? providerData?.npm;
+  if (!npm) {
+    throw new Error(
+      `Unknown provider "${provider}". Not found in models.dev database.`
+    );
+  }
   const meta = await getProviderMeta(provider);
   const loader = CUSTOM_LOADERS[provider];
   const loaderResult = loader?.(meta);

@@ -13,6 +13,11 @@ interface ModelsDevModel {
   family: string;
   release_date?: string;
   open_weights?: boolean;
+  temperature?: boolean; // false for reasoning models that don't support temperature
+  structured_output?: boolean; // true if model supports JSON schema response format
+  provider?: {
+    npm?: string; // Per-model SDK override (e.g. "@ai-sdk/openai" for OpenAI models on proxy providers)
+  };
   cost?: {
     input: number; // per 1M tokens
     output: number;
@@ -158,6 +163,8 @@ export async function getModelInfo(
     family: modelData.family,
     releaseDate: modelData.release_date,
     openWeights: modelData.open_weights ?? false,
+    supportsTemperature: modelData.temperature !== false,
+    supportsStructuredOutput: modelData.structured_output === true,
     contextLimit: modelData.limit?.context ?? 0,
     outputLimit: modelData.limit?.output ?? 0,
     costPer1MInput: modelData.cost?.input ?? 0,
