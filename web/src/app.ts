@@ -161,12 +161,12 @@ function renderDashboard(index: RunsIndex): void {
 
   if (index.cumulativeElo.writing.length > 0) {
     frag.appendChild(el("h2", {}, "Writer ELO"));
-    frag.appendChild(renderEloTable(index.cumulativeElo.writing));
+    frag.appendChild(renderEloTable(index.cumulativeElo.writing, ["initial", "revised"]));
   }
 
   if (index.cumulativeElo.feedback.length > 0) {
     frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
-    frag.appendChild(renderEloTable(index.cumulativeElo.feedback));
+    frag.appendChild(renderEloTable(index.cumulativeElo.feedback, ["feedback"]));
   }
 
   if (
@@ -180,7 +180,7 @@ function renderDashboard(index: RunsIndex): void {
       const d = el("details");
       d.appendChild(el("summary", {}, cat));
       d.appendChild(
-        el("div", { className: "details-content" }, renderEloTable(ratings))
+        el("div", { className: "details-content" }, renderEloTable(ratings, ["initial", "revised"]))
       );
       frag.appendChild(d);
     }
@@ -209,21 +209,29 @@ function renderDashboard(index: RunsIndex): void {
   render(frag);
 }
 
-function renderEloTable(ratings: EloEntry[]): HTMLElement {
+/**
+ * Render a cumulative ELO table for the dashboard with optional cost
+ * columns. `costStages` controls which stage costs to show (e.g.
+ * ["initial"] for writer ELO). The "Total" column sums all stages.
+ */
+function renderEloTable(
+  ratings: EloEntry[],
+  costStages?: string[]
+): HTMLElement {
   const table = el("table");
 
-  // Determine which stage cost columns have data
-  const stageCols = [
-    { key: "initial", label: "Write" },
-    { key: "initialJudging", label: "Judge" },
-    { key: "feedback", label: "Feedback" },
-    { key: "revised", label: "Revise" },
-    { key: "revisedJudging", label: "Re-Judge" },
-  ];
-  const activeStages = stageCols.filter((s) =>
-    ratings.some((r) => (r.costByStage?.[s.key] ?? 0) > 0)
-  );
-  const hasCosts = ratings.some((r) => r.totalCost != null && r.totalCost > 0);
+  const allStageCols: Record<string, string> = {
+    initial: "Write",
+    initialJudging: "Judge",
+    feedback: "Feedback",
+    revised: "Revise",
+    revisedJudging: "Re-Judge",
+  };
+
+  const visibleStages = (costStages ?? [])
+    .filter((key) => ratings.some((r) => (r.costByStage?.[key] ?? 0) > 0))
+    .map((key) => ({ key, label: allStageCols[key] ?? key }));
+  const hasCosts = visibleStages.length > 0;
 
   const headerCells = [
     el("th", { className: "rank" }, "#"),
@@ -232,7 +240,7 @@ function renderEloTable(ratings: EloEntry[]): HTMLElement {
     el("th", {}, "Matches"),
   ];
   if (hasCosts) {
-    for (const s of activeStages) {
+    for (const s of visibleStages) {
       headerCells.push(el("th", { className: "cost" }, s.label));
     }
     headerCells.push(el("th", { className: "cost" }, "Total"));
@@ -255,7 +263,7 @@ function renderEloTable(ratings: EloEntry[]): HTMLElement {
       el("td", { className: "muted" }, String(r.matchCount)),
     ];
     if (hasCosts) {
-      for (const s of activeStages) {
+      for (const s of visibleStages) {
         const c = r.costByStage?.[s.key] ?? 0;
         cells.push(
           el("td", { className: "cost" }, c > 0 ? `$${c.toFixed(4)}` : "-")
@@ -355,7 +363,10 @@ function renderRunDetail(run: RunResult): void {
   const frag = document.createDocumentFragment();
 
   frag.appendChild(el("p", {}, el("a", { href: "?" }, "< back to leaderboard")));
-  frag.appendChild(el("h2", {}, `Run: ${formatDate(run.config.timestamp)}`));
+  const totalCost = run.meta.totalCostUncached ?? run.meta.totalCost;
+  frag.appendChild(
+    el("h2", {}, `Run: ${formatDate(run.config.timestamp)} — $${totalCost.toFixed(2)}`)
+  );
 
   // Run info: writers and judges
   const writerLabels = run.config.models.map((m) => m.label).join(", ");
@@ -375,17 +386,17 @@ function renderRunDetail(run: RunResult): void {
   const speeds = run.meta.speedByModel;
 
   frag.appendChild(el("h2", {}, "Initial Writer ELO"));
-  frag.appendChild(renderRunEloTable(run.elo.initial.ratings, uncachedCosts, speeds));
+  frag.appendChild(renderRunEloTable(run.elo.initial.ratings, uncachedCosts, ["initial"], speeds));
 
   frag.appendChild(el("h2", {}, "Revised Writer ELO"));
-  frag.appendChild(renderRunEloTable(run.elo.revised.ratings, uncachedCosts, speeds));
+  frag.appendChild(renderRunEloTable(run.elo.revised.ratings, uncachedCosts, ["revised"], speeds));
 
   if (
     run.elo.revised.feedbackRatings &&
     run.elo.revised.feedbackRatings.length > 0
   ) {
     frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
-    frag.appendChild(renderRunEloTable(run.elo.revised.feedbackRatings, uncachedCosts, speeds));
+    frag.appendChild(renderRunEloTable(run.elo.revised.feedbackRatings, uncachedCosts, ["feedback"], speeds));
   }
 
   // ELO by category
@@ -399,11 +410,11 @@ function renderRunDetail(run: RunResult): void {
       d.appendChild(el("summary", {}, cat));
       const inner = el("div", { className: "details-content" });
       inner.appendChild(el("h4", {}, "Initial"));
-      inner.appendChild(renderRunEloTable(ratings, uncachedCosts, speeds));
+      inner.appendChild(renderRunEloTable(ratings, uncachedCosts, ["initial"], speeds));
       if (run.elo.revised.byTag?.[cat]) {
         inner.appendChild(el("h4", {}, "Revised"));
         inner.appendChild(
-          renderRunEloTable(run.elo.revised.byTag[cat], uncachedCosts, speeds)
+          renderRunEloTable(run.elo.revised.byTag[cat], uncachedCosts, ["revised"], speeds)
         );
       }
       d.appendChild(inner);
@@ -477,27 +488,36 @@ function renderCostItem(label: string, value: string): HTMLElement {
   );
 }
 
+/**
+ * Render an ELO table for a run with optional cost and speed columns.
+ * `costStages` controls which stage costs to show as columns (e.g.
+ * ["initial"] for write cost only). The "Total" column sums all stages
+ * for the model (including judging), not just the visible ones.
+ */
 function renderRunEloTable(
   ratings: EloRating[],
   costByModelByStage?: Record<string, Record<string, number>>,
+  costStages?: string[],
   speedByModel?: Record<string, ModelSpeed>
 ): HTMLElement {
   const table = el("table");
 
-  // Determine which stage cost columns have data
-  const stageCols = [
-    { key: "initial", label: "Write" },
-    { key: "initialJudging", label: "Judge" },
-    { key: "feedback", label: "Feedback" },
-    { key: "revised", label: "Revise" },
-    { key: "revisedJudging", label: "Re-Judge" },
-  ];
+  const allStageCols: Record<string, string> = {
+    initial: "Write",
+    initialJudging: "Judge",
+    feedback: "Feedback",
+    revised: "Revise",
+    revisedJudging: "Re-Judge",
+  };
+
   const mbms = costByModelByStage ?? {};
   const models = ratings.map((r) => r.model);
-  const activeStages = stageCols.filter((s) =>
-    models.some((m) => (mbms[m]?.[s.key] ?? 0) > 0)
-  );
-  const hasCosts = activeStages.length > 0;
+
+  // Only show the requested stages that actually have data
+  const visibleStages = (costStages ?? [])
+    .filter((key) => models.some((m) => (mbms[m]?.[key] ?? 0) > 0))
+    .map((key) => ({ key, label: allStageCols[key] ?? key }));
+  const hasCosts = visibleStages.length > 0;
   const hasSpeed = speedByModel != null && Object.keys(speedByModel).length > 0;
 
   const headerCells = [
@@ -507,7 +527,7 @@ function renderRunEloTable(
     el("th", {}, "W/L/T"),
   ];
   if (hasCosts) {
-    for (const s of activeStages) {
+    for (const s of visibleStages) {
       headerCells.push(el("th", { className: "cost" }, s.label));
     }
     headerCells.push(el("th", { className: "cost" }, "Total"));
@@ -536,12 +556,13 @@ function renderRunEloTable(
     ];
     if (hasCosts) {
       const stages = mbms[r.model] ?? {};
-      for (const s of activeStages) {
+      for (const s of visibleStages) {
         const c = stages[s.key] ?? 0;
         cells.push(
           el("td", { className: "cost" }, c > 0 ? `$${c.toFixed(4)}` : "-")
         );
       }
+      // Total includes all stages for the model, not just visible ones
       let total = 0;
       for (const cost of Object.values(stages)) total += cost;
       cells.push(
