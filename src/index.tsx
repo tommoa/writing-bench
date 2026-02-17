@@ -9,7 +9,7 @@ import { updateCumulativeElo, loadCumulativeElo } from "./storage/elo-store.js";
 import { exportForWeb } from "./export/web-export.js";
 import { checkProviderEnv } from "./providers/models.js";
 import { App } from "./ui/App.js";
-import type { BenchmarkEvent, EloRating } from "./types.js";
+import type { BenchmarkEvent, EloRating, TaskError } from "./types.js";
 
 async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
   const models = parseModelConfigs(args.models);
@@ -133,14 +133,42 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     );
 
     if (result.meta.errors && result.meta.errors.length > 0) {
-      const unique = new Map<string, number>();
+      const unique = new Map<string, { count: number; example: TaskError }>();
       for (const e of result.meta.errors) {
         const key = e.model ? `${e.model}: ${e.message}` : e.message;
-        unique.set(key, (unique.get(key) ?? 0) + 1);
+        const existing = unique.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          unique.set(key, { count: 1, example: e });
+        }
       }
       console.log(`\n${result.meta.errors.length} task(s) failed:`);
-      for (const [msg, count] of unique) {
-        console.log(`  ${count > 1 ? `(${count}x) ` : ""}${msg}`);
+      for (const [msg, { count, example }] of unique) {
+        const prefix = count > 1 ? `(${count}x) ` : "";
+        console.log(`  ${prefix}${msg}`);
+        const pad = "    ";
+        if (example.statusCode != null || example.url) {
+          const parts: string[] = [];
+          if (example.statusCode != null) parts.push(`status=${example.statusCode}`);
+          if (example.url) parts.push(example.url);
+          console.log(`${pad}${parts.join(" ")}`);
+        }
+        if (example.responseBody) {
+          console.log(`${pad}body: ${example.responseBody}`);
+        }
+        if (example.stack) {
+          // Print the first few frames after the error line
+          const frames = example.stack
+            .split("\n")
+            .filter((l) => l.trimStart().startsWith("at "))
+            .slice(0, 5);
+          if (frames.length > 0) {
+            for (const frame of frames) {
+              console.log(`${pad}${frame.trim()}`);
+            }
+          }
+        }
       }
     }
   } catch (error) {

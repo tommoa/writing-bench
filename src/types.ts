@@ -153,6 +153,63 @@ export interface EloSnapshot {
   byTag?: Record<string, EloRating[]>; // ELO per prompt tag
 }
 
+// ── Errors ──────────────────────────────────────────
+
+export interface TaskError {
+  message: string;
+  model?: string;
+  /** HTTP status code from the API, if available */
+  statusCode?: number;
+  /** Raw response body from the API (truncated) */
+  responseBody?: string;
+  /** The URL that was called */
+  url?: string;
+  /** Whether the SDK considered this retryable */
+  isRetryable?: boolean;
+  /** Stack trace of the original error */
+  stack?: string;
+}
+
+/**
+ * Unwrap an AI SDK error into a TaskError with full diagnostic detail.
+ *
+ * Handles RetryError (unwraps to lastError), APICallError (extracts
+ * statusCode, responseBody, url), and plain Error (preserves stack).
+ */
+export function extractTaskError(err: unknown, model?: string): TaskError {
+  // Unwrap RetryError to get the actual cause
+  let root: unknown = err;
+  if (root instanceof Error && "errors" in root && Array.isArray((root as any).errors)) {
+    // RetryError — use lastError for detail
+    root = (root as any).lastError ?? (root as any).errors[(root as any).errors.length - 1] ?? root;
+  }
+
+  const result: TaskError = {
+    message: root instanceof Error ? root.message : String(root),
+    model,
+  };
+
+  if (root instanceof Error) {
+    result.stack = root.stack;
+
+    // APICallError fields
+    if ("statusCode" in root) result.statusCode = (root as any).statusCode;
+    if ("url" in root) result.url = (root as any).url;
+    if ("isRetryable" in root) result.isRetryable = (root as any).isRetryable;
+    if ("responseBody" in root) {
+      const body = String((root as any).responseBody);
+      result.responseBody = body.length > 500 ? body.slice(0, 500) + "…" : body;
+    }
+
+    // If the unwrapped error has a cause, include its message too
+    if (root.cause instanceof Error && root.cause.message !== result.message) {
+      result.message = `${result.message} (cause: ${root.cause.message})`;
+    }
+  }
+
+  return result;
+}
+
 // ── Run Result ──────────────────────────────────────
 
 export interface ModelSpeed {
@@ -181,7 +238,7 @@ export interface RunResult {
     costByModelByStage: Record<string, Record<string, number>>;
     speedByModel: Record<string, ModelSpeed>;
     durationMs: number;
-    errors?: Array<{ message: string; model?: string }>;
+    errors?: TaskError[];
   };
   modelInfo: Record<string, ModelInfo>;
 }
@@ -252,5 +309,5 @@ export type BenchmarkEvent =
   | { type: "judgmentComplete"; data: PairwiseJudgment }
   | { type: "feedbackComplete"; data: Feedback }
   | { type: "stageComplete"; data: { stage: BenchmarkStage } }
-  | { type: "error"; data: { message: string; model?: string } }
+  | { type: "error"; data: TaskError }
   | { type: "complete"; data: RunResult };

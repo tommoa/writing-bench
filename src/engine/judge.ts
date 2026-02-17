@@ -1,6 +1,7 @@
-import { generateObject, generateText } from "ai";
+import { generateObject, streamText } from "ai";
 import { z } from "zod";
 import { resolveModel } from "../providers/registry.js";
+import { withRetry, isRetryable } from "./retry.js";
 import {
   extractUsage,
   type WritingSample,
@@ -140,61 +141,71 @@ export async function judgePair(
   const systemPrompt = buildJudgingSystemPrompt(prompt, reasoning);
   const userPrompt = buildJudgingUserPrompt(prompt, sampleA, sampleB);
 
-  let winner: "A" | "B" | "tie";
+  let winner!: "A" | "B" | "tie";
   let reasoningText = "";
-  let usage: TokenUsage;
-  let cost: CostBreakdown;
+  let usage!: TokenUsage;
+  let cost!: CostBreakdown;
 
   try {
-    // Primary path: structured output via generateObject
-    const result = await generateObject({
-      model,
-      schema,
-      system: systemPrompt,
-      prompt: userPrompt,
-      temperature: judgeConfig.temperature ?? 0.2,
+    // Primary path: structured output via generateObject (with retry)
+    await withRetry(async () => {
+      const result = await generateObject({
+        model,
+        schema,
+        system: systemPrompt,
+        prompt: userPrompt,
+        temperature: judgeConfig.temperature ?? 0.2,
+        maxRetries: 0,
+      });
+
+      usage = extractUsage(result.usage);
+      cost = calculateCost(modelInfo, usage);
+      winner = result.object.winner;
+      reasoningText =
+        "reasoning" in result.object
+          ? String(result.object.reasoning)
+          : "";
     });
+  } catch (err) {
+    // Transient errors already exhausted retries — propagate rather than
+    // falling through to the streamText path (which would also fail).
+    if (isRetryable(err)) throw err;
 
-    usage = extractUsage(result.usage);
-    cost = calculateCost(modelInfo, usage);
-    winner = result.object.winner;
-    reasoningText =
-      "reasoning" in result.object
-        ? String(result.object.reasoning)
-        : "";
-  } catch {
-    // Fallback: generateText + manual JSON extraction.
-    // This handles models that don't support responseFormat or
-    // produce malformed structured output.
-    const result = await generateText({
-      model,
-      system: systemPrompt,
-      prompt: userPrompt,
-      temperature: judgeConfig.temperature ?? 0.2,
+    // Non-retryable error (schema/format issue) → streamText fallback
+    // with its own retry for transient failures.
+    await withRetry(async () => {
+      const result = streamText({
+        model,
+        system: systemPrompt,
+        prompt: userPrompt,
+        temperature: judgeConfig.temperature ?? 0.2,
+        maxRetries: 0,
+      });
+
+      const text = await result.text;
+      usage = extractUsage(await result.usage);
+      cost = calculateCost(modelInfo, usage);
+
+      const parsed = extractJson(text);
+      if (!parsed) {
+        throw new Error(
+          `${judgeConfig.label}: could not extract JSON from judgment response`
+        );
+      }
+
+      const validated = schema.safeParse(parsed);
+      if (!validated.success) {
+        throw new Error(
+          `${judgeConfig.label}: judgment JSON did not match schema: ${validated.error.message}`
+        );
+      }
+
+      winner = validated.data.winner;
+      reasoningText =
+        "reasoning" in validated.data
+          ? String(validated.data.reasoning)
+          : "";
     });
-
-    usage = extractUsage(result.usage);
-    cost = calculateCost(modelInfo, usage);
-
-    const parsed = extractJson(result.text);
-    if (!parsed) {
-      throw new Error(
-        `${judgeConfig.label}: could not extract JSON from judgment response`
-      );
-    }
-
-    const validated = schema.safeParse(parsed);
-    if (!validated.success) {
-      throw new Error(
-        `${judgeConfig.label}: judgment JSON did not match schema: ${validated.error.message}`
-      );
-    }
-
-    winner = validated.data.winner;
-    reasoningText =
-      "reasoning" in validated.data
-        ? String(validated.data.reasoning)
-        : "";
   }
 
   const latencyMs = Date.now() - startTime;

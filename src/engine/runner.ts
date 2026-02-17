@@ -1,6 +1,23 @@
-import { generateText } from "ai";
+import { streamText } from "ai";
 import { nanoid } from "nanoid";
 import { resolveModel } from "../providers/registry.js";
+import { withRetry, OutputTruncatedError } from "./retry.js";
+
+/** Global cap — same as opencode's OUTPUT_TOKEN_MAX. */
+const OUTPUT_TOKEN_CAP = 32_000;
+
+/**
+ * Resolve maxOutputTokens: explicit config > min(model limit, cap) > cap.
+ * Mirrors opencode's approach: min(model.limit.output, 32_000).
+ */
+function resolveMaxOutputTokens(
+  configMax: number | undefined,
+  modelInfo: ModelInfo | null,
+): number {
+  if (configMax) return configMax;
+  if (modelInfo?.outputLimit) return Math.min(modelInfo.outputLimit, OUTPUT_TOKEN_CAP);
+  return OUTPUT_TOKEN_CAP;
+}
 import {
   getModelInfoMap,
   calculateCost,
@@ -25,8 +42,10 @@ import {
 } from "../storage/sample-cache.js";
 import {
   extractUsage,
+  extractTaskError,
   type RunConfig,
   type RunResult,
+  type TaskError,
   type WritingSample,
   type Feedback,
   type PairwiseJudgment,
@@ -76,7 +95,7 @@ export class BenchmarkRunner {
   private initialJudgments: PairwiseJudgment[] = [];
   private revisedJudgments: PairwiseJudgment[] = [];
   private improvementJudgments: PairwiseJudgment[] = [];
-  private taskErrors: Array<{ message: string; model?: string }> = [];
+  private taskErrors: TaskError[] = [];
 
   // ── Reactive tracking ─────────────────────────────
   // Samples grouped by prompt for pair generation
@@ -140,9 +159,9 @@ export class BenchmarkRunner {
       try {
         await fn();
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.taskErrors.push({ message, model });
-        this.emit({ type: "error", data: { message, model } });
+        const taskError = extractTaskError(err, model);
+        this.taskErrors.push(taskError);
+        this.emit({ type: "error", data: taskError });
       }
     });
   }
@@ -1165,17 +1184,25 @@ export class BenchmarkRunner {
         : ""
     }`;
 
-    const result = await generateText({
-      model,
-      system: systemPrompt,
-      prompt: prompt.prompt,
-      temperature: modelCfg.temperature ?? 0.7,
-      maxOutputTokens: modelCfg.maxTokens,
+    const modelInfo = this.modelInfoMap[modelCfg.label] ?? null;
+    const maxOutputTokens = resolveMaxOutputTokens(modelCfg.maxTokens, modelInfo);
+
+    const { text, usage: rawUsage } = await withRetry(async () => {
+      const result = streamText({
+        model,
+        system: systemPrompt,
+        prompt: prompt.prompt,
+        temperature: modelCfg.temperature ?? 0.7,
+        maxOutputTokens,
+        maxRetries: 0,
+      });
+      const text = await result.text;
+      if ((await result.finishReason) === "length") throw new OutputTruncatedError();
+      return { text, usage: await result.usage };
     });
 
     const latencyMs = Date.now() - startTime;
-    const usage = extractUsage(result.usage);
-    const modelInfo = this.modelInfoMap[modelCfg.label] ?? null;
+    const usage = extractUsage(rawUsage);
     const cost = calculateCost(modelInfo, usage);
 
     this.totalTokens += usage.inputTokens + usage.outputTokens;
@@ -1187,7 +1214,7 @@ export class BenchmarkRunner {
       model: modelCfg.label,
       promptId: prompt.id,
       outputIndex,
-      text: result.text,
+      text,
       stage,
       usage,
       cost,
@@ -1226,16 +1253,25 @@ ${sample.text}
 
 Please provide your detailed feedback.`;
 
-    const result = await generateText({
-      model,
-      system: systemPrompt,
-      prompt: userPrompt,
-      temperature: feedbackModelCfg.temperature ?? 0.3,
+    const modelInfo = this.modelInfoMap[feedbackModelCfg.label] ?? null;
+    const maxOutputTokens = resolveMaxOutputTokens(feedbackModelCfg.maxTokens, modelInfo);
+
+    const { text, usage: rawUsage } = await withRetry(async () => {
+      const result = streamText({
+        model,
+        system: systemPrompt,
+        prompt: userPrompt,
+        temperature: feedbackModelCfg.temperature ?? 0.3,
+        maxOutputTokens,
+        maxRetries: 0,
+      });
+      const text = await result.text;
+      if ((await result.finishReason) === "length") throw new OutputTruncatedError();
+      return { text, usage: await result.usage };
     });
 
     const latencyMs = Date.now() - startTime;
-    const usage = extractUsage(result.usage);
-    const modelInfo = this.modelInfoMap[feedbackModelCfg.label] ?? null;
+    const usage = extractUsage(rawUsage);
     const cost = calculateCost(modelInfo, usage);
 
     this.totalTokens += usage.inputTokens + usage.outputTokens;
@@ -1246,7 +1282,7 @@ Please provide your detailed feedback.`;
       id: nanoid(),
       sourceModel: feedbackModelCfg.label,
       targetSampleId: sample.id,
-      text: result.text,
+      text,
       usage,
       cost,
       latencyMs,
@@ -1285,17 +1321,25 @@ ${feedback.text}
 
 Please write an improved version incorporating this feedback.`;
 
-    const result = await generateText({
-      model,
-      system: systemPrompt,
-      prompt: userPrompt,
-      temperature: writerCfg.temperature ?? 0.7,
-      maxOutputTokens: writerCfg.maxTokens,
+    const modelInfo = this.modelInfoMap[writerCfg.label] ?? null;
+    const maxOutputTokens = resolveMaxOutputTokens(writerCfg.maxTokens, modelInfo);
+
+    const { text, usage: rawUsage } = await withRetry(async () => {
+      const result = streamText({
+        model,
+        system: systemPrompt,
+        prompt: userPrompt,
+        temperature: writerCfg.temperature ?? 0.7,
+        maxOutputTokens,
+        maxRetries: 0,
+      });
+      const text = await result.text;
+      if ((await result.finishReason) === "length") throw new OutputTruncatedError();
+      return { text, usage: await result.usage };
     });
 
     const latencyMs = Date.now() - startTime;
-    const usage = extractUsage(result.usage);
-    const modelInfo = this.modelInfoMap[writerCfg.label] ?? null;
+    const usage = extractUsage(rawUsage);
     const cost = calculateCost(modelInfo, usage);
 
     this.totalTokens += usage.inputTokens + usage.outputTokens;
@@ -1307,7 +1351,7 @@ Please write an improved version incorporating this feedback.`;
       model: writerCfg.label,
       promptId: prompt.id,
       outputIndex: original.outputIndex,
-      text: result.text,
+      text,
       stage: "revised",
       originalSampleId: original.id,
       feedbackUsed: feedback.id,
