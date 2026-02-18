@@ -1,8 +1,8 @@
-import type { EloRating } from "../types.js";
+import type { EloRating, PairwiseRecord } from "../types.js";
 
 // ── Constants ───────────────────────────────────────
 
-const DEFAULT_RATING = 1500;
+export const DEFAULT_RATING = 1500;
 const WHR_MAX_ITER = 50;
 const WHR_TOLERANCE = 1e-6;
 
@@ -96,10 +96,9 @@ function naturalToElo(r: number): number {
  */
 function buildGameData(games: WhrGame[]): {
   models: string[];
-  modelIndex: Map<string, number>;
   /** winsWhite[i][j] = times model i beat model j */
   winsWhite: number[][];
-  /** ties[i][j] = ties between i and j (one-directional: only i<j half populated for counting) */
+  /** tieCount[i][j] = ties between i and j (symmetric: both directions populated) */
   tieCount: number[][];
 } {
   const modelSet = new Set<string>();
@@ -131,7 +130,7 @@ function buildGameData(games: WhrGame[]): {
     }
   }
 
-  return { models, modelIndex, winsWhite, tieCount };
+  return { models, winsWhite, tieCount };
 }
 
 /**
@@ -378,18 +377,13 @@ function centeredVariances(M: Float64Array[], n: number): number[] {
 // ── Public API ──────────────────────────────────────
 
 /**
- * Compute WHR ratings from a list of pairwise games.
- *
- * Uses Newton's method on the Bradley-Terry log-posterior (with a
- * Gaussian prior for regularization) to find MAP strength estimates.
- * Confidence intervals are derived from centered posterior variances
- * (gauge-mode removed) so CIs reflect distinguishability, not prior.
- *
- * Order-independent: the same set of games always produces the same
- * ratings regardless of input order.
+ * Shared core: run WHR from pre-built game data matrices.
  */
-export function computeWhr(games: WhrGame[]): WhrResult {
-  const { models, winsWhite, tieCount } = buildGameData(games);
+function computeWhrFromGameData(
+  models: string[],
+  winsWhite: number[][],
+  tieCount: number[][],
+): WhrResult {
   const n = models.length;
 
   if (n === 0) {
@@ -442,6 +436,82 @@ export function computeWhr(games: WhrGame[]): WhrResult {
     converged,
     iterations,
   };
+}
+
+/**
+ * Build game data matrices directly from pairwise records,
+ * skipping the intermediate WhrGame[] expansion.
+ */
+function buildGameDataFromRecords(records: PairwiseRecord[]): {
+  models: string[];
+  winsWhite: number[][];
+  tieCount: number[][];
+} {
+  const modelSet = new Set<string>();
+  for (const r of records) {
+    modelSet.add(r.modelA);
+    modelSet.add(r.modelB);
+  }
+  const models = Array.from(modelSet).sort();
+  const n = models.length;
+  const modelIndex = new Map<string, number>();
+  for (let i = 0; i < n; i++) modelIndex.set(models[i], i);
+
+  const winsWhite: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  const tieCount: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+
+  for (const r of records) {
+    const ai = modelIndex.get(r.modelA)!;
+    const bi = modelIndex.get(r.modelB)!;
+    if (ai === bi) continue;
+
+    winsWhite[ai][bi] += r.winsA;
+    winsWhite[bi][ai] += r.winsB;
+    tieCount[ai][bi] += r.ties;
+    tieCount[bi][ai] += r.ties;
+  }
+
+  return { models, winsWhite, tieCount };
+}
+
+/**
+ * Compute WHR ratings from a list of pairwise games.
+ *
+ * Uses Newton's method on the Bradley-Terry log-posterior (with a
+ * Gaussian prior for regularization) to find MAP strength estimates.
+ * Confidence intervals are derived from centered posterior variances
+ * (gauge-mode removed) so CIs reflect distinguishability, not prior.
+ *
+ * Order-independent: the same set of games always produces the same
+ * ratings regardless of input order.
+ */
+export function computeWhr(games: WhrGame[]): WhrResult {
+  const { models, winsWhite, tieCount } = buildGameData(games);
+  return computeWhrFromGameData(models, winsWhite, tieCount);
+}
+
+/**
+ * Compute WHR ratings directly from pairwise records.
+ * Builds game matrices directly without expanding records into
+ * individual game objects.
+ */
+export function computeWhrFromRecords(records: PairwiseRecord[]): WhrResult {
+  const { models, winsWhite, tieCount } = buildGameDataFromRecords(records);
+  return computeWhrFromGameData(models, winsWhite, tieCount);
+}
+
+/**
+ * Convenience: compute WHR and return only the ratings array.
+ */
+export function whrRatings(games: WhrGame[]): WhrRating[] {
+  return computeWhr(games).ratings;
+}
+
+/**
+ * Convenience: compute WHR from pairwise records, return only ratings.
+ */
+export function whrRatingsFromRecords(records: PairwiseRecord[]): WhrRating[] {
+  return computeWhrFromRecords(records).ratings;
 }
 
 /**
@@ -630,4 +700,68 @@ export function improvementJudgmentsToGames(
   }
 
   return games;
+}
+
+// ── Pairwise Record Helpers ─────────────────────────
+
+/** Canonical key for a model pair (sorted so order doesn't matter). */
+function pairKey(a: string, b: string): [string, string, string] {
+  return a < b ? [a, b, `${a}:${b}`] : [b, a, `${b}:${a}`];
+}
+
+/**
+ * Convert WhrGames into aggregated PairwiseRecords.
+ * Each unique model pair gets one record with accumulated win/tie counts.
+ */
+export function gamesToRecords(games: WhrGame[]): PairwiseRecord[] {
+  const map = new Map<string, PairwiseRecord>();
+  for (const g of games) {
+    const [first, second, key] = pairKey(g.playerWhite, g.playerBlack);
+    const flipped = first !== g.playerWhite;
+
+    let rec = map.get(key);
+    if (!rec) {
+      rec = { modelA: first, modelB: second, winsA: 0, winsB: 0, ties: 0 };
+      map.set(key, rec);
+    }
+
+    if (g.result === 0.5) {
+      rec.ties++;
+    } else if ((g.result === 1.0 && !flipped) || (g.result === 0.0 && flipped)) {
+      rec.winsA++;
+    } else {
+      rec.winsB++;
+    }
+  }
+  return Array.from(map.values());
+}
+
+/** Accumulate a pairwise record into a map, normalizing to sorted model order. */
+function addToRecordMap(map: Map<string, PairwiseRecord>, r: PairwiseRecord): void {
+  const [a, b, key] = pairKey(r.modelA, r.modelB);
+  const flipped = a !== r.modelA;
+  const wA = flipped ? r.winsB : r.winsA;
+  const wB = flipped ? r.winsA : r.winsB;
+  const prev = map.get(key);
+  if (prev) {
+    prev.winsA += wA;
+    prev.winsB += wB;
+    prev.ties += r.ties;
+  } else {
+    map.set(key, { modelA: a, modelB: b, winsA: wA, winsB: wB, ties: r.ties });
+  }
+}
+
+/**
+ * Merge new PairwiseRecords into existing ones.
+ * Records are keyed by sorted (modelA, modelB) pair.
+ */
+export function mergeRecords(
+  existing: PairwiseRecord[],
+  incoming: PairwiseRecord[],
+): PairwiseRecord[] {
+  const map = new Map<string, PairwiseRecord>();
+  for (const r of existing) addToRecordMap(map, r);
+  for (const r of incoming) addToRecordMap(map, r);
+  return Array.from(map.values());
 }

@@ -146,6 +146,8 @@ export interface EloEntry {
   model: string;
   rating: number;
   matchCount: number;
+  /** 95% CI half-width in Elo points (present when computed via WHR). */
+  ci95?: number;
   costByStage?: Record<string, number>;
   totalCost?: number;
   tokensByStage?: Record<string, number>;
@@ -167,8 +169,8 @@ export interface RunIndexEntry {
   totalTokens?: number;
   durationMs: number;
   elo: {
-    initial: Array<{ model: string; rating: number }>;
-    revised: Array<{ model: string; rating: number }>;
+    initial: Array<{ model: string; rating: number; ci95?: number }>;
+    revised: Array<{ model: string; rating: number; ci95?: number }>;
   };
 }
 

@@ -154,6 +154,8 @@ export interface EloRating {
   losses: number;
   ties: number;
   matchCount: number;
+  /** 95% CI half-width in Elo points (present when computed via WHR). */
+  ci95?: number;
 }
 
 export interface EloSnapshot {
@@ -257,7 +259,7 @@ export interface RunResult {
   modelInfo: Record<string, ModelInfo>;
 }
 
-// ── Pairwise Records (for Bradley-Terry) ────────────
+// ── Pairwise Records ────────────────────────────────
 
 /** Accumulated pairwise outcomes between two models. */
 export interface PairwiseRecord {
@@ -275,7 +277,7 @@ export interface CumulativeElo {
   writing: Record<string, EloRating>;
   feedbackGiving: Record<string, EloRating>;
   writingByTag: Record<string, Record<string, EloRating>>; // tag -> model -> rating
-  /** Accumulated pairwise outcomes for Bradley-Terry recomputation. */
+  /** Accumulated pairwise outcomes for WHR recomputation. */
   pairwise?: {
     writing: PairwiseRecord[];
     feedbackGiving: PairwiseRecord[];

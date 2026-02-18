@@ -2,8 +2,8 @@
 
 A terminal-based tool for comparing LLM writing quality across literary
 genres. Models write, critique each other's work, and revise. An LLM
-judge does pairwise blind comparisons at each stage, and Bradley-Terry
-maximum likelihood estimation produces order-independent ratings.
+judge does pairwise blind comparisons at each stage, and Whole History
+Rating (WHR) produces order-independent ratings with confidence intervals.
 
 ## Quick Start
 
@@ -122,8 +122,9 @@ quality (improvement judgments).
 All artifacts are cached to disk. Re-runs skip cached API calls at
 zero cost.
 
-See the methodology page in the web viewer (`bun run start serve`, then
-click "methodology") for full details on the rating system.
+See [METHODOLOGY.md](METHODOLOGY.md) for full details on the rating
+system, or view it in the web viewer (`bun run start serve`, then click
+"methodology").
 
 ## Prompts
 
@@ -180,9 +181,9 @@ Three rating dimensions:
 - **Per-tag ELO** -- Writing ratings restricted to prompts with a given tag,
   showing category-specific strengths.
 
-### Cumulative: Bradley-Terry
+### Cumulative Ratings
 
-Ratings accumulate across runs using standard Bradley-Terry MLE. Pairwise
+Ratings accumulate across runs using the same WHR algorithm. Pairwise
 records (win/loss/tie counts per model pair) are stored on disk, merged
 with new data each run, and ratings are recomputed from the full history.
 
@@ -212,7 +213,6 @@ src/
     judge.ts           pairwise judging with position randomization
     whr.ts             Whole History Rating (WHR) with CIs
     need-identifier.ts information-gain scoring for adaptive loop
-    elo.ts             Bradley-Terry for cumulative ratings
     scheduler.ts       concurrency-limited task scheduler
     retry.ts           exponential backoff retry logic
   providers/

@@ -14,15 +14,12 @@ import {
 } from "./judge.js";
 import {
   computeWhr,
+  whrRatings,
   maxCiHalfWidth,
   judgmentsToGames,
   improvementJudgmentsToGames,
 } from "./whr.js";
 import type { WhrRating, WhrResult } from "./whr.js";
-import {
-  computeEloFromJudgments,
-  computeFeedbackEloFromImprovements,
-} from "./elo.js";
 import {
   SampleCache,
   type CachedWrite,
@@ -1043,30 +1040,34 @@ export class BenchmarkRunner {
     this.currentNeedDescription = undefined;
     this.currentBatchSummary = undefined;
 
-    // Compute final ELO (for cumulative system, which still uses BT)
+    // Compute final ratings using WHR (produces confidence intervals)
     this.beginStage("computingElo");
     this.emitProgress("Computing final ratings...");
 
     const sampleToModel = new Map(
       this.initialSamples.map((s) => [s.id, s.model]),
     );
-    const initialElo = computeEloFromJudgments(this.initialJudgments, sampleToModel);
+    const initialElo: EloRating[] = whrRatings(
+      judgmentsToGames(this.initialJudgments, sampleToModel),
+    );
 
     const revisedSampleToModel = new Map(
       this.revisedSamples.map((s) => [s.id, s.model]),
     );
-    const revisedElo = computeEloFromJudgments(this.revisedJudgments, revisedSampleToModel);
+    const revisedElo: EloRating[] = whrRatings(
+      judgmentsToGames(this.revisedJudgments, revisedSampleToModel),
+    );
 
     const sampleToFeedbackModel = new Map(
       this.revisedSamples
         .filter((s) => s.feedbackModel)
         .map((s) => [s.id, s.feedbackModel!]),
     );
-    const feedbackElo = computeFeedbackEloFromImprovements(
-      this.improvementJudgments, sampleToFeedbackModel,
+    const feedbackElo: EloRating[] = whrRatings(
+      improvementJudgmentsToGames(this.improvementJudgments, sampleToFeedbackModel),
     );
 
-    // Per-tag ELO
+    // Per-tag ELO (also via WHR for consistent CIs)
     const promptToTags = new Map(
       this.config.prompts.map((p) => [p.id, p.tags]),
     );
@@ -1075,14 +1076,15 @@ export class BenchmarkRunner {
     const revisedByTag: Record<string, EloRating[]> = {};
 
     for (const tag of allTags) {
-      initialByTag[tag] = computeEloFromJudgments(
+      initialByTag[tag] = whrRatings(judgmentsToGames(
         this.initialJudgments.filter((j) => promptToTags.get(j.promptId)?.includes(tag)),
         sampleToModel,
-      );
-      revisedByTag[tag] = computeEloFromJudgments(
+      ));
+
+      revisedByTag[tag] = whrRatings(judgmentsToGames(
         this.revisedJudgments.filter((j) => promptToTags.get(j.promptId)?.includes(tag)),
         revisedSampleToModel,
-      );
+      ));
     }
 
     this.endStage("computingElo");

@@ -1,14 +1,18 @@
 import { describe, it, expect } from "bun:test";
 import {
   computeWhr,
+  computeWhrFromRecords,
   maxCiHalfWidth,
   hasOverlap,
   estimateRemainingJudgments,
   overlapFreeThreshold,
   judgmentsToGames,
   improvementJudgmentsToGames,
+  gamesToRecords,
+  mergeRecords,
 } from "./whr.js";
 import type { WhrGame, WhrRating } from "./whr.js";
+import type { PairwiseJudgment, PairwiseRecord } from "../types.js";
 
 describe("computeWhr", () => {
   it("returns default ratings for empty game list", () => {
@@ -669,7 +673,185 @@ describe("improvementJudgmentsToGames", () => {
   });
 });
 
+describe("computeWhrFromRecords", () => {
+  it("computes correct win/loss/tie counts from records", () => {
+    const records: PairwiseRecord[] = [
+      { modelA: "gpt-4", modelB: "claude", winsA: 2, winsB: 1, ties: 1 },
+    ];
+    const result = computeWhrFromRecords(records);
+    expect(result.ratings).toHaveLength(2);
+    const gpt4 = result.ratings.find((r) => r.model === "gpt-4")!;
+    const claude = result.ratings.find((r) => r.model === "claude")!;
+    expect(gpt4.wins).toBe(2);
+    expect(gpt4.losses).toBe(1);
+    expect(gpt4.ties).toBe(1);
+    expect(gpt4.matchCount).toBe(4);
+    expect(claude.wins).toBe(1);
+    expect(claude.losses).toBe(2);
+    expect(claude.ties).toBe(1);
+  });
+
+  it("returns empty ratings for empty records", () => {
+    const result = computeWhrFromRecords([]);
+    expect(result.ratings).toHaveLength(0);
+    expect(result.converged).toBe(true);
+  });
+
+  it("handles multiple records across models", () => {
+    const records: PairwiseRecord[] = [
+      { modelA: "a", modelB: "b", winsA: 1, winsB: 0, ties: 0 },
+      { modelA: "b", modelB: "c", winsA: 0, winsB: 1, ties: 1 },
+    ];
+    const result = computeWhrFromRecords(records);
+    expect(result.ratings).toHaveLength(3);
+    // c should be ranked highest (1 win, 0 losses + 1 tie)
+    // a next (1 win, 0 losses)
+    // b lowest (0 wins, 2 losses + 1 tie)
+    const c = result.ratings.find((r) => r.model === "c")!;
+    const b = result.ratings.find((r) => r.model === "b")!;
+    expect(c.rating).toBeGreaterThan(b.rating);
+  });
+
+  it("produces ratings with CIs", () => {
+    const records: PairwiseRecord[] = [
+      { modelA: "strong", modelB: "weak", winsA: 8, winsB: 2, ties: 0 },
+    ];
+    const result = computeWhrFromRecords(records);
+    expect(result.ratings).toHaveLength(2);
+    const strong = result.ratings.find((r) => r.model === "strong")!;
+    const weak = result.ratings.find((r) => r.model === "weak")!;
+    expect(strong.rating).toBeGreaterThan(weak.rating);
+    expect(strong.ci95).toBeGreaterThan(0);
+    expect(strong.ci95).toBeLessThan(Infinity);
+    expect(weak.ci95).toBeGreaterThan(0);
+    expect(weak.ci95).toBeLessThan(Infinity);
+  });
+
+  it("produces same ratings as computeWhr with equivalent games", () => {
+    const records: PairwiseRecord[] = [
+      { modelA: "a", modelB: "b", winsA: 5, winsB: 3, ties: 2 },
+    ];
+    // Build equivalent games manually
+    const games = [
+      ...Array(5).fill({ playerWhite: "a", playerBlack: "b", result: 1.0 }),
+      ...Array(3).fill({ playerWhite: "a", playerBlack: "b", result: 0.0 }),
+      ...Array(2).fill({ playerWhite: "a", playerBlack: "b", result: 0.5 }),
+    ];
+    const fromRecords = computeWhrFromRecords(records);
+    const fromGames = computeWhr(games);
+    expect(fromRecords.ratings.length).toBe(fromGames.ratings.length);
+    for (const rr of fromRecords.ratings) {
+      const rg = fromGames.ratings.find((r) => r.model === rr.model)!;
+      expect(rr.rating).toBe(rg.rating);
+      expect(rr.ci95).toBe(rg.ci95);
+      expect(rr.wins).toBe(rg.wins);
+      expect(rr.losses).toBe(rg.losses);
+      expect(rr.ties).toBe(rg.ties);
+    }
+  });
+});
+
+describe("gamesToRecords and mergeRecords", () => {
+  it("gamesToRecords aggregates win/loss/tie counts", () => {
+    const games = [
+      { playerWhite: "a", playerBlack: "b", result: 1.0 },
+      { playerWhite: "a", playerBlack: "b", result: 0.0 },
+      { playerWhite: "a", playerBlack: "b", result: 0.5 },
+    ];
+    const records = gamesToRecords(games);
+    expect(records).toHaveLength(1);
+    expect(records[0].winsA + records[0].winsB).toBe(2);
+    expect(records[0].ties).toBe(1);
+  });
+
+  it("mergeRecords accumulates counts", () => {
+    const existing = [
+      { modelA: "modelA", modelB: "modelB", winsA: 2, winsB: 1, ties: 0 },
+    ];
+    const incoming = [
+      { modelA: "modelA", modelB: "modelB", winsA: 0, winsB: 3, ties: 1 },
+    ];
+
+    const merged = mergeRecords(existing, incoming);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].winsA).toBe(2);
+    expect(merged[0].winsB).toBe(4);
+    expect(merged[0].ties).toBe(1);
+  });
+
+  it("mergeRecords handles flipped model order", () => {
+    const existing = [
+      { modelA: "modelB", modelB: "modelA", winsA: 3, winsB: 1, ties: 0 },
+    ];
+    const incoming = [
+      { modelA: "modelA", modelB: "modelB", winsA: 2, winsB: 0, ties: 1 },
+    ];
+
+    const merged = mergeRecords(existing, incoming);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].modelA).toBe("modelA");
+    expect(merged[0].winsA).toBe(3);
+    expect(merged[0].winsB).toBe(3);
+    expect(merged[0].ties).toBe(1);
+  });
+
+  it("mergeRecords adds new pairs", () => {
+    const existing = [
+      { modelA: "modelA", modelB: "modelB", winsA: 1, winsB: 0, ties: 0 },
+    ];
+    const incoming = [
+      { modelA: "modelA", modelB: "modelC", winsA: 0, winsB: 2, ties: 0 },
+    ];
+
+    const merged = mergeRecords(existing, incoming);
+    expect(merged).toHaveLength(2);
+  });
+
+  it("extracting feedback records via improvementJudgmentsToGames + gamesToRecords works", () => {
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackB"],
+    ]);
+    const judgments: PairwiseJudgment[] = [
+      makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
+      makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
+    ];
+
+    const records = gamesToRecords(
+      improvementJudgmentsToGames(judgments, sampleToFeedbackModel),
+    );
+    expect(records).toHaveLength(1);
+
+    const r = records[0];
+    const total = r.winsA + r.winsB + r.ties;
+    expect(total).toBe(1);
+  });
+});
+
 // ── Helpers ─────────────────────────────────────────
+
+function makeJudgment(
+  id: string,
+  sampleA: string,
+  sampleB: string,
+  winner: "A" | "B" | "tie",
+  stage: "initial" | "revised" | "improvement" = "initial",
+  promptId: string = "p1",
+): PairwiseJudgment {
+  return {
+    id,
+    judgeModel: "judge",
+    promptId,
+    sampleA,
+    sampleB,
+    winner,
+    reasoning: "test",
+    stage,
+    usage: { inputTokens: 0, outputTokens: 0 },
+    cost: { input: 0, output: 0, total: 0, totalUncached: 0 },
+    latencyMs: 0,
+  };
+}
 
 function makeGame(
   white: string,

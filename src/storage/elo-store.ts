@@ -8,12 +8,13 @@ import type {
   RunResult,
 } from "../types.js";
 import {
-  createRating,
-  extractPairwiseRecords,
-  extractFeedbackPairwiseRecords,
+  DEFAULT_RATING,
+  whrRatingsFromRecords,
+  judgmentsToGames,
+  improvementJudgmentsToGames,
+  gamesToRecords,
   mergeRecords,
-  computeRatingsFromRecords,
-} from "../engine/elo.js";
+} from "../engine/whr.js";
 import { getModelDisplayName, getProviderDisplayName } from "../providers/models.js";
 
 const ELO_FILE = join(process.cwd(), "data", "elo.json");
@@ -60,10 +61,10 @@ export async function saveCumulativeElo(
 
 /**
  * Update cumulative ELO ratings with results from a new run.
- * Uses Bradley-Terry: extracts pairwise records from the run,
- * merges with existing accumulated records, and recomputes
- * ratings from scratch. This is order-independent — the same
- * set of judgments always produces the same ratings.
+ * Uses WHR: extracts pairwise records from the run, merges with
+ * existing accumulated records, and recomputes ratings from
+ * scratch. This is order-independent — the same set of judgments
+ * always produces the same ratings.
  */
 export async function updateCumulativeElo(
   run: RunResult
@@ -87,15 +88,18 @@ export async function updateCumulativeElo(
   }
 
   // ── Writing ELO ────────────────────────────────────
-  const newWritingRecords = extractPairwiseRecords(run.judgments, sampleToModel);
+  const newWritingRecords = gamesToRecords(judgmentsToGames(run.judgments, sampleToModel));
   elo.pairwise.writing = mergeRecords(elo.pairwise.writing, newWritingRecords);
-  const writingRatings = computeRatingsFromRecords(elo.pairwise.writing);
+  const writingRatings = whrRatingsFromRecords(elo.pairwise.writing);
   elo.writing = Object.fromEntries(writingRatings.map((r) => [r.model, r]));
 
   // Backfill models from this run that have no matches yet
   for (const model of new Set(sampleToModel.values())) {
     if (!elo.writing[model]) {
-      elo.writing[model] = createRating(model);
+      elo.writing[model] = {
+        model, rating: DEFAULT_RATING,
+        wins: 0, losses: 0, ties: 0, matchCount: 0,
+      };
     }
   }
 
@@ -103,15 +107,14 @@ export async function updateCumulativeElo(
   const improvementJudgments = run.judgments.filter(
     (j) => j.stage === "improvement"
   );
-  const newFeedbackRecords = extractFeedbackPairwiseRecords(
-    improvementJudgments,
-    sampleToFeedbackModel
+  const newFeedbackRecords = gamesToRecords(
+    improvementJudgmentsToGames(improvementJudgments, sampleToFeedbackModel),
   );
   elo.pairwise.feedbackGiving = mergeRecords(
     elo.pairwise.feedbackGiving,
     newFeedbackRecords
   );
-  const feedbackRatings = computeRatingsFromRecords(elo.pairwise.feedbackGiving);
+  const feedbackRatings = whrRatingsFromRecords(elo.pairwise.feedbackGiving);
   elo.feedbackGiving = Object.fromEntries(
     feedbackRatings.map((r) => [r.model, r])
   );
@@ -145,15 +148,13 @@ export async function updateCumulativeElo(
         j.stage !== "improvement" &&
         (promptToTags.get(j.promptId)?.includes(tag) ?? false)
     );
-    const newTagRecords = extractPairwiseRecords(tagJudgments, sampleToModel);
+    const newTagRecords = gamesToRecords(judgmentsToGames(tagJudgments, sampleToModel));
     const existingTagRecords = elo.pairwise.writingByTag[tag] ?? [];
     elo.pairwise.writingByTag[tag] = mergeRecords(
       existingTagRecords,
       newTagRecords
     );
-    const tagRatings = computeRatingsFromRecords(
-      elo.pairwise.writingByTag[tag]
-    );
+    const tagRatings = whrRatingsFromRecords(elo.pairwise.writingByTag[tag]);
     elo.writingByTag[tag] = Object.fromEntries(
       tagRatings.map((r) => [r.model, r])
     );
@@ -161,7 +162,10 @@ export async function updateCumulativeElo(
     // Backfill models that have samples for this tag
     for (const model of tagModels.get(tag) ?? []) {
       if (!elo.writingByTag[tag][model]) {
-        elo.writingByTag[tag][model] = createRating(model);
+        elo.writingByTag[tag][model] = {
+          model, rating: DEFAULT_RATING,
+          wins: 0, losses: 0, ties: 0, matchCount: 0,
+        };
       }
     }
   }

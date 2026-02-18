@@ -92,7 +92,7 @@ judgments.filter((j) => j.stage === "improvement");
 ### Comments
 - Section headers use em-dash lines:
   ```typescript
-  // ── Bradley-Terry Core ──────────────────────────────
+  // ── Section Headers ────────────────────────────────
   ```
 - JSDoc for exported functions (brief, imperative mood)
 - Single-line comments for inline explanations
@@ -147,7 +147,6 @@ src/
     judge.ts         Pairwise judging, position randomization
     whr.ts           Whole History Rating with confidence intervals
     need-identifier.ts  Information-gain scoring for adaptive loop
-    elo.ts           Bradley-Terry for cumulative ratings (unchanged)
     scheduler.ts     Inflight promise tracker
     retry.ts         Exponential backoff retry
   providers/         AI SDK provider resolution
@@ -210,12 +209,16 @@ feedback quality (improvement judgments).
   calls `ensureSample()`/`ensureFeedback()`/`ensureRevision()` as needed.
   Each returns cached data if available or generates fresh.
 
-### Two Rating Systems
+### Rating System
 
-- **Per-run: WHR** -- Bayesian BT with CIs, drives adaptive convergence.
-  `--confidence N` sets the CI threshold (default 100 Elo points).
-- **Cumulative: BT** -- Standard Bradley-Terry MLE (`elo.ts`,
-  `elo-store.ts`), merges pairwise records across runs. Unchanged.
+Both per-run and cumulative ratings use WHR (Bayesian BT with CIs).
+Per-run ratings drive the adaptive loop's convergence criterion;
+`--confidence N` sets the CI threshold (default 100 Elo points).
+Cumulative ratings (`elo-store.ts`) merge pairwise records across
+runs and recompute WHR from scratch.
 
-See the methodology page in the web viewer for full documentation
-(`bun run start serve`, then click "methodology").
+See `METHODOLOGY.md` at the repo root for full documentation on the
+rating system. This file is also used to generate the methodology page
+in the web viewer (via `web/src/build-methodology.ts`). If you change
+the rating system, judging approach, or adaptive loop, update
+`METHODOLOGY.md` to reflect those changes.

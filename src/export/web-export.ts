@@ -120,8 +120,8 @@ interface RunIndexEntry {
   totalTokens: number;
   durationMs: number;
   elo: {
-    initial: Array<{ model: string; rating: number }>;
-    revised: Array<{ model: string; rating: number }>;
+    initial: Array<{ model: string; rating: number; ci95?: number }>;
+    revised: Array<{ model: string; rating: number; ci95?: number }>;
   };
 }
 
@@ -129,6 +129,7 @@ interface EloEntryWithCost {
   model: string;
   rating: number;
   matchCount: number;
+  ci95?: number;
   costByStage?: Record<string, number>;
   totalCost?: number;
   tokensByStage?: Record<string, number>;
@@ -221,10 +222,12 @@ export async function exportForWeb(outDir: string): Promise<number> {
         initial: run.elo.initial.ratings.map((r) => ({
           model: r.model,
           rating: r.rating,
+          ci95: r.ci95,
         })),
         revised: run.elo.revised.ratings.map((r) => ({
           model: r.model,
           rating: r.rating,
+          ci95: r.ci95,
         })),
       },
     });
@@ -239,7 +242,7 @@ export async function exportForWeb(outDir: string): Promise<number> {
   const cumElo = await loadCumulativeElo();
 
   function enrichEloEntry(
-    r: { model: string; rating: number; matchCount: number }
+    r: { model: string; rating: number; matchCount: number; ci95?: number }
   ): EloEntryWithCost {
     const costByStage = latestEntry?.costByModelByStage[r.model];
     const totalCost = latestEntry?.costByModel[r.model];
@@ -249,6 +252,7 @@ export async function exportForWeb(outDir: string): Promise<number> {
       model: r.model,
       rating: r.rating,
       matchCount: r.matchCount,
+      ...(r.ci95 != null ? { ci95: r.ci95 } : {}),
       ...(costByStage ? { costByStage } : {}),
       ...(totalCost != null ? { totalCost } : {}),
       ...(tokensByStage ? { tokensByStage } : {}),

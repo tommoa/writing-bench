@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { computeEloFromJudgments } from "./elo.js";
+import { computeWhr, judgmentsToGames } from "./whr.js";
 import type { PairwiseJudgment } from "../types.js";
 
 function makeJudgment(
@@ -7,7 +7,7 @@ function makeJudgment(
   promptId: string,
   sampleA: string,
   sampleB: string,
-  winner: "A" | "B" | "tie"
+  winner: "A" | "B" | "tie",
 ): PairwiseJudgment {
   return {
     id,
@@ -22,6 +22,15 @@ function makeJudgment(
     cost: { input: 0, output: 0, total: 0, totalUncached: 0 },
     latencyMs: 0,
   };
+}
+
+/** Compute WHR ratings from judgments using the standard pipeline. */
+function ratingsFromJudgments(
+  judgments: PairwiseJudgment[],
+  sampleToModel: Map<string, string>,
+) {
+  const games = judgmentsToGames(judgments, sampleToModel);
+  return computeWhr(games).ratings;
 }
 
 describe("per-category ELO computation", () => {
@@ -53,7 +62,7 @@ describe("per-category ELO computation", () => {
   ];
 
   it("overall ELO reflects mixed results", () => {
-    const overall = computeEloFromJudgments(allJudgments, sampleToModel);
+    const overall = ratingsFromJudgments(allJudgments, sampleToModel);
     // Both models should be close to 1500 since they split wins
     const modelA = overall.find((r) => r.model === "modelA")!;
     const modelB = overall.find((r) => r.model === "modelB")!;
@@ -63,9 +72,9 @@ describe("per-category ELO computation", () => {
 
   it("sermon category shows modelA dominant", () => {
     const sermonJudgments = allJudgments.filter(
-      (j) => j.promptId === "sermon"
+      (j) => j.promptId === "sermon",
     );
-    const sermonElo = computeEloFromJudgments(sermonJudgments, sampleToModel);
+    const sermonElo = ratingsFromJudgments(sermonJudgments, sampleToModel);
     const modelA = sermonElo.find((r) => r.model === "modelA")!;
     const modelB = sermonElo.find((r) => r.model === "modelB")!;
     expect(modelA.rating).toBeGreaterThan(modelB.rating);
@@ -75,9 +84,9 @@ describe("per-category ELO computation", () => {
 
   it("essay category shows modelB dominant", () => {
     const essayJudgments = allJudgments.filter(
-      (j) => j.promptId === "essay"
+      (j) => j.promptId === "essay",
     );
-    const essayElo = computeEloFromJudgments(essayJudgments, sampleToModel);
+    const essayElo = ratingsFromJudgments(essayJudgments, sampleToModel);
     const modelA = essayElo.find((r) => r.model === "modelA")!;
     const modelB = essayElo.find((r) => r.model === "modelB")!;
     expect(modelB.rating).toBeGreaterThan(modelA.rating);
@@ -87,9 +96,9 @@ describe("per-category ELO computation", () => {
 
   it("story category is tied", () => {
     const storyJudgments = allJudgments.filter(
-      (j) => j.promptId === "story"
+      (j) => j.promptId === "story",
     );
-    const storyElo = computeEloFromJudgments(storyJudgments, sampleToModel);
+    const storyElo = ratingsFromJudgments(storyJudgments, sampleToModel);
     const modelA = storyElo.find((r) => r.model === "modelA")!;
     const modelB = storyElo.find((r) => r.model === "modelB")!;
     expect(modelA.rating).toBe(modelB.rating);
@@ -100,9 +109,9 @@ describe("per-category ELO computation", () => {
   it("category ELO only uses judgments from that category", () => {
     // Filter just sermon — should have 0 matches for essay-only models
     const sermonJudgments = allJudgments.filter(
-      (j) => j.promptId === "sermon"
+      (j) => j.promptId === "sermon",
     );
-    const sermonElo = computeEloFromJudgments(sermonJudgments, sampleToModel);
+    const sermonElo = ratingsFromJudgments(sermonJudgments, sampleToModel);
 
     for (const r of sermonElo) {
       // All matches should come from sermon judgments only (3 judgments)
@@ -111,9 +120,7 @@ describe("per-category ELO computation", () => {
   });
 
   it("empty category produces default ratings", () => {
-    const emptyElo = computeEloFromJudgments([], sampleToModel);
-    expect(emptyElo).toHaveLength(2);
-    expect(emptyElo[0].rating).toBe(1500);
-    expect(emptyElo[1].rating).toBe(1500);
+    const emptyElo = ratingsFromJudgments([], sampleToModel);
+    expect(emptyElo).toHaveLength(0);
   });
 });
