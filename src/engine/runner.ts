@@ -118,6 +118,7 @@ export class BenchmarkRunner {
   // Progress tracking
   private opsDone = 0;
   private judgingRound = 0;
+  private lastRatingRecompute = 0;
   private maxOutputCount = 0;
   private inflight: Record<string, number> = {};
 
@@ -320,6 +321,14 @@ export class BenchmarkRunner {
       this.improvementJudgments, sampleToFeedbackModel,
     );
     this.feedbackWhr = computeWhr(feedbackGames);
+    this.lastRatingRecompute = Date.now();
+  }
+
+  /** Throttled recompute: at most once per 100ms, only during the adaptive loop. */
+  private maybeRecomputeRatings(): void {
+    if (this.judgingRound <= 0) return;
+    if (Date.now() - this.lastRatingRecompute < 100) return;
+    this.recomputeRatings();
   }
 
   // ── Ensure* Pattern (cache-first, lazy generation) ─
@@ -629,6 +638,7 @@ export class BenchmarkRunner {
           this.addJudgment(judgment);
           this.opsDone++;
           this.emit({ type: "judgmentComplete", data: judgment });
+          this.maybeRecomputeRatings();
           this.emitProgress(`[cached] ${judgeCfg.label} judged "${prompt.name}" (${stage})`);
           return judgment;
         }
@@ -665,6 +675,7 @@ export class BenchmarkRunner {
         this.addJudgment(judgment);
         this.opsDone++;
         this.emit({ type: "judgmentComplete", data: judgment });
+        this.maybeRecomputeRatings();
         this.emitProgress(`${judgeCfg.label} judged "${prompt.name}" (${stage})`);
         return judgment;
       } finally {
