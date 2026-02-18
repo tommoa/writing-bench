@@ -28,6 +28,12 @@ import {
   identifyNeeds,
   isConverged,
   judgmentKey,
+  sampleKey,
+  feedbackKey,
+  revisionKey,
+  judgmentGroupKey,
+  completedWorkSize,
+  emptyCompletedWork,
   formatNeedDescription,
   formatBatchSummary,
   DEFAULT_CONVERGENCE,
@@ -94,7 +100,7 @@ export class BenchmarkRunner {
   private sampleStore = new Map<string, WritingSample>(); // "model:promptId:outputIndex" → sample
   private feedbackStore = new Map<string, Feedback>();     // "sourceModel:targetSampleId" → feedback
   private revisionStore = new Map<string, WritingSample>(); // "writer:originalSampleId:feedbackId" → revision
-  private completedWork: CompletedWork = { judgments: new Set() };
+  private completedWork: CompletedWork = emptyCompletedWork();
 
   // Inflight dedup — coalesce concurrent requests for the same artifact
   private inflightSamples = new Map<string, Promise<WritingSample | null>>();
@@ -859,100 +865,156 @@ export class BenchmarkRunner {
   // ── Phase 2: Fulfill Needs ────────────────────────
 
   /**
-   * Fulfill a single need by cascading through ensure* methods.
+   * Record whether a judgment triple (pair + prompt) was hit or missed.
+   * A hit (result != null) always wins — once true, stays true.
    */
-  private async fulfillNeed(need: Need): Promise<void> {
+  private recordTripleResult(
+    tripleResults: Map<string, boolean>,
+    key: string,
+    result: PairwiseJudgment | null,
+  ): void {
+    tripleResults.set(key, tripleResults.get(key) || result !== null);
+  }
+
+  /**
+   * Fulfill a single need by cascading through ensure* methods.
+   *
+   * `tripleResults` is a per-batch map tracking judgment hit/miss per triple
+   * (pair + prompt). After the batch, only triples where ALL judges missed
+   * are added to `completedWork.missingJudgments`. This relies on the
+   * co-batching invariant: all judges for a triple at the same output-index
+   * level land in the same `Promise.allSettled` batch. This holds because
+   * `identifyNeeds` scores all judges for a given (pair, prompt, outputIdx)
+   * identically, so they are selected together unless the per-pair cap
+   * truncates them — which is unlikely given the generous cap formula.
+   */
+  private async fulfillNeed(need: Need, tripleResults: Map<string, boolean>): Promise<void> {
     this.currentNeedDescription = formatNeedDescription(need, this.currentRatingMap);
     const prompt = this.promptMap.get(need.promptId)!;
-    const co = this.config.cacheOnly;
-
+    const cacheOnly = this.config.cacheOnly;
     if (need.type === "initial_judgment") {
-      const modelACfg = this.modelMap.get(need.modelA)!;
-      const modelBCfg = this.modelMap.get(need.modelB)!;
-      const key = judgmentKey(
-        "initial", need.modelA, need.modelB, need.promptId, need.judgeModel.label,
-        need.outputIdxA, need.outputIdxB,
-      );
-
-      // Ensure both samples exist (may generate)
-      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, co);
-      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, co);
-      if (!sampleA || !sampleB) {
-        this.completedWork.judgments.add(key);
-        return;
-      }
-
-      // Judge
-      await this.ensureJudgment(
-        need.judgeModel, prompt, sampleA, sampleB, "initial", co,
-      );
-      this.completedWork.judgments.add(key);
+      await this.fulfillInitial(need, prompt, cacheOnly, tripleResults);
     } else if (need.type === "improvement_judgment") {
-      const writerCfg = this.modelMap.get(need.writer)!;
-      const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
-      const key = judgmentKey(
-        "improvement", need.writer, need.feedbackModel,
-        need.promptId, need.judgeModel.label, need.outputIdx,
-      );
-
-      // Ensure the full cascade: sample → feedback → revision → judge
-      const sample = await this.ensureSample(writerCfg, prompt, need.outputIdx, co);
-      if (!sample) {
-        this.completedWork.judgments.add(key);
-        return;
-      }
-
-      const feedback = await this.ensureFeedback(fbModelCfg, sample, prompt, co);
-      if (!feedback) {
-        this.completedWork.judgments.add(key);
-        return;
-      }
-
-      const revision = await this.ensureRevision(writerCfg, sample, feedback, prompt, co);
-      if (!revision) {
-        this.completedWork.judgments.add(key);
-        return;
-      }
-
-      await this.ensureJudgment(
-        need.judgeModel, prompt, sample, revision, "improvement", co,
-      );
-      this.completedWork.judgments.add(key);
+      await this.fulfillImprovement(need, prompt, cacheOnly, tripleResults);
     } else if (need.type === "revised_judgment") {
-      const modelACfg = this.modelMap.get(need.modelA)!;
-      const modelBCfg = this.modelMap.get(need.modelB)!;
-      const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
-      const key = judgmentKey(
-        "revised", need.modelA, need.modelB,
-        `${need.promptId}:${need.feedbackModel}`, need.judgeModel.label,
-        need.outputIdxA, need.outputIdxB,
+      await this.fulfillRevised(need, prompt, cacheOnly, tripleResults);
+    }
+  }
+
+  private async fulfillInitial(
+    need: Extract<Need, { type: "initial_judgment" }>,
+    prompt: PromptConfig,
+    cacheOnly: boolean,
+    tripleResults: Map<string, boolean>,
+  ): Promise<void> {
+    const modelACfg = this.modelMap.get(need.modelA)!;
+    const modelBCfg = this.modelMap.get(need.modelB)!;
+    const key = judgmentKey(
+      "initial", need.modelA, need.modelB, need.promptId, need.judgeModel.label,
+      need.outputIdxA, need.outputIdxB,
+    );
+
+    try {
+      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, cacheOnly);
+      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, cacheOnly);
+      if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA, need.promptId, need.outputIdxA));
+      if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB, need.promptId, need.outputIdxB));
+      if (!sampleA || !sampleB) return;
+
+      const tk = judgmentGroupKey(need.modelA, need.modelB, need.promptId, need.outputIdxA, need.outputIdxB);
+      const result = await this.ensureJudgment(
+        need.judgeModel, prompt, sampleA, sampleB, "initial", cacheOnly,
       );
+      this.recordTripleResult(tripleResults, tk, result);
+    } finally {
+      this.completedWork.judgments.add(key);
+    }
+  }
 
-      // Ensure both models have samples, feedback from the same source, and revisions
-      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, co);
-      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, co);
-      if (!sampleA || !sampleB) {
-        this.completedWork.judgments.add(key);
+  private async fulfillImprovement(
+    need: Extract<Need, { type: "improvement_judgment" }>,
+    prompt: PromptConfig,
+    cacheOnly: boolean,
+    tripleResults: Map<string, boolean>,
+  ): Promise<void> {
+    const writerCfg = this.modelMap.get(need.writer)!;
+    const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
+    const key = judgmentKey(
+      "improvement", need.writer, need.feedbackModel,
+      need.promptId, need.judgeModel.label, need.outputIdx,
+    );
+
+    try {
+      // Cascade: sample → feedback → revision → judge
+      const sample = await this.ensureSample(writerCfg, prompt, need.outputIdx, cacheOnly);
+      if (!sample) {
+        this.completedWork.missingSamples.add(sampleKey(need.writer, need.promptId, need.outputIdx));
         return;
       }
 
-      const fbA = await this.ensureFeedback(fbModelCfg, sampleA, prompt, co);
-      const fbB = await this.ensureFeedback(fbModelCfg, sampleB, prompt, co);
-      if (!fbA || !fbB) {
-        this.completedWork.judgments.add(key);
+      const feedback = await this.ensureFeedback(fbModelCfg, sample, prompt, cacheOnly);
+      if (!feedback) {
+        this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.writer, need.promptId, need.outputIdx));
         return;
       }
 
-      const revA = await this.ensureRevision(modelACfg, sampleA, fbA, prompt, co);
-      const revB = await this.ensureRevision(modelBCfg, sampleB, fbB, prompt, co);
-      if (!revA || !revB) {
-        this.completedWork.judgments.add(key);
+      const revision = await this.ensureRevision(writerCfg, sample, feedback, prompt, cacheOnly);
+      if (!revision) {
+        this.completedWork.missingRevisions.add(revisionKey(need.writer, need.feedbackModel, need.promptId, need.outputIdx));
         return;
       }
 
-      await this.ensureJudgment(
-        need.judgeModel, prompt, revA, revB, "revised", co,
+      const tk = judgmentGroupKey(need.writer, need.feedbackModel, need.promptId, need.outputIdx, 0);
+      const result = await this.ensureJudgment(
+        need.judgeModel, prompt, sample, revision, "improvement", cacheOnly,
       );
+      this.recordTripleResult(tripleResults, tk, result);
+    } finally {
+      this.completedWork.judgments.add(key);
+    }
+  }
+
+  private async fulfillRevised(
+    need: Extract<Need, { type: "revised_judgment" }>,
+    prompt: PromptConfig,
+    cacheOnly: boolean,
+    tripleResults: Map<string, boolean>,
+  ): Promise<void> {
+    const modelACfg = this.modelMap.get(need.modelA)!;
+    const modelBCfg = this.modelMap.get(need.modelB)!;
+    const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
+    const key = judgmentKey(
+      "revised", need.modelA, need.modelB,
+      `${need.promptId}:${need.feedbackModel}`, need.judgeModel.label,
+      need.outputIdxA, need.outputIdxB,
+    );
+
+    try {
+      // Cascade: sampleA + sampleB → feedbackA + feedbackB → revisionA + revisionB → judge
+      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, cacheOnly);
+      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, cacheOnly);
+      if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA, need.promptId, need.outputIdxA));
+      if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB, need.promptId, need.outputIdxB));
+      if (!sampleA || !sampleB) return;
+
+      const fbA = await this.ensureFeedback(fbModelCfg, sampleA, prompt, cacheOnly);
+      const fbB = await this.ensureFeedback(fbModelCfg, sampleB, prompt, cacheOnly);
+      if (!fbA) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.modelA, need.promptId, need.outputIdxA));
+      if (!fbB) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.modelB, need.promptId, need.outputIdxB));
+      if (!fbA || !fbB) return;
+
+      const revA = await this.ensureRevision(modelACfg, sampleA, fbA, prompt, cacheOnly);
+      const revB = await this.ensureRevision(modelBCfg, sampleB, fbB, prompt, cacheOnly);
+      if (!revA) this.completedWork.missingRevisions.add(revisionKey(need.modelA, need.feedbackModel, need.promptId, need.outputIdxA));
+      if (!revB) this.completedWork.missingRevisions.add(revisionKey(need.modelB, need.feedbackModel, need.promptId, need.outputIdxB));
+      if (!revA || !revB) return;
+
+      const tk = judgmentGroupKey(need.modelA, need.modelB, `${need.promptId}:${need.feedbackModel}`, need.outputIdxA, need.outputIdxB);
+      const result = await this.ensureJudgment(
+        need.judgeModel, prompt, revA, revB, "revised", cacheOnly,
+      );
+      this.recordTripleResult(tripleResults, tk, result);
+    } finally {
       this.completedWork.judgments.add(key);
     }
   }
@@ -1002,7 +1064,8 @@ export class BenchmarkRunner {
       const P = this.config.prompts.length;
       const batchSize = Math.max(W * J * P, W * W);
 
-      for (this.judgingRound = 1; this.judgingRound <= convergence.maxRounds; this.judgingRound++) {
+      this.judgingRound = 0;
+      while (this.judgingRound < convergence.maxRounds) {
         if (isConverged(
           this.writingWhr.ratings,
           this.revisedWhr.ratings,
@@ -1042,13 +1105,19 @@ export class BenchmarkRunner {
           maxCiHalfWidth(this.feedbackWhr),
         );
         this.emitProgress(
-          `Adaptive round ${this.judgingRound}: max CI ±${maxCi === Infinity ? "∞" : maxCi} → target ±${convergence.ciThreshold}`,
+          `Adaptive round ${this.judgingRound + 1}: max CI ±${maxCi === Infinity ? "∞" : maxCi} → target ±${convergence.ciThreshold}`,
         );
 
-        // Fulfill needs in parallel — errors are recorded, not propagated
+        // Fulfill needs in parallel — errors are recorded, not propagated.
+        // tripleResults tracks per-triple judgment hit/miss within this batch;
+        // only triples where ALL judges missed are added to missingJudgments
+        // after the batch (post-batch aggregation).
         const opsBefore = this.opsDone;
+        const completedBefore = completedWorkSize(this.completedWork);
+        const tripleResults = new Map<string, boolean>();
+
         await Promise.allSettled(needs.map((n) =>
-          this.fulfillNeed(n).catch((err) => {
+          this.fulfillNeed(n, tripleResults).catch((err) => {
             const model = n.type === "improvement_judgment" ? n.writer : n.modelA;
             const taskError = extractTaskError(err, model);
             this.taskErrors.push(taskError);
@@ -1056,12 +1125,25 @@ export class BenchmarkRunner {
           }),
         ));
 
-        // If no artifacts were loaded or generated this round, further
-        // rounds cannot make progress either — break to avoid spinning.
-        if (this.opsDone === opsBefore) break;
+        // Post-batch: only triples where ALL judges missed get pruned
+        for (const [key, hadHit] of tripleResults) {
+          if (!hadHit) this.completedWork.missingJudgments.add(key);
+        }
 
-        this.recomputeRatings();
-        this.emitProgress(`Round ${this.judgingRound} complete`);
+        const completedAfter = completedWorkSize(this.completedWork);
+
+        // Only count productive rounds (with actual ops) toward maxRounds.
+        // Cache-miss-only rounds are free — just pruning the candidate space.
+        if (this.opsDone > opsBefore) {
+          this.judgingRound++;
+          this.recomputeRatings();
+          this.emitProgress(`Round ${this.judgingRound} complete`);
+        }
+
+        // Stall: no new ops AND no new discoveries (missing artifact sets
+        // didn't grow either). Negative caching IS progress — it prunes
+        // the candidate space for the next round.
+        if (this.opsDone === opsBefore && completedAfter === completedBefore) break;
       }
     }
 

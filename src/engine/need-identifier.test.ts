@@ -3,6 +3,8 @@ import {
   identifyNeeds as identifyNeedsRaw,
   isConverged,
   judgmentKey,
+  judgmentGroupKey,
+  emptyCompletedWork,
   formatNeedDescription,
   formatBatchSummary,
   DEFAULT_CONVERGENCE,
@@ -26,7 +28,7 @@ describe("identifyNeeds", () => {
     ];
     const needs = identifyNeeds(
       ratings, ratings, ratings,
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
     expect(needs).toHaveLength(0);
@@ -40,7 +42,7 @@ describe("identifyNeeds", () => {
     ];
     const needs = identifyNeeds(
       ratings, convergedRatings(3), convergedRatings(3),
-      emptyWork(), threeModels(), oneJudge(), onePrompt(),
+      workWith(), threeModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 2, 1,
     );
     expect(needs.length).toBeGreaterThan(0);
@@ -64,7 +66,7 @@ describe("identifyNeeds", () => {
     ];
     const needs = identifyNeeds(
       ratings, convergedRatings(3), convergedRatings(3),
-      emptyWork(), threeModels(), oneJudge(), onePrompt(),
+      workWith(), threeModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 1, 1,
     );
     expect(needs).toHaveLength(1);
@@ -85,7 +87,7 @@ describe("identifyNeeds", () => {
     ];
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), prompts,
+      workWith(), twoModels(), oneJudge(), prompts,
       DEFAULT_CONVERGENCE, 6, 1,
     );
     // Should have needs across multiple prompts
@@ -103,7 +105,7 @@ describe("identifyNeeds", () => {
     const manyPrompts = Array.from({ length: 10 }, (_, i) => makePrompt(`p${i}`));
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), manyPrompts,
+      workWith(), twoModels(), oneJudge(), manyPrompts,
       DEFAULT_CONVERGENCE, 20, 1,
     );
     // With 2 models, maxPerPair = max(2, ceil(20/2)) = 10
@@ -118,7 +120,7 @@ describe("identifyNeeds", () => {
     ];
     const needs = identifyNeeds(
       wideRatings, wideRatings, wideRatings,
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 20, 1,
     );
     const types = new Set(needs.map((n) => n.type));
@@ -133,7 +135,7 @@ describe("identifyNeeds", () => {
     ];
     const needs = identifyNeeds(
       wideRatings, wideRatings, wideRatings,
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 20, 1,
     );
     // Initial judgments should score higher than improvement/revised
@@ -151,11 +153,11 @@ describe("identifyNeeds", () => {
       makeWhrRating("modelA", 1500, 200, 3),
       makeWhrRating("modelB", 1500, 200, 3),
     ];
-    const completed: CompletedWork = {
+    const completed = workWith({
       judgments: new Set([
         judgmentKey("initial", "modelA", "modelB", "p1", "judge"),
       ]),
-    };
+    });
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
       completed, twoModels(), oneJudge(), onePrompt(),
@@ -176,7 +178,7 @@ describe("identifyNeeds", () => {
     // Mark everything as done. For improvement, writer and feedbackModel
     // are asymmetric (not sorted). For each feedback pair (A,B), each
     // writer needs improvement judgments for both feedback models.
-    const completed: CompletedWork = {
+    const completed = workWith({
       judgments: new Set([
         // Initial
         judgmentKey("initial", "modelA", "modelB", "p1", "judge"),
@@ -190,7 +192,7 @@ describe("identifyNeeds", () => {
         judgmentKey("revised", "modelA", "modelB", "p1:modelA", "judge"),
         judgmentKey("revised", "modelA", "modelB", "p1:modelB", "judge"),
       ]),
-    };
+    });
     const needs = identifyNeeds(
       ratings, ratings, ratings,
       completed, twoModels(), oneJudge(), onePrompt(),
@@ -206,7 +208,7 @@ describe("identifyNeeds", () => {
     ];
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 20, 2,
     );
     const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
@@ -231,11 +233,11 @@ describe("identifyNeeds", () => {
     ];
     const prompts = [makePrompt("p1"), makePrompt("p2"), makePrompt("p3")];
     // Complete all N=0 work for p1 only
-    const completed: CompletedWork = {
+    const completed = workWith({
       judgments: new Set([
         judgmentKey("initial", "modelA", "modelB", "p1", "judge", 0, 0),
       ]),
-    };
+    });
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
       completed, twoModels(), oneJudge(), prompts,
@@ -261,7 +263,7 @@ describe("identifyNeeds", () => {
     ];
     const needs = identifyNeeds(
       ratings, convergedRatings(2), ratings,
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 40, 2,
     );
     const impNeeds = needs.filter((n) => n.type === "improvement_judgment");
@@ -286,11 +288,11 @@ describe("identifyNeeds", () => {
     ];
 
     // One judgment done for this model pair (output 0 vs 0)
-    const completed: CompletedWork = {
+    const completed = workWith({
       judgments: new Set([
         judgmentKey("initial", "modelA", "modelB", "p1", "judge", 0, 0),
       ]),
-    };
+    });
 
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
@@ -313,11 +315,11 @@ describe("identifyNeeds", () => {
       makeWhrRating("modelB", 1500, 300, 3),
     ];
 
-    const completed: CompletedWork = {
+    const completed = workWith({
       judgments: new Set([
         judgmentKey("initial", "modelA", "modelB", "p1", "judge", 0, 0),
       ]),
-    };
+    });
 
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
@@ -330,6 +332,207 @@ describe("identifyNeeds", () => {
     expect(needs.length).toBeGreaterThan(0);
     // All should be initial_judgment type
     expect(needs.every((n) => n.type === "initial_judgment")).toBe(true);
+  });
+});
+
+describe("missing-artifact pruning", () => {
+  it("skips initial judgments when a sample is missing", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const work = workWith({ missingSamples: new Set(["modelA:p1:0"]) });
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    // All initial judgments require modelA's sample at p1:0, so none should be generated
+    const initial = needs.filter((n) => n.type === "initial_judgment");
+    expect(initial).toHaveLength(0);
+  });
+
+  it("skips improvement judgments when writer sample is missing", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const work = workWith({ missingSamples: new Set(["modelA:p1:0"]) });
+    const needs = identifyNeeds(
+      convergedRatings(2), convergedRatings(2), ratings,
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    // Improvement needs where writer=modelA should be pruned
+    const impA = needs.filter(
+      (n) => n.type === "improvement_judgment" && n.writer === "modelA",
+    );
+    expect(impA).toHaveLength(0);
+    // But writer=modelB should still have needs
+    const impB = needs.filter(
+      (n) => n.type === "improvement_judgment" && n.writer === "modelB",
+    );
+    expect(impB.length).toBeGreaterThan(0);
+  });
+
+  it("skips improvement judgments when feedback is missing for one side", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    // Feedback from modelA on modelB's sample is missing
+    const work = workWith({ missingFeedback: new Set(["modelA:modelB:p1:0"]) });
+    const needs = identifyNeeds(
+      convergedRatings(2), convergedRatings(2), ratings,
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    // Side with feedbackModel=modelA on writer=modelB should be pruned
+    const prunedSide = needs.filter(
+      (n) => n.type === "improvement_judgment"
+        && n.feedbackModel === "modelA" && n.writer === "modelB",
+    );
+    expect(prunedSide).toHaveLength(0);
+  });
+
+  it("skips revised judgments when a sample is missing", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const work = workWith({ missingSamples: new Set(["modelB:p1:0"]) });
+    const needs = identifyNeeds(
+      convergedRatings(2), ratings, convergedRatings(2),
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    // All revised judgments involve modelB at p1:0, so none should be generated
+    const revised = needs.filter((n) => n.type === "revised_judgment");
+    expect(revised).toHaveLength(0);
+  });
+
+  it("skips revised judgments when revision is missing", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    // Revision of modelA using feedback from modelA is missing
+    const work = workWith({ missingRevisions: new Set(["modelA:modelA:p1:0"]) });
+    const needs = identifyNeeds(
+      convergedRatings(2), ratings, convergedRatings(2),
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    // Revised judgments with fbModel=modelA involving modelA should be pruned
+    const pruned = needs.filter(
+      (n) => n.type === "revised_judgment"
+        && n.feedbackModel === "modelA",
+    );
+    expect(pruned).toHaveLength(0);
+  });
+
+  it("skips initial judgments when all judges missed the judgment group", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const work = workWith({
+      missingJudgments: new Set([judgmentGroupKey("modelA", "modelB", "p1", 0, 0)]),
+    });
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    const initial = needs.filter((n) => n.type === "initial_judgment");
+    expect(initial).toHaveLength(0);
+  });
+
+  it("does not prune other output indices when one index is missing", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    // Miss at (0,0) should NOT block (0,1) or (1,0)
+    const work = workWith({
+      missingJudgments: new Set([judgmentGroupKey("modelA", "modelB", "p1", 0, 0)]),
+    });
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 2,  // outputsPerModel = 2
+    );
+    const initial = needs.filter((n) => n.type === "initial_judgment");
+    // (0,0) is pruned but (0,1), (1,0), (1,1) should still generate candidates
+    const at00 = initial.filter((n) => n.outputIdxA === 0 && n.outputIdxB === 0);
+    const atOther = initial.filter((n) => n.outputIdxA !== 0 || n.outputIdxB !== 0);
+    expect(at00).toHaveLength(0);
+    expect(atOther.length).toBeGreaterThan(0);
+  });
+
+  it("skips improvement judgments when all judges missed the judgment group", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    // Missing judgment group for writer=modelA, feedbackModel=modelA on p1
+    const work = workWith({
+      missingJudgments: new Set([judgmentGroupKey("modelA", "modelA", "p1", 0, 0)]),
+    });
+    const needs = identifyNeeds(
+      convergedRatings(2), convergedRatings(2), ratings,
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    // The pruned side: writer=modelA, feedbackModel=modelA
+    const pruned = needs.filter(
+      (n) => n.type === "improvement_judgment"
+        && n.writer === "modelA" && n.feedbackModel === "modelA",
+    );
+    expect(pruned).toHaveLength(0);
+  });
+
+  it("skips revised judgments when all judges missed the judgment group", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    // Missing judgment group for modelA vs modelB with fbModel=modelA on p1
+    const work = workWith({
+      missingJudgments: new Set([judgmentGroupKey("modelA", "modelB", "p1:modelA", 0, 0)]),
+    });
+    const needs = identifyNeeds(
+      convergedRatings(2), ratings, convergedRatings(2),
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    // Revised judgments with fbModel=modelA should be pruned
+    const pruned = needs.filter(
+      (n) => n.type === "revised_judgment" && n.feedbackModel === "modelA",
+    );
+    expect(pruned).toHaveLength(0);
+    // But fbModel=modelB should still have needs
+    const remaining = needs.filter(
+      (n) => n.type === "revised_judgment" && n.feedbackModel === "modelB",
+    );
+    expect(remaining.length).toBeGreaterThan(0);
+  });
+
+  it("does not prune when missing sets are empty", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const needsWithEmpty = identifyNeeds(
+      ratings, ratings, ratings,
+      workWith(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    // Should generate needs for all three dimensions
+    expect(needsWithEmpty.length).toBeGreaterThan(0);
+    expect(needsWithEmpty.some((n) => n.type === "initial_judgment")).toBe(true);
+    expect(needsWithEmpty.some((n) => n.type === "improvement_judgment")).toBe(true);
+    expect(needsWithEmpty.some((n) => n.type === "revised_judgment")).toBe(true);
   });
 });
 
@@ -348,12 +551,12 @@ describe("information gain scoring", () => {
 
     const equalNeeds = identifyNeeds(
       highUncertain, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 1, 1,
     );
     const lopsidedNeeds = identifyNeeds(
       lopsided, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 1, 1,
     );
 
@@ -368,7 +571,7 @@ describe("information gain scoring", () => {
     ];
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 1, 1,
     );
     // Both CIs are below threshold (40 < 50) and both have enough games
@@ -466,7 +669,7 @@ describe("identifyNeeds with overlap", () => {
     // |1800-1200| = 600 > 100 → no overlap, both CIs (50) below threshold (100) → skip
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
     expect(needs).toHaveLength(0);
@@ -483,7 +686,7 @@ describe("identifyNeeds with overlap", () => {
     // |1800-1200| = 600 > 200 → no overlap, but modelA CI (150) > threshold (100)
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
     expect(needs.length).toBeGreaterThan(0);
@@ -496,7 +699,7 @@ describe("identifyNeeds with overlap", () => {
     ];
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
     expect(needs.length).toBeGreaterThan(0);
@@ -516,7 +719,7 @@ describe("identifyNeeds with overlap", () => {
     // B-C: |20| < 100 → overlap!
     const needs = identifyNeeds(
       ratings, convergedRatings(3), convergedRatings(3),
-      emptyWork(), threeModels(), oneJudge(), onePrompt(),
+      workWith(), threeModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
     const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
@@ -541,7 +744,7 @@ describe("identifyNeeds with overlap", () => {
     // B-C: overlap → generates needs
     const needs = identifyNeeds(
       ratings, convergedRatings(3), convergedRatings(3),
-      emptyWork(), threeModels(), oneJudge(), onePrompt(),
+      workWith(), threeModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
     const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
@@ -560,7 +763,7 @@ describe("identifyNeeds with overlap", () => {
     ];
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
-      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
     expect(needs.length).toBeGreaterThan(0);
@@ -774,8 +977,9 @@ function onePrompt(): PromptConfig[] {
   return [makePrompt("p1")];
 }
 
-function emptyWork(): CompletedWork {
-  return { judgments: new Set() };
+/** Build a CompletedWork with selective overrides, defaulting to empty. */
+function workWith(overrides: Partial<CompletedWork> = {}): CompletedWork {
+  return { ...emptyCompletedWork(), ...overrides };
 }
 
 function convergedRatings(n: number): WhrRating[] {

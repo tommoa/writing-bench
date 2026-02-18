@@ -57,6 +57,25 @@ export const DEFAULT_CONVERGENCE: ConvergenceConfig = {
 export interface CompletedWork {
   /** Set of judgment dedup keys (see judgmentKey()). */
   judgments: Set<string>;
+  /** Missing samples: "model:promptId:outputIndex" */
+  missingSamples: Set<string>;
+  /** Missing feedback: "fbModel:writerModel:promptId:outputIndex" */
+  missingFeedback: Set<string>;
+  /** Missing revisions: "writerModel:fbModel:promptId:outputIndex" */
+  missingRevisions: Set<string>;
+  /** Missing judgments: "modelA:modelB:promptId:idxA:idxB" (models sorted). All judges missed. */
+  missingJudgments: Set<string>;
+}
+
+/** Create an empty CompletedWork with all sets initialized. */
+export function emptyCompletedWork(): CompletedWork {
+  return {
+    judgments: new Set(),
+    missingSamples: new Set(),
+    missingFeedback: new Set(),
+    missingRevisions: new Set(),
+    missingJudgments: new Set(),
+  };
 }
 
 // ── Rating Map ──────────────────────────────────────
@@ -123,6 +142,55 @@ export function formatBatchSummary(needs: Need[]): string {
     f && `${f} feedback`,
     r && `${r} revision`,
   ].filter(Boolean).join(", ");
+}
+
+// ── Key Builders ────────────────────────────────────
+
+/** Build a missing-sample key: "model:promptId:outputIndex". */
+export function sampleKey(model: string, promptId: string, outputIdx: number): string {
+  return `${model}:${promptId}:${outputIdx}`;
+}
+
+/** Build a missing-feedback key: "fbModel:writerModel:promptId:outputIndex". */
+export function feedbackKey(fbModel: string, writerModel: string, promptId: string, outputIdx: number): string {
+  return `${fbModel}:${writerModel}:${promptId}:${outputIdx}`;
+}
+
+/** Build a missing-revision key: "writerModel:fbModel:promptId:outputIndex". */
+export function revisionKey(writerModel: string, fbModel: string, promptId: string, outputIdx: number): string {
+  return `${writerModel}:${fbModel}:${promptId}:${outputIdx}`;
+}
+
+/** Build a judgment group key: "modelA:modelB:promptId:idxA:idxB" (models sorted, indices swapped to match). */
+export function judgmentGroupKey(modelA: string, modelB: string, promptId: string, outputIdxA: number, outputIdxB: number): string {
+  return modelA <= modelB
+    ? `${modelA}:${modelB}:${promptId}:${outputIdxA}:${outputIdxB}`
+    : `${modelB}:${modelA}:${promptId}:${outputIdxB}:${outputIdxA}`;
+}
+
+/**
+ * Check whether a model's cascade (sample → feedback → revision) is
+ * known-broken for a given prompt and output index.
+ */
+function isCascadeBroken(
+  work: CompletedWork,
+  model: string,
+  fbModel: string,
+  promptId: string,
+  outputIdx: number,
+): boolean {
+  return work.missingSamples.has(sampleKey(model, promptId, outputIdx))
+    || work.missingFeedback.has(feedbackKey(fbModel, model, promptId, outputIdx))
+    || work.missingRevisions.has(revisionKey(model, fbModel, promptId, outputIdx));
+}
+
+/** Sum of all completed/missing entries for stall detection. */
+export function completedWorkSize(work: CompletedWork): number {
+  return work.judgments.size
+    + work.missingSamples.size
+    + work.missingFeedback.size
+    + work.missingRevisions.size
+    + work.missingJudgments.size;
 }
 
 // ── Helpers ─────────────────────────────────────────
@@ -252,6 +320,13 @@ export function identifyNeeds(
       for (let oi = 0; oi < outputsPerModel; oi++) {
         for (let oj = 0; oj < outputsPerModel; oj++) {
           for (const prompt of prompts) {
+            // Prune: skip if either sample is known-missing
+            if (completedWork.missingSamples.has(sampleKey(models[i].label, prompt.id, oi))
+              || completedWork.missingSamples.has(sampleKey(models[j].label, prompt.id, oj))) continue;
+
+            // Prune: skip if all judges missed this judgment group
+            if (completedWork.missingJudgments.has(judgmentGroupKey(models[i].label, models[j].label, prompt.id, oi, oj))) continue;
+
             for (const judge of judgeModels) {
               const key = judgmentKey(
                 "initial", models[i].label, models[j].label,
@@ -292,13 +367,23 @@ export function identifyNeeds(
       for (const writer of models) {
         for (let oi = 0; oi < outputsPerModel; oi++) {
           for (const prompt of prompts) {
+            // Pre-check per-side cascade deps and triple pruning (independent of judge).
+            // isCascadeBroken checks sample, feedback, and revision for each side.
+            const sideAMissing =
+              isCascadeBroken(completedWork, writer.label, models[i].label, prompt.id, oi)
+              || completedWork.missingJudgments.has(judgmentGroupKey(writer.label, models[i].label, prompt.id, oi, 0));
+            const sideBMissing =
+              isCascadeBroken(completedWork, writer.label, models[j].label, prompt.id, oi)
+              || completedWork.missingJudgments.has(judgmentGroupKey(writer.label, models[j].label, prompt.id, oi, 0));
+            if (sideAMissing && sideBMissing) continue;
+
             for (const judge of judgeModels) {
               // Emit needs for whichever side is incomplete
               const keyA = judgmentKey("improvement", writer.label, models[i].label, prompt.id, judge.label, oi);
               const keyB = judgmentKey("improvement", writer.label, models[j].label, prompt.id, judge.label, oi);
               if (completedWork.judgments.has(keyA) && completedWork.judgments.has(keyB)) continue;
 
-              if (!completedWork.judgments.has(keyA)) {
+              if (!sideAMissing && !completedWork.judgments.has(keyA)) {
                 candidates.push({
                   type: "improvement_judgment",
                   writer: writer.label,
@@ -309,7 +394,7 @@ export function identifyNeeds(
                   score: gain / (1 + oi),
                 });
               }
-              if (!completedWork.judgments.has(keyB)) {
+              if (!sideBMissing && !completedWork.judgments.has(keyB)) {
                 candidates.push({
                   type: "improvement_judgment",
                   writer: writer.label,
@@ -341,6 +426,12 @@ export function identifyNeeds(
         for (let oj = 0; oj < outputsPerModel; oj++) {
           for (const fbModel of models) {
             for (const prompt of prompts) {
+              // Prune: skip if either side's cascade is broken or the triple is missing.
+              // Both sides are required for revised comparisons (A's revision vs B's revision).
+              if (isCascadeBroken(completedWork, models[i].label, fbModel.label, prompt.id, oi)
+                || isCascadeBroken(completedWork, models[j].label, fbModel.label, prompt.id, oj)
+                || completedWork.missingJudgments.has(judgmentGroupKey(models[i].label, models[j].label, `${prompt.id}:${fbModel.label}`, oi, oj))) continue;
+
               for (const judge of judgeModels) {
                 const key = judgmentKey(
                   "revised", models[i].label, models[j].label,
