@@ -78,8 +78,9 @@ function buildCacheCommand(resolve: (cmd: Command) => void) {
       .option("outputs", {
         alias: "n",
         type: "number",
-        default: 3,
-        describe: "Max outputs per model per prompt (tries N down to 1)",
+        default: 0,
+        describe:
+          "Max outputs per model per prompt (0 = auto-detect from cache)",
       })
       .option("models", {
         alias: "m",
@@ -108,7 +109,7 @@ function buildCacheCommand(resolve: (cmd: Command) => void) {
       args: {
         prompts: argv.prompts,
         filter: argv.filter,
-        outputs: Math.min(Math.max(argv.outputs, 1), 3),
+        outputs: Math.max(argv.outputs, 0),
         models: argv.models,
         judges: argv.judges,
         format: argv.format,

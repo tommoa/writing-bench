@@ -167,7 +167,7 @@ export async function analyzeCacheStatus(
   opts: AnalyzeCacheOpts
 ): Promise<CacheStatusResult> {
   const cacheDir = opts.cacheDir ?? DEFAULT_CACHE_DIR;
-  const N = opts.outputsPerModel;
+  let N = opts.outputsPerModel;
   const { prompts } = opts;
 
   // ── 1. Build prompt hash lookup ───────────────────
@@ -235,6 +235,17 @@ export async function analyzeCacheStatus(
       writeCacheIds.set(wk, byPrompt);
     })
   );
+
+  // ── 5b. Auto-detect N from cache if not specified ──
+  if (N <= 0) {
+    let maxFound = 0;
+    for (const byPrompt of writeCacheIds.values()) {
+      for (const ids of byPrompt.values()) {
+        if (ids.length > maxFound) maxFound = ids.length;
+      }
+    }
+    N = Math.max(maxFound, 1);
+  }
 
   // ── 6. Phase 2: Feedback — read cache IDs ────────
   // Key: "fbWriterKey:writeCacheId" → feedbackCacheId
@@ -967,7 +978,7 @@ export function formatCacheStatusTable(result: CacheStatusResult): string {
 
   // ── Write availability ────────────────────────
   // Compact per-writer summary: how many prompts have sufficient writes
-  // at each N level.
+  // at each N level. Chunked into groups to avoid overly wide output.
   const maxN = result.outputsPerModel;
   const nLevels = Array.from({ length: maxN }, (_, i) => i + 1);
   const promptIds = prompts.map((p) => p.id);
@@ -980,23 +991,44 @@ export function formatCacheStatusTable(result: CacheStatusResult): string {
     5
   );
 
-  // Header row
-  const nHeaders = nLevels.map((n) => `N=${n}`.padStart(7)).join("");
-  lines.push("".padEnd(nameColWidth + 2) + nHeaders);
-
+  // Pre-compute counts: writerKey → n → count of prompts with >= n writes
+  const writeCounts = new Map<string, Map<number, number>>();
   for (const wk of writerKeys) {
-    const name = displayKey(wk).padEnd(nameColWidth + 2);
-    const cols = nLevels.map((n) => {
+    const byN = new Map<number, number>();
+    for (const n of nLevels) {
       let count = 0;
       for (const pid of promptIds) {
         const cell = matrix.get(wk)?.get(pid);
         if (cell && cell.maxWrites >= n) count++;
       }
-      const total = promptIds.length;
-      const label = count === 0 ? "\u00b7" : count === total ? `${total}/${total}` : `${count}/${total}`;
-      return label.padStart(7);
-    });
-    lines.push(name + cols.join(""));
+      byN.set(n, count);
+    }
+    writeCounts.set(wk, byN);
+  }
+
+  const MAX_N_COLS = 10;
+  for (let chunkStart = 0; chunkStart < nLevels.length; chunkStart += MAX_N_COLS) {
+    const chunk = nLevels.slice(chunkStart, chunkStart + MAX_N_COLS);
+
+    // Header row for this chunk
+    const nHeaders = chunk.map((n) => `N=${n}`.padStart(7)).join("");
+    lines.push("".padEnd(nameColWidth + 2) + nHeaders);
+
+    for (const wk of writerKeys) {
+      const name = displayKey(wk).padEnd(nameColWidth + 2);
+      const cols = chunk.map((n) => {
+        const count = writeCounts.get(wk)?.get(n) ?? 0;
+        const total = promptIds.length;
+        const label = count === 0 ? "\u00b7" : count === total ? `${total}/${total}` : `${count}/${total}`;
+        return label.padStart(7);
+      });
+      lines.push(name + cols.join(""));
+    }
+
+    // Blank line between chunks (but not after the last one)
+    if (chunkStart + MAX_N_COLS < nLevels.length) {
+      lines.push("");
+    }
   }
   lines.push("");
 
