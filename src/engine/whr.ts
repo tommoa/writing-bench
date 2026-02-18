@@ -467,8 +467,39 @@ export function maxCiHalfWidth(result: WhrResult): number {
 // ── Convergence Estimation ─────────────────────────
 
 /**
+ * Compute the CI half-width at which a model becomes non-overlapping
+ * with all other models. This is the tightest constraint across all
+ * currently-overlapping neighbors: min(|gap| - neighbor_ci95).
+ *
+ * Returns Infinity if already non-overlapping with all models.
+ * Returns null if any overlapping neighbor is too close to separate
+ * by shrinking this model's CI alone (gap <= neighbor's CI).
+ */
+export function overlapFreeThreshold(
+  model: WhrRating,
+  allRatings: WhrRating[],
+): number | null {
+  let minThreshold = Infinity;
+  for (const other of allRatings) {
+    if (other.model === model.model) continue;
+    if (!hasOverlap(model, other)) continue;
+    const gap = Math.abs(model.rating - other.rating);
+    const threshold = gap - other.ci95;
+    if (threshold <= 0) return null;
+    if (threshold < minThreshold) minThreshold = threshold;
+  }
+  return minThreshold;
+}
+
+/**
  * Estimate how many additional pairwise judgments a model needs before
- * its 95% CI half-width drops below ciThreshold.
+ * it converges. Convergence can happen via two paths:
+ *   1. CI shrinks below ciThreshold
+ *   2. CI shrinks enough that the model no longer overlaps any neighbor
+ *
+ * When nonOverlapThreshold is provided and positive, the effective
+ * target is max(ciThreshold, nonOverlapThreshold) — whichever path
+ * the model reaches first (a higher threshold means fewer games).
  *
  * Returns null when no estimate is possible (no games played, infinite CI).
  * Returns 0 when the model has already converged.
@@ -477,18 +508,27 @@ export function estimateRemainingJudgments(
   ci95: number,
   matchCount: number,
   ciThreshold: number,
+  nonOverlapThreshold?: number | null,
 ): number | null {
   // Infinite or non-finite CI → can't estimate
   if (!isFinite(ci95) || ci95 <= 0) return null;
-  // Already converged
-  if (ci95 <= ciThreshold) return 0;
+
+  // Effective threshold: use the more generous of the two convergence paths.
+  // A higher threshold means the model needs to shrink less → fewer games.
+  const effectiveThreshold =
+    nonOverlapThreshold != null && nonOverlapThreshold > ciThreshold
+      ? nonOverlapThreshold
+      : ciThreshold;
+
+  // Already converged via whichever path is easier
+  if (ci95 <= effectiveThreshold) return 0;
   // No games → can't derive per-game precision empirically
   if (matchCount <= 0) return null;
 
   const SCALE = 1.96 * LOG10E_TIMES_400;
 
   const currentPrecision = (SCALE / ci95) ** 2;
-  const targetPrecision = (SCALE / ciThreshold) ** 2;
+  const targetPrecision = (SCALE / effectiveThreshold) ** 2;
   const additionalPrecision = targetPrecision - currentPrecision;
 
   if (additionalPrecision <= 0) return 0; // float rounding edge case

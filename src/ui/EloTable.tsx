@@ -1,7 +1,8 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { EloRating, ModelSpeed } from "../types.js";
-import { estimateRemainingJudgments } from "../engine/whr.js";
+import { estimateRemainingJudgments, overlapFreeThreshold } from "../engine/whr.js";
+import type { WhrRating } from "../engine/whr.js";
 
 interface EloTableProps {
   title: string;
@@ -41,8 +42,8 @@ export function EloTable({
 }: EloTableProps) {
   if (ratings.length === 0) return null;
 
-  const showCost = costByModel && Object.keys(costByModel).length > 0;
-  const showTime = avgTimeByModel && Object.keys(avgTimeByModel).length > 0;
+  const showCost = !!costByModel;
+  const showTime = !!avgTimeByModel;
   const showSpeed = speedByModel && Object.keys(speedByModel).length > 0;
 
   // Check if CI data is present (WhrRating extends EloRating with ci95)
@@ -59,6 +60,7 @@ export function EloTable({
   const timeW = 9;
   const speedW = 12;
   const estW = 5;
+  const whrRatings = hasCi ? ratings as WhrRating[] : undefined;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -99,7 +101,12 @@ export function EloTable({
         const speed = speedByModel?.[r.model];
         const ci95 = "ci95" in r ? (r as any).ci95 as number : undefined;
         const estRemaining = showEst
-          ? estimateRemainingJudgments(ci95 ?? Infinity, r.matchCount, ciThreshold!)
+          ? estimateRemainingJudgments(
+              ci95 ?? Infinity,
+              r.matchCount,
+              ciThreshold!,
+              whrRatings ? overlapFreeThreshold(r as WhrRating, whrRatings) : undefined,
+            )
           : undefined;
         const ratingColor =
           i === 0 ? "green" : i === ratings.length - 1 ? "red" : "white";

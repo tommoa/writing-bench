@@ -4,6 +4,7 @@ import {
   maxCiHalfWidth,
   hasOverlap,
   estimateRemainingJudgments,
+  overlapFreeThreshold,
   judgmentsToGames,
   improvementJudgmentsToGames,
 } from "./whr.js";
@@ -423,6 +424,107 @@ describe("estimateRemainingJudgments", () => {
     const est = estimateRemainingJudgments(50.001, 20, 50);
     expect(est).not.toBeNull();
     expect(est!).toBeGreaterThanOrEqual(0);
+  });
+
+  it("returns fewer games when non-overlap threshold is larger than ci threshold", () => {
+    const withoutOverlap = estimateRemainingJudgments(200, 10, 50);
+    // nonOverlapThreshold=150 means model only needs ci95 <= 150 to separate
+    const withOverlap = estimateRemainingJudgments(200, 10, 50, 150);
+    expect(withoutOverlap).not.toBeNull();
+    expect(withOverlap).not.toBeNull();
+    expect(withOverlap!).toBeLessThan(withoutOverlap!);
+  });
+
+  it("returns 0 when ci95 is below the non-overlap threshold", () => {
+    // ci95=120 is above ciThreshold=50, but below nonOverlapThreshold=150
+    const est = estimateRemainingJudgments(120, 10, 50, 150);
+    expect(est).toBe(0);
+  });
+
+  it("ignores non-overlap threshold when it is smaller than ci threshold", () => {
+    const withoutOverlap = estimateRemainingJudgments(200, 10, 50);
+    const withSmallerOverlap = estimateRemainingJudgments(200, 10, 50, 30);
+    expect(withoutOverlap).toBe(withSmallerOverlap);
+  });
+
+  it("ignores null non-overlap threshold", () => {
+    const without = estimateRemainingJudgments(200, 10, 50);
+    const withNull = estimateRemainingJudgments(200, 10, 50, null);
+    expect(without).toBe(withNull);
+  });
+
+  it("ignores undefined non-overlap threshold", () => {
+    const without = estimateRemainingJudgments(200, 10, 50);
+    const withUndef = estimateRemainingJudgments(200, 10, 50, undefined);
+    expect(without).toBe(withUndef);
+  });
+});
+
+describe("overlapFreeThreshold", () => {
+  function makeRating(model: string, rating: number, ci95: number, matchCount = 10): WhrRating {
+    return { model, rating, ci95, wins: 0, losses: 0, ties: 0, matchCount };
+  }
+
+  it("returns Infinity when model is already non-overlapping with all", () => {
+    const a = makeRating("A", 1800, 50);
+    const b = makeRating("B", 1200, 50);
+    // gap=600, ci95_A+ci95_B=100 → no overlap
+    expect(overlapFreeThreshold(a, [a, b])).toBe(Infinity);
+  });
+
+  it("returns null when an overlapping neighbor is too close to separate", () => {
+    const a = makeRating("A", 1050, 200);
+    const b = makeRating("B", 1000, 150);
+    // gap=50, threshold = 50 - 150 = -100 → can't separate
+    expect(overlapFreeThreshold(a, [a, b])).toBeNull();
+  });
+
+  it("returns correct threshold for overlapping models", () => {
+    const a = makeRating("A", 1300, 180);
+    const b = makeRating("B", 1100, 100);
+    // gap=200, overlap (180+100=280 > 200), threshold = 200 - 100 = 100
+    const result = overlapFreeThreshold(a, [a, b]);
+    expect(result).toBe(100);
+  });
+
+  it("returns the tightest constraint across multiple neighbors", () => {
+    const a = makeRating("A", 1300, 180);
+    const b = makeRating("B", 1100, 100);
+    const c = makeRating("C", 1150, 120);
+    // A-B: gap=200, threshold=200-100=100
+    // A-C: gap=150, threshold=150-120=30
+    // Tightest is 30
+    const result = overlapFreeThreshold(a, [a, b, c]);
+    expect(result).toBe(30);
+  });
+
+  it("skips models that are already non-overlapping", () => {
+    const a = makeRating("A", 1500, 100);
+    const b = makeRating("B", 1350, 80);
+    const c = makeRating("C", 800, 50);
+    // A-B: gap=150, ci=100+80=180, overlaps → threshold=150-80=70
+    // A-C: gap=700, ci=100+50=150, no overlap → skipped
+    const result = overlapFreeThreshold(a, [a, b, c]);
+    expect(result).toBe(70);
+  });
+
+  it("returns Infinity for single model", () => {
+    const a = makeRating("A", 1500, 100);
+    expect(overlapFreeThreshold(a, [a])).toBe(Infinity);
+  });
+
+  it("returns null when gap equals neighbor ci exactly", () => {
+    const a = makeRating("A", 1200, 100);
+    const b = makeRating("B", 1100, 100);
+    // gap=100, threshold = 100 - 100 = 0 → not positive → null
+    expect(overlapFreeThreshold(a, [a, b])).toBeNull();
+  });
+
+  it("returns null when neighbor has Infinity ci", () => {
+    const a = makeRating("A", 1500, 100);
+    const b = makeRating("B", 1200, Infinity);
+    // Infinity CI always overlaps, and gap - Infinity = -Infinity → null
+    expect(overlapFreeThreshold(a, [a, b])).toBeNull();
   });
 });
 
