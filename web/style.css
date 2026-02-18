@@ -154,6 +154,11 @@ tr:hover {
   color: var(--accent);
 }
 
+.ci {
+  color: var(--comment);
+  font-size: 0.9em;
+}
+
 .wlt {
   color: var(--comment);
 }

@@ -44,7 +44,6 @@ export function App({ subscribe, showSpeed }: AppProps) {
     stage: "initialWriting",
     activeStages: [],
     stageProgress: 0,
-    stageTotal: 0,
     stageDone: 0,
     currentOp: "Starting...",
     elo: { initial: [], revised: [], feedback: [] },
@@ -78,6 +77,7 @@ export function App({ subscribe, showSpeed }: AppProps) {
           setProgress((prev) => ({
             ...prev,
             stage: "complete",
+            stageProgress: 1,
             currentOp: "Benchmark complete!",
           }));
           setComplete(true);
@@ -130,12 +130,15 @@ export function App({ subscribe, showSpeed }: AppProps) {
         totalCost={progress.totalCost}
         totalCostUncached={progress.totalCostUncached}
         costByStage={progress.costByStage}
-        done={progress.stageDone}
-        total={progress.stageTotal}
+        stageProgress={progress.stageProgress}
+        opsDone={progress.stageDone}
         cacheSavings={progress.cacheSavings}
+        judgingRound={progress.judgingRound}
+        maxCi={progress.maxCi}
+        ciThreshold={progress.ciThreshold}
       />
 
-      <RunProgress done={progress.stageDone} total={progress.stageTotal} />
+      <RunProgress progress={progress.stageProgress} opsDone={progress.stageDone} />
 
       <Box marginTop={1} />
 
@@ -146,6 +149,7 @@ export function App({ subscribe, showSpeed }: AppProps) {
           costByModel={initialCost}
           avgTimeByModel={initialTime}
           speedByModel={showSpeed ? progress.speedByModel : undefined}
+          ciThreshold={progress.ciThreshold}
         />
       )}
 
@@ -156,6 +160,7 @@ export function App({ subscribe, showSpeed }: AppProps) {
           costByModel={revisedCost}
           avgTimeByModel={revisedTime}
           speedByModel={showSpeed ? progress.speedByModel : undefined}
+          ciThreshold={progress.ciThreshold}
         />
       )}
 
@@ -166,6 +171,7 @@ export function App({ subscribe, showSpeed }: AppProps) {
           costByModel={feedbackCost}
           avgTimeByModel={feedbackTime}
           speedByModel={showSpeed ? progress.speedByModel : undefined}
+          ciThreshold={progress.ciThreshold}
         />
       )}
 

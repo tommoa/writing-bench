@@ -151,9 +151,10 @@ export function createRunConfig(opts: {
   models: ModelConfig[];
   judges?: ModelConfig[];
   prompts: PromptConfig[];
-  outputsPerModel: number;
+  outputsPerModel?: number;
   reasoning?: boolean;
   noCache?: boolean;
+  ciThreshold?: number;
 }): RunConfig {
   const now = new Date();
   const id = now.toISOString().replace(/[:.]/g, "-");
@@ -163,9 +164,10 @@ export function createRunConfig(opts: {
     models: opts.models,
     judges: opts.judges?.length ? opts.judges : undefined,
     prompts: opts.prompts,
-    outputsPerModel: Math.min(Math.max(opts.outputsPerModel, 1), 3),
+    outputsPerModel: opts.outputsPerModel ?? Infinity,
     reasoning: opts.reasoning ?? true,
     noCache: opts.noCache ?? false,
     timestamp: now.toISOString(),
+    ciThreshold: opts.ciThreshold,
   };
 }

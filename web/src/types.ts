@@ -56,6 +56,8 @@ export interface EloRating {
   losses: number;
   ties: number;
   matchCount: number;
+  /** 95% CI half-width in Elo points (present when computed via WHR). */
+  ci95?: number;
 }
 
 export interface EloSnapshot {

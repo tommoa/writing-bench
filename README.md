@@ -61,12 +61,12 @@ bun run start run -m provider:model [-m ...] [options]
 | `--judges` | `-j` | same as models | Separate judge models |
 | `--prompts` | `-p` | `prompts/*.toml` | Prompt file glob |
 | `--filter` | `-f` | | Filter by prompt id or tag |
-| `--outputs` | `-n` | `1` | Outputs per model per prompt (max 3) |
-| `--concurrency` | | `5` | Max parallel API calls |
+| `--outputs` | `-n` | unlimited | Max outputs per model per prompt (adaptive) |
 | `--resume` | | | Resume an interrupted run by ID |
 | `--dry-run` | | | Preview without API calls |
 | `--no-reasoning` | | | Skip reasoning in judgments |
 | `--no-cache` | | | Skip reading cache (still writes) |
+| `--confidence` | | `100` | Stop when 95% CI half-width < N Elo points |
 
 ### `results` -- Show previous results
 
@@ -100,21 +100,27 @@ bun run start clear-cache provider:model [--judgments-only]
 
 ## How It Works
 
-The benchmark runs a reactive pipeline where tasks fire as soon as their
-dependencies are met:
+The benchmark uses a **pull-based adaptive architecture**. Instead of
+generating all O(n²) pairwise judgments upfront, it uses confidence
+intervals to decide what work to do next:
 
-1. **Write** -- Each model generates an output for each prompt.
-2. **Judge (initial)** -- As pairs become available, an LLM judge does
-   blind pairwise comparisons with randomized A/B positions.
-3. **Feedback** -- Each model critiques every other model's initial output.
-4. **Revise** -- The original writer revises using the feedback.
-5. **Judge (revised)** -- Revised outputs are compared head-to-head. Revised
-   samples are scoped by feedback source so comparisons are fair.
-6. **Judge (improvement)** -- Each revision is compared against its original
-   to measure whether the feedback actually helped.
+1. **Seed from cache** -- Exhaustively loads all previously computed
+   artifacts (writes, feedback, revisions, judgments) at zero cost.
+2. **Compute ratings** -- Runs Whole History Rating (WHR) with Bayesian
+   confidence intervals on all available judgments.
+3. **Pull the highest-value work** -- Identifies the model pair and
+   judgment type whose data would most reduce rating uncertainty.
+4. **Cascade dependencies** -- If a judgment needs a missing sample,
+   feedback, or revision, those are generated automatically.
+5. **Repeat** -- Returns to step 2 until all 95% CI half-widths are
+   below the `--confidence` threshold (default ±100 Elo points).
 
-All writing samples, feedback, revisions, and judgments are cached to disk.
-Re-runs skip cached API calls at zero cost.
+Three rating dimensions must all converge: writing quality (initial
+judgments), revised writing quality (revised judgments), and feedback
+quality (improvement judgments).
+
+All artifacts are cached to disk. Re-runs skip cached API calls at
+zero cost.
 
 See the methodology page in the web viewer (`bun run start serve`, then
 click "methodology") for full details on the rating system.
@@ -152,27 +158,33 @@ Available tags: `speech`, `theological`, `creative`, `fiction`, `essay`,
 
 ## Ratings
 
-Ratings use **Bradley-Terry maximum likelihood estimation**, not sequential
-ELO. BT computes strength parameters from all pairwise outcomes simultaneously,
-so ratings are order-independent: the same set of judgments always produces
-the same ratings regardless of processing order.
+### Per-Run: Whole History Rating (WHR)
 
-Strengths are converted to an ELO-like scale: `rating = 400 * log10(strength) + 1500`.
-A 400-point gap corresponds to roughly 10:1 expected win odds. The baseline is 1500.
+Within each run, ratings are computed using **Whole History Rating**, a
+Bayesian extension of Bradley-Terry. WHR uses Newton's method on the
+log-posterior with a Gaussian prior (σ²=0.25) for regularization, producing
+both point estimates and 95% confidence intervals from the Hessian.
 
-Three rating types:
+These CIs drive the adaptive loop's stopping criterion. Ratings are
+shown on an ELO-like scale: `rating = r × 400/ln(10) + 1500`. A 400-point
+gap corresponds to roughly 10:1 expected win odds.
 
-- **Writing ELO** -- Head-to-head writing quality from initial and revised
-  stage judgments.
+Three rating dimensions:
+
+- **Writing ELO** -- Head-to-head writing quality from initial judgments.
+- **Revised Writing ELO** -- Head-to-head revised writing quality, scoped
+  by feedback source.
 - **Feedback ELO** -- How useful a model's editorial feedback is. Measured
   indirectly by comparing improvement rates: did a revision guided by this
   model's feedback beat the original?
 - **Per-tag ELO** -- Writing ratings restricted to prompts with a given tag,
   showing category-specific strengths.
 
-Ratings accumulate across runs. Pairwise records (win/loss/tie counts per
-model pair) are stored on disk, merged with new data each run, and ratings
-are recomputed from the full history.
+### Cumulative: Bradley-Terry
+
+Ratings accumulate across runs using standard Bradley-Terry MLE. Pairwise
+records (win/loss/tie counts per model pair) are stored on disk, merged
+with new data each run, and ratings are recomputed from the full history.
 
 ## Web Viewer
 
@@ -196,9 +208,11 @@ src/
   config.ts           TOML loading, model parsing, run config
   types.ts            shared TypeScript interfaces
   engine/
-    runner.ts          reactive benchmark orchestrator
+    runner.ts          pull-based adaptive benchmark orchestrator
     judge.ts           pairwise judging with position randomization
-    elo.ts             Bradley-Terry rating computation
+    whr.ts             Whole History Rating (WHR) with CIs
+    need-identifier.ts information-gain scoring for adaptive loop
+    elo.ts             Bradley-Terry for cumulative ratings
     scheduler.ts       concurrency-limited task scheduler
     retry.ts           exponential backoff retry logic
   providers/

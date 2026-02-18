@@ -67,43 +67,24 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     console.warn(`Warning: ${warn}`);
   }
 
-  const judgeModels = judges ?? models;
-  const W = models.length;
-  const J = judgeModels.length;
-
   if (args.dryRun) {
+    const outputsCap = args.outputs != null ? args.outputs : Infinity;
+    const outputsDesc = outputsCap === Infinity ? "unlimited (adaptive)" : String(outputsCap);
+    const ciThreshold = args.confidence;
+
     console.log("Dry run — would execute:");
     console.log(`  Writers: ${models.map((m) => m.label).join(", ")}`);
     if (judges) {
       console.log(`  Judges:  ${judges.map((m) => m.label).join(", ")}`);
     }
     console.log(`  Prompts: ${prompts.map((p) => p.name).join(", ")}`);
-    console.log(`  Outputs per model: ${args.outputs}`);
-
-    const P = prompts.length;
-    const N = args.outputs;
-    const nSamples = W * P * N;
-    const samplesPerPrompt = W * N;
-    const nPairsPerPrompt =
-      (samplesPerPrompt * (samplesPerPrompt - 1)) / 2;
-    const nInitialJudgments = nPairsPerPrompt * J * P;
-    const nFeedback = nSamples * W;
-    const nRevisions = nFeedback;
-    const nImprovementJudgments = nRevisions * J;
-    // Revised pairs: W feedback groups per prompt, each with W*N revisions
-    const revisionsPerFbGroup = W * N;
-    const pairsPerFbGroup =
-      (revisionsPerFbGroup * (revisionsPerFbGroup - 1)) / 2;
-    const nRevisedJudgments = W * pairsPerFbGroup * J * P;
-
-    console.log(`\n  Stage 1 writing: ${nSamples} samples`);
-    console.log(`  Stage 1 judging: ${nInitialJudgments} judgments`);
-    console.log(`  Stage 2 feedback: ${nFeedback} reviews`);
-    console.log(`  Stage 3 writing: ${nRevisions} revisions`);
-    console.log(`  Stage 3 improvement judging: ${nImprovementJudgments} judgments`);
-    console.log(`  Stage 3 revised judging: ${nRevisedJudgments} judgments`);
+    console.log(`  Outputs per model: ${outputsDesc}`);
+    console.log(`  Convergence target: ±${ciThreshold} Elo points`);
     console.log(
-      `\n  Total API calls: ~${nSamples + nInitialJudgments + nFeedback + nRevisions + nImprovementJudgments + nRevisedJudgments}`
+      `\n  The adaptive loop will generate outputs and judgments as needed`
+    );
+    console.log(
+      `  until all 95% CI half-widths are below ±${ciThreshold} Elo points.`
     );
     return;
   }
@@ -115,6 +96,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     outputsPerModel: args.outputs,
     reasoning: args.reasoning,
     noCache: args.noCache,
+    ciThreshold: args.confidence,
   });
 
   const runner = new BenchmarkRunner(config);

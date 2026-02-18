@@ -2,15 +2,18 @@ import React from "react";
 import { Box, Text } from "ink";
 
 interface RunProgressProps {
-  done: number;
-  total: number;
+  progress: number;
+  opsDone: number;
   width?: number;
 }
 
-export function RunProgress({ done, total, width = 40 }: RunProgressProps) {
-  const pct = total > 0 ? done / total : 0;
-  const filled = Math.round(pct * width);
+export function RunProgress({ progress, opsDone, width = 40 }: RunProgressProps) {
+  const clamped = Math.min(1, Math.max(0, progress));
+  const filled = Math.round(clamped * width);
   const empty = width - filled;
+  const expectedOps = clamped > 0.01
+    ? Math.round(opsDone / clamped)
+    : undefined;
 
   return (
     <Box>
@@ -18,7 +21,10 @@ export function RunProgress({ done, total, width = 40 }: RunProgressProps) {
       <Text color="gray">{"░".repeat(empty)}</Text>
       <Text color="gray">
         {"  "}
-        {done}/{total}
+        {Math.round(clamped * 100)}%{"  "}
+        {expectedOps != null
+          ? `${opsDone}/~${expectedOps} ops`
+          : `${opsDone} ops`}
       </Text>
     </Box>
   );

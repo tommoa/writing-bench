@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { readFile, writeFile, mkdir, readdir, rename } from "fs/promises";
 import { join } from "path";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import type { TokenUsage, CostBreakdown } from "../types.js";
 
 // ── Cached entry types ──────────────────────────────
@@ -116,7 +116,13 @@ export class SampleCache {
     if (!existsSync(dir)) return [];
 
     const files = await readdir(dir);
-    const jsonFiles = files.filter((f) => f.endsWith(".json")).sort();
+    const jsonFiles = files
+      .filter((f) => f.endsWith(".json"))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)?.[0] ?? "0", 10);
+        const nb = parseInt(b.match(/\d+/)?.[0] ?? "0", 10);
+        return na - nb;
+      });
     const results: CachedWrite[] = [];
 
     for (const f of jsonFiles) {
@@ -143,7 +149,7 @@ export class SampleCache {
     const files = await readdir(dir);
     const nextIndex = files.filter((f) => f.endsWith(".json")).length;
     const filePath = join(dir, `sample_${nextIndex}.json`);
-    const tmpPath = filePath + ".tmp";
+    const tmpPath = filePath + `.tmp.${randomBytes(4).toString("hex")}`;
 
     await writeFile(tmpPath, JSON.stringify(entry, null, 2));
     await rename(tmpPath, filePath);
@@ -189,7 +195,7 @@ export class SampleCache {
     await mkdir(dir, { recursive: true });
 
     const filePath = this.feedbackPath(fbProvider, fbModel, writeCacheId);
-    const tmpPath = filePath + ".tmp";
+    const tmpPath = filePath + `.tmp.${randomBytes(4).toString("hex")}`;
 
     await writeFile(tmpPath, JSON.stringify(entry, null, 2));
     await rename(tmpPath, filePath);
@@ -235,7 +241,7 @@ export class SampleCache {
     await mkdir(dir, { recursive: true });
 
     const filePath = this.revisionPath(writerProvider, writerModel, feedbackCacheId);
-    const tmpPath = filePath + ".tmp";
+    const tmpPath = filePath + `.tmp.${randomBytes(4).toString("hex")}`;
 
     await writeFile(tmpPath, JSON.stringify(entry, null, 2));
     await rename(tmpPath, filePath);

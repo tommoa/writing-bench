@@ -22,7 +22,8 @@ export async function saveRun(result: RunResult): Promise<string> {
   }
 
   const path = join(dir, "run.json");
-  await writeFile(path, JSON.stringify(result, null, 2));
+  await writeFile(path, JSON.stringify(result, (_key, value) =>
+    value === Infinity ? "__Infinity__" : value, 2));
   return path;
 }
 
@@ -36,7 +37,8 @@ export async function loadRun(runId: string): Promise<RunResult> {
   }
 
   const raw = await readFile(path, "utf-8");
-  return JSON.parse(raw) as RunResult;
+  return JSON.parse(raw, (_key, value) =>
+    value === "__Infinity__" ? Infinity : value) as RunResult;
 }
 
 /**

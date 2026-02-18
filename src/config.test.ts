@@ -87,20 +87,21 @@ describe("createRunConfig", () => {
     expect(config.outputsPerModel).toBe(2);
   });
 
-  it("clamps outputs to 1-3 range", () => {
+  it("passes through explicit outputsPerModel", () => {
     const config = createRunConfig({
       models: parseModelConfigs(["openai:gpt-4o"]),
       prompts: [],
       outputsPerModel: 10,
     });
-    expect(config.outputsPerModel).toBe(3);
+    expect(config.outputsPerModel).toBe(10);
+  });
 
-    const config2 = createRunConfig({
+  it("defaults outputsPerModel to Infinity when omitted", () => {
+    const config = createRunConfig({
       models: parseModelConfigs(["openai:gpt-4o"]),
       prompts: [],
-      outputsPerModel: 0,
     });
-    expect(config2.outputsPerModel).toBe(1);
+    expect(config.outputsPerModel).toBe(Infinity);
   });
 });
 

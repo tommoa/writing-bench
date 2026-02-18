@@ -94,10 +94,13 @@ export interface RunConfig {
   models: ModelConfig[];
   judges?: ModelConfig[]; // If absent, models are used for judging
   prompts: PromptConfig[];
-  outputsPerModel: number; // 1-3
+  outputsPerModel: number; // Max per model/prompt (Infinity = adaptive)
   reasoning: boolean; // Include reasoning in judgments
   noCache: boolean; // Skip reading from cache (still writes to cache)
   timestamp: string;
+  /** 95% CI half-width threshold (Elo points). Adaptive loop stops when
+   *  all model CIs are below this. Default: 100. */
+  ciThreshold?: number;
 }
 
 export interface WritingSample {
@@ -293,6 +296,8 @@ export type BenchmarkStage =
   | "revisedWriting"
   | "revisedJudging"
   | "computingElo"
+  | "seeding"
+  | "adaptive"
   | "complete";
 
 export interface CacheStageSavings {
@@ -312,7 +317,6 @@ export interface BenchmarkProgress {
   stage: BenchmarkStage; // Kept for the "complete" terminal state
   activeStages: BenchmarkStage[]; // Stages with inflight work right now
   stageProgress: number; // 0-1
-  stageTotal: number; // Total operations in stage
   stageDone: number; // Completed operations
   currentOp: string; // Human-readable current operation
   elo: {
@@ -328,6 +332,12 @@ export interface BenchmarkProgress {
   speedByModel: Record<string, ModelSpeed>;
   speedByModelByStage: Record<string, Record<string, ModelSpeed>>;
   cacheSavings: CacheSavings;
+  /** Current adaptive judging round (pull loop iteration). */
+  judgingRound?: number;
+  /** Current maximum 95% CI half-width across all models (Elo points). */
+  maxCi?: number;
+  /** Target CI threshold (Elo points). */
+  ciThreshold?: number;
 }
 
 export type BenchmarkEvent =

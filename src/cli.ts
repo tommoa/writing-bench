@@ -7,13 +7,13 @@ export interface RunArgs {
   judges?: string[];
   prompts: string;
   filter?: string[];
-  outputs: number;
-  concurrency: number;
+  outputs?: number;
   resume?: string;
   dryRun: boolean;
   speed: boolean;
   reasoning: boolean;
   noCache: boolean;
+  confidence: number;
 }
 
 export interface ResultsArgs {
@@ -195,13 +195,8 @@ export async function parseArgs(): Promise<Command> {
             .option("outputs", {
               alias: "n",
               type: "number",
-              default: 1,
-              describe: "Outputs per model per prompt (max 3)",
-            })
-            .option("concurrency", {
-              type: "number",
-              default: 5,
-              describe: "Max parallel API calls",
+              describe:
+                "Max outputs per model per prompt (default: unlimited, adaptive)",
             })
             .option("resume", {
               type: "string",
@@ -228,6 +223,12 @@ export async function parseArgs(): Promise<Command> {
               default: true,
               describe:
                 "Read from sample cache (use --no-cache to skip, still writes to cache)",
+            })
+            .option("confidence", {
+              type: "number",
+              default: 100,
+              describe:
+                "Stop when 95% CI half-width is below this Elo points (default: 100)",
             }),
         (argv) => {
           resolve({
@@ -237,13 +238,13 @@ export async function parseArgs(): Promise<Command> {
               judges: argv.judges,
               prompts: argv.prompts,
               filter: argv.filter,
-              outputs: Math.min(Math.max(argv.outputs, 1), 3),
-              concurrency: argv.concurrency,
+              outputs: argv.outputs != null ? Math.max(argv.outputs, 1) : undefined,
               resume: argv.resume,
               dryRun: argv.dryRun,
               speed: argv.speed,
               reasoning: argv.reasoning,
               noCache: !argv.cache,
+              confidence: argv.confidence,
             },
           });
         }

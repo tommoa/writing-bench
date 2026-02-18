@@ -238,19 +238,6 @@ export async function judgePair(
 }
 
 /**
- * Generate all pairs from an array (combinations of 2).
- */
-export function generatePairs<T>(items: T[]): [T, T][] {
-  const pairs: [T, T][] = [];
-  for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) {
-      pairs.push([items[i], items[j]]);
-    }
-  }
-  return pairs;
-}
-
-/**
  * Randomize pair order to avoid position bias.
  * Returns the pair with a 50% chance of being swapped.
  */

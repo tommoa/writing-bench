@@ -10,6 +10,8 @@ const STAGE_LABELS: Record<BenchmarkStage, string> = {
   revisedWriting: "Revising",
   revisedJudging: "Re-Judging",
   computingElo: "Computing ELO",
+  seeding: "Seeding Cache",
+  adaptive: "Adaptive",
   complete: "Complete",
 };
 
@@ -28,9 +30,12 @@ interface StatusBarProps {
   totalCost: number;
   totalCostUncached: number;
   costByStage: Record<string, number>;
-  done: number;
-  total: number;
+  stageProgress: number;
+  opsDone: number;
   cacheSavings: CacheSavings;
+  judgingRound?: number;
+  maxCi?: number;
+  ciThreshold?: number;
 }
 
 export function StatusBar({
@@ -40,12 +45,15 @@ export function StatusBar({
   totalCost,
   totalCostUncached,
   costByStage,
-  done,
-  total,
+  stageProgress,
+  opsDone,
   cacheSavings,
+  judgingRound,
+  maxCi,
+  ciThreshold,
 }: StatusBarProps) {
   const isComplete = stage === "complete";
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const pct = isComplete ? 100 : Math.round(stageProgress * 100);
 
   const stageEntries = Object.entries(costByStage)
     .filter(([, cost]) => cost > 0)
@@ -96,7 +104,7 @@ export function StatusBar({
           {stageLabel}
         </Text>
         <Text color="gray">
-          {"  "}[{done}/{total}] {pct}%
+          {"  "}{pct}%  ({opsDone} ops)
         </Text>
         <Text color="gray">{"  "}|{"  "}</Text>
         <Text color="green">${totalCost.toFixed(4)}</Text>
@@ -124,6 +132,15 @@ export function StatusBar({
       {totalCached > 0 && (
         <Box marginLeft={3}>
           <Text color="cyan">{`Cached: ${cacheSavings.writes.cached}w ${cacheSavings.feedback.cached}fb ${cacheSavings.revisions.cached}rev ${cacheSavings.judgments.cached}j (saved ~$${totalSavedCost.toFixed(4)})`}</Text>
+        </Box>
+      )}
+      {judgingRound != null && judgingRound > 0 && (
+        <Box marginLeft={3}>
+          <Text color="magenta">
+            {`Round ${judgingRound}`}
+            {maxCi != null ? ` | CI \u00b1${maxCi}` : ""}
+            {ciThreshold != null ? ` \u2192 target \u00b1${ciThreshold}` : ""}
+          </Text>
         </Box>
       )}
       {!isComplete && currentOp && (

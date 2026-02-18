@@ -141,9 +141,11 @@ src/
   config.ts          TOML loading, model parsing
   types.ts           ALL shared interfaces and types
   engine/            Core benchmark logic
-    runner.ts        Reactive pipeline orchestrator
+    runner.ts        Pull-based adaptive benchmark orchestrator
     judge.ts         Pairwise judging, position randomization
-    elo.ts           Bradley-Terry rating computation
+    whr.ts           Whole History Rating with confidence intervals
+    need-identifier.ts  Information-gain scoring for adaptive loop
+    elo.ts           Bradley-Terry for cumulative ratings (unchanged)
     scheduler.ts     Inflight promise tracker
     retry.ts         Exponential backoff retry
   providers/         AI SDK provider resolution
@@ -172,3 +174,43 @@ Dependencies flow downward: CLI -> Engine -> Providers/Storage -> Types.
 - LSP errors in `src/ui/*.tsx` files are pre-existing Ink/React JSX
   type issues -- they are harmless and unrelated to actual bugs.
 - The `ai` SDK `Intl.Segmenter` type error is a known upstream issue.
+
+## Pull-Based Architecture
+
+The runner (`src/engine/runner.ts`) uses a pull-based adaptive loop
+instead of generating all work upfront:
+
+1. **Phase 1 (cache seeding)** -- Exhaustively loads all cached artifacts
+   before any API calls.
+2. **Phase 2 (adaptive loop)** -- Iterates: compute WHR with CIs →
+   identify highest-information-gain need → fulfill it via ensure-cascade
+   → repeat until all 3 rating dimensions converge.
+
+Three rating dimensions must converge independently: writing quality
+(initial judgments), revised writing quality (revised judgments), and
+feedback quality (improvement judgments).
+
+### Key Components
+
+- **WHR (`whr.ts`)** -- Newton's method on BT log-posterior with Gaussian
+  prior (σ²=0.25). Produces ratings and **centered** 95% CIs.
+  CIs use centered posterior variances (gauge-mode removed) so they
+  reflect distinguishability between models, not prior uncertainty.
+  Without centering, the BT gauge symmetry creates a CI floor of
+  ~1.96·√(1/(n·τ))·174 Elo regardless of game count.
+- **Need identifier (`need-identifier.ts`)** -- Scores candidate judgments
+  by information gain: `(σ²_A + σ²_B) × p × (1−p)`, with cascade cost
+  discounts for improvement (0.25) and revised (0.2) judgments.
+- **Ensure-cascade** -- `fulfillNeed()` calls `ensureJudgment()` which
+  calls `ensureSample()`/`ensureFeedback()`/`ensureRevision()` as needed.
+  Each returns cached data if available or generates fresh.
+
+### Two Rating Systems
+
+- **Per-run: WHR** -- Bayesian BT with CIs, drives adaptive convergence.
+  `--confidence N` sets the CI threshold (default 100 Elo points).
+- **Cumulative: BT** -- Standard Bradley-Terry MLE (`elo.ts`,
+  `elo-store.ts`), merges pairwise records across runs. Unchanged.
+
+See the methodology page in the web viewer for full documentation
+(`bun run start serve`, then click "methodology").
