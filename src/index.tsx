@@ -261,6 +261,10 @@ async function handleResults(
 async function handleElo(
   args: Extract<Command, { command: "elo" }>["args"]
 ) {
+  if (args.recompute) {
+    await recomputeCumulativeElo();
+  }
+
   const elo = await loadCumulativeElo();
 
   if (args.format === "json") {
@@ -287,6 +291,33 @@ async function handleElo(
 
   console.log(`\nLast updated: ${elo.lastUpdated}`);
   console.log(`Total runs: ${elo.history.length}`);
+}
+
+/** Delete cumulative ELO and rebuild from all stored run results. */
+async function recomputeCumulativeElo(): Promise<void> {
+  const eloPath = join(process.cwd(), "data", "elo.json");
+  if (existsSync(eloPath)) {
+    await rm(eloPath);
+    console.log("Deleted existing elo.json");
+  }
+
+  const runIds = (await listRuns()).reverse(); // chronological order for history
+  if (runIds.length === 0) {
+    console.log("No stored runs found. Nothing to recompute.");
+    return;
+  }
+
+  console.log(`Replaying ${runIds.length} runs...`);
+  for (const id of runIds) {
+    try {
+      const run = await loadRun(id);
+      await updateCumulativeElo(run);
+      console.log(`  Replayed ${id}`);
+    } catch {
+      console.log(`  Skipping ${id} (could not load)`);
+    }
+  }
+  console.log("Cumulative ELO recomputed.\n");
 }
 
 async function handleExport(

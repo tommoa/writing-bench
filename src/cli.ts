@@ -31,6 +31,7 @@ export interface ExportArgs {
 export interface EloArgs {
   tag?: string;
   format: "table" | "json";
+  recompute: boolean;
 }
 
 export interface ServeArgs {
@@ -352,6 +353,11 @@ export async function parseArgs(): Promise<Command> {
               choices: ["table", "json"] as const,
               default: "table" as const,
               describe: "Output format",
+            })
+            .option("recompute", {
+              type: "boolean",
+              default: false,
+              describe: "Recompute cumulative ELO from all stored runs",
             }),
         (argv) => {
           resolve({
@@ -359,6 +365,7 @@ export async function parseArgs(): Promise<Command> {
             args: {
               tag: argv.tag,
               format: argv.format,
+              recompute: argv.recompute,
             },
           });
         }
