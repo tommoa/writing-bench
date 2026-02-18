@@ -155,6 +155,7 @@ export function createRunConfig(opts: {
   reasoning?: boolean;
   noCache?: boolean;
   cacheOnly?: boolean;
+  skipSeeding?: boolean;
   ciThreshold?: number;
 }): RunConfig {
   const now = new Date();
@@ -169,6 +170,7 @@ export function createRunConfig(opts: {
     reasoning: opts.reasoning ?? true,
     noCache: opts.noCache ?? false,
     cacheOnly: opts.cacheOnly ?? false,
+    skipSeeding: opts.skipSeeding ?? false,
     timestamp: now.toISOString(),
     ciThreshold: opts.ciThreshold,
   };

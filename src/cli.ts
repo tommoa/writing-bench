@@ -15,6 +15,7 @@ export interface RunArgs {
   noCache: boolean;
   confidence: number;
   cacheOnly: boolean;
+  skipSeeding: boolean;
 }
 
 export interface ResultsArgs {
@@ -254,6 +255,12 @@ export async function parseArgs(): Promise<Command> {
               describe:
                 "Only use cached data, no API calls. Auto-discovers models from cache if --models is omitted.",
             })
+            .option("skip-seeding", {
+              type: "boolean",
+              default: false,
+              describe:
+                "Skip exhaustive cache scan (Phase 1). The adaptive loop discovers cached data lazily.",
+            })
             .check((argv) => {
               if (!argv.cacheOnly && (!argv.models || argv.models.length === 0)) {
                 throw new Error("--models is required unless --cache-only is used");
@@ -279,6 +286,7 @@ export async function parseArgs(): Promise<Command> {
               noCache: !argv.cache,
               confidence: argv.confidence,
               cacheOnly: argv.cacheOnly,
+              skipSeeding: argv.skipSeeding,
             },
           });
         }

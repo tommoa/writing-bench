@@ -129,6 +129,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     reasoning: args.reasoning,
     noCache: args.noCache,
     cacheOnly: args.cacheOnly,
+    skipSeeding: args.skipSeeding,
     ciThreshold: args.confidence,
   });
 

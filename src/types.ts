@@ -97,7 +97,8 @@ export interface RunConfig {
   outputsPerModel: number; // Max per model/prompt (Infinity = adaptive)
   reasoning: boolean; // Include reasoning in judgments
   noCache: boolean; // Skip reading from cache (still writes to cache)
-  cacheOnly: boolean; // Only use cached data, skip adaptive loop (no API calls)
+  cacheOnly: boolean; // Only use cached data, no API calls in ensure methods
+  skipSeeding: boolean; // Skip Phase 1 cache scan; adaptive loop discovers cache lazily
   timestamp: string;
   /** 95% CI half-width threshold (Elo points). Adaptive loop stops when
    *  all model CIs are below this. Default: 100. */

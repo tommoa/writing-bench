@@ -864,19 +864,20 @@ export class BenchmarkRunner {
   private async fulfillNeed(need: Need): Promise<void> {
     this.currentNeedDescription = formatNeedDescription(need, this.currentRatingMap);
     const prompt = this.promptMap.get(need.promptId)!;
+    const co = this.config.cacheOnly;
 
     if (need.type === "initial_judgment") {
       const modelACfg = this.modelMap.get(need.modelA)!;
       const modelBCfg = this.modelMap.get(need.modelB)!;
 
       // Ensure both samples exist (may generate)
-      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA);
-      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB);
+      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, co);
+      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, co);
       if (!sampleA || !sampleB) return;
 
       // Judge
       const result = await this.ensureJudgment(
-        need.judgeModel, prompt, sampleA, sampleB, "initial",
+        need.judgeModel, prompt, sampleA, sampleB, "initial", co,
       );
       if (result) {
         this.completedWork.judgments.add(judgmentKey(
@@ -889,17 +890,17 @@ export class BenchmarkRunner {
       const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
 
       // Ensure the full cascade: sample → feedback → revision → judge
-      const sample = await this.ensureSample(writerCfg, prompt, need.outputIdx);
+      const sample = await this.ensureSample(writerCfg, prompt, need.outputIdx, co);
       if (!sample) return;
 
-      const feedback = await this.ensureFeedback(fbModelCfg, sample, prompt);
+      const feedback = await this.ensureFeedback(fbModelCfg, sample, prompt, co);
       if (!feedback) return;
 
-      const revision = await this.ensureRevision(writerCfg, sample, feedback, prompt);
+      const revision = await this.ensureRevision(writerCfg, sample, feedback, prompt, co);
       if (!revision) return;
 
       const result = await this.ensureJudgment(
-        need.judgeModel, prompt, sample, revision, "improvement",
+        need.judgeModel, prompt, sample, revision, "improvement", co,
       );
       if (result) {
         this.completedWork.judgments.add(judgmentKey(
@@ -913,20 +914,20 @@ export class BenchmarkRunner {
       const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
 
       // Ensure both models have samples, feedback from the same source, and revisions
-      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA);
-      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB);
+      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, co);
+      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, co);
       if (!sampleA || !sampleB) return;
 
-      const fbA = await this.ensureFeedback(fbModelCfg, sampleA, prompt);
-      const fbB = await this.ensureFeedback(fbModelCfg, sampleB, prompt);
+      const fbA = await this.ensureFeedback(fbModelCfg, sampleA, prompt, co);
+      const fbB = await this.ensureFeedback(fbModelCfg, sampleB, prompt, co);
       if (!fbA || !fbB) return;
 
-      const revA = await this.ensureRevision(modelACfg, sampleA, fbA, prompt);
-      const revB = await this.ensureRevision(modelBCfg, sampleB, fbB, prompt);
+      const revA = await this.ensureRevision(modelACfg, sampleA, fbA, prompt, co);
+      const revB = await this.ensureRevision(modelBCfg, sampleB, fbB, prompt, co);
       if (!revA || !revB) return;
 
       const result = await this.ensureJudgment(
-        need.judgeModel, prompt, revA, revB, "revised",
+        need.judgeModel, prompt, revA, revB, "revised", co,
       );
       if (result) {
         this.completedWork.judgments.add(judgmentKey(
@@ -966,12 +967,16 @@ export class BenchmarkRunner {
     for (const p of this.config.prompts) this.promptMap.set(p.id, p);
 
     // Phase 1: Seed from cache — load ALL cached artifacts before any API calls
-    await this.seedFromCache();
-    this.recomputeRatings();
+    // Skipped with --skip-seeding; the adaptive loop discovers cache lazily.
+    if (!this.config.skipSeeding) {
+      await this.seedFromCache();
+      this.recomputeRatings();
+    }
 
-    // Phase 2: Adaptive pull loop — only runs if CIs are still too wide
-    // Skipped entirely in cache-only mode (no API calls allowed).
-    if (!this.config.cacheOnly) {
+    // Phase 2: Adaptive pull loop — runs until convergence, exhaustion, or
+    // max rounds. With --cache-only the ensure methods refuse API calls,
+    // so the loop self-terminates once cached work is exhausted.
+    {
       // Batch should be large enough to make real progress each round.
       // All work within a batch runs in parallel via the scheduler.
       const W = this.config.models.length;
