@@ -190,6 +190,83 @@ describe("identifyNeeds", () => {
     expect(needs).toHaveLength(0);
   });
 
+  it("prefers lower output indices over higher ones", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 20, 2,
+    );
+    const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
+    // N=0 candidates: (0,0) -> penalty 1/(1+0) = 1.0
+    // N=1 candidates: (0,1), (1,0), (1,1) -> penalty 1/(1+1) = 0.5
+    const n0 = initialNeeds.filter(
+      (n) => n.type === "initial_judgment" && n.outputIdxA === 0 && n.outputIdxB === 0,
+    );
+    const n1 = initialNeeds.filter(
+      (n) => n.type === "initial_judgment" && (n.outputIdxA > 0 || n.outputIdxB > 0),
+    );
+    expect(n0.length).toBe(1);
+    expect(n1.length).toBe(3);
+    // N=0 should have higher score than any N=1
+    expect(n0[0].score).toBeGreaterThan(n1[0].score);
+  });
+
+  it("selects all prompts at N=0 before any at N=1", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const prompts = [makePrompt("p1"), makePrompt("p2"), makePrompt("p3")];
+    // Complete all N=0 work for p1 only
+    const completed: CompletedWork = {
+      judgments: new Set([
+        judgmentKey("initial", "modelA", "modelB", "p1", "judge", 0, 0),
+      ]),
+    };
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      completed, twoModels(), oneJudge(), prompts,
+      DEFAULT_CONVERGENCE, 5,
+      2, // allow N=1
+    );
+    const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
+    // p2 and p3 at N=0 should come before p1 at N=1
+    const firstTwo = initialNeeds.slice(0, 2);
+    for (const n of firstTwo) {
+      if (n.type === "initial_judgment") {
+        expect(n.outputIdxA).toBe(0);
+        expect(n.outputIdxB).toBe(0);
+        expect(["p2", "p3"]).toContain(n.promptId);
+      }
+    }
+  });
+
+  it("applies depth penalty to improvement judgments", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), ratings,
+      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 40, 2,
+    );
+    const impNeeds = needs.filter((n) => n.type === "improvement_judgment");
+    const n0 = impNeeds.filter(
+      (n) => n.type === "improvement_judgment" && n.outputIdx === 0,
+    );
+    const n1 = impNeeds.filter(
+      (n) => n.type === "improvement_judgment" && n.outputIdx === 1,
+    );
+    if (n0.length > 0 && n1.length > 0) {
+      expect(n0[0].score).toBeGreaterThan(n1[0].score);
+    }
+  });
+
   it("generates needs for additional output indices when CIs are wide", () => {
     // With outputsPerModel=2 and 2 models, each model pair has 4 possible
     // sample-pair comparisons: (0,0), (0,1), (1,0), (1,1).

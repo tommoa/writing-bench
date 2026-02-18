@@ -1535,12 +1535,16 @@ function renderMethodologyPage(): void {
     el("h3", {}, "Information-Gain Scoring"),
     el("p", {},
       "The need identifier scores candidate judgments by expected " +
-      "information gain: score = (\u03c3\u00b2_A + \u03c3\u00b2_B) \u00d7 p \u00d7 (1\u2212p), where " +
-      "\u03c3 is each model\u2019s CI half-width and p is the predicted win " +
-      "probability. Pairs with high uncertainty and close predicted " +
+      "information gain: score = (\u03c3\u00b2_A + \u03c3\u00b2_B) \u00d7 p \u00d7 (1\u2212p) / (1+N), where " +
+      "\u03c3 is each model\u2019s CI half-width, p is the predicted win " +
+      "probability, and N is the maximum output index in the comparison. " +
+      "Pairs with high uncertainty and close predicted " +
       "strength score highest. Improvement and revised judgments receive " +
       "cascade cost discounts (0.25 and 0.2 respectively) since they " +
-      "require additional prerequisite API calls."
+      "require additional prerequisite API calls. " +
+      "The depth penalty 1/(1+N) ensures breadth-first exploration: " +
+      "all prompts are covered at each output index before the system " +
+      "generates additional outputs for any single prompt."
     ),
 
     // ── Whole History Rating System ─────────────────

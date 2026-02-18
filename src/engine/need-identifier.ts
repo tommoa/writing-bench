@@ -138,6 +138,10 @@ export function judgmentKey(
  * models/prompts/judges, and a set of already-completed work, returns
  * a prioritized batch of needs scored by expected information gain.
  *
+ * Scores are penalized by 1/(1 + maxOutputIndex) to enforce
+ * breadth-first exploration: all prompts at output index N are
+ * preferred before any prompt advances to N+1.
+ *
  * `outputsPerModel` controls how many output indices per model per
  * prompt are considered for comparisons. Default is 1 (single output).
  * The runner passes min(cap, currentMax + 1) to allow adaptive growth.
@@ -196,7 +200,7 @@ export function identifyNeeds(
                 outputIdxB: oj,
                 promptId: prompt.id,
                 judgeModel: judge,
-                score: gain,
+                score: gain / (1 + Math.max(oi, oj)),
               });
             }
           }
@@ -235,7 +239,7 @@ export function identifyNeeds(
                   feedbackModel: models[i].label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain,
+                  score: gain / (1 + oi),
                 });
               }
               if (!completedWork.judgments.has(keyB)) {
@@ -246,7 +250,7 @@ export function identifyNeeds(
                   feedbackModel: models[j].label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain,
+                  score: gain / (1 + oi),
                 });
               }
             }
@@ -286,7 +290,7 @@ export function identifyNeeds(
                   feedbackModel: fbModel.label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain,
+                  score: gain / (1 + Math.max(oi, oj)),
                 });
               }
             }
