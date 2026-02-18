@@ -729,15 +729,8 @@ select option:hover {
   line-height: 1.6;
 }
 
-.methodology .formula {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1em;
+.methodology .katex-display {
   margin: 0.75em 0;
-  font-family: monospace;
-  font-size: 0.9em;
-  white-space: pre-wrap;
   overflow-x: auto;
 }
 

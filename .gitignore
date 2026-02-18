@@ -5,6 +5,9 @@ data/cache/
 data/elo.json
 data/models-cache.json
 
+web/app.js
+web/src/methodology-html.ts
+
 .opencode/
 .env
 *.log

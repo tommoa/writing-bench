@@ -10,6 +10,7 @@ import type {
   PromptConfig,
   ModelSpeed,
 } from "./types.js";
+import { methodologyHtml, katexCssUrl } from "./methodology-html.js";
 
 // ── DOM helpers ─────────────────────────────────────
 
@@ -235,13 +236,15 @@ function renderEloTable(
     ratings.some((r) => visibleStages.some((s) => (r.costByStage?.[s.key] ?? 0) > 0));
   const hasTokens = visibleStages.length > 0 &&
     ratings.some((r) => visibleStages.some((s) => (r.tokensByStage?.[s.key] ?? 0) > 0));
+  const hasCi = ratings.some((r) => r.ci95 != null);
 
   const headerCells = [
     el("th", { className: "rank" }, "#"),
     el("th", {}, "Model"),
     el("th", { className: "sortable" }, "ELO"),
-    el("th", {}, "Matches"),
   ];
+  if (hasCi) headerCells.push(el("th", { className: "ci" }, "\u00b1CI"));
+  headerCells.push(el("th", {}, "Matches"));
   if (hasCosts) {
     for (const s of visibleStages) {
       headerCells.push(el("th", { className: "cost" }, s.label));
@@ -267,8 +270,13 @@ function renderEloTable(
       el("td", { className: "rank" }, String(i + 1)),
       el("td", {}, r.model),
       el("td", { className: cls }, String(r.rating)),
-      el("td", { className: "muted" }, String(r.matchCount)),
     ];
+    if (hasCi) {
+      cells.push(
+        el("td", { className: "ci" }, r.ci95 != null ? `\u00b1${r.ci95}` : "-"),
+      );
+    }
+    cells.push(el("td", { className: "muted" }, String(r.matchCount)));
     if (hasCosts) {
       for (const s of visibleStages) {
         const c = r.costByStage?.[s.key] ?? 0;
@@ -1451,251 +1459,17 @@ function renderRunMetadata(run: RunResult): HTMLElement {
 // ── Methodology Page ────────────────────────────────
 
 function renderMethodologyPage(): void {
-  const container = el("div", { className: "methodology" },
+  // Inject KaTeX CSS if not already present
+  if (!document.querySelector('link[data-katex]')) {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = katexCssUrl;
+    link.setAttribute("data-katex", "");
+    document.head.appendChild(link);
+  }
 
-    // ── How Models Are Compared ──────────────────────
-    el("h2", {}, "How Models Are Compared"),
-    el("p", {},
-      "Writing quality is evaluated through pairwise blind judging. " +
-      "For each prompt, an LLM judge is shown two writing samples labeled " +
-      "\"Sample A\" and \"Sample B\" with no indication of which model produced " +
-      "which text. The judge decides which sample is better (A, B, or tie) " +
-      "and provides reasoning."
-    ),
-    el("p", {},
-      "Each prompt defines its own judging criteria tailored to the genre. " +
-      "A sermon prompt might specify theological accuracy and pastoral warmth, " +
-      "while a short story prompt might focus on narrative voice and character " +
-      "interiority. The judge evaluates against all listed criteria holistically."
-    ),
-    el("p", {},
-      "Judging uses structured JSON output (a Zod schema requesting " +
-      "winner and reasoning). If a judge model does not support structured " +
-      "output, the system falls back to free-text generation and extracts " +
-      "JSON from the response."
-    ),
-    el("h3", {}, "Position Bias Mitigation"),
-    el("p", {},
-      "LLMs can exhibit position bias \u2014 a tendency to favor whichever sample " +
-      "appears first. To counteract this, the benchmark randomly swaps the " +
-      "presentation order of each pair with 50% probability. After the judge " +
-      "responds, the winner is mapped back to the canonical ordering. This " +
-      "ensures that any position preference cancels out over many comparisons."
-    ),
-
-    // ── The Benchmark Pipeline ──────────────────────
-    el("h2", {}, "The Benchmark Pipeline"),
-    el("p", {},
-      "The benchmark uses a pull-based adaptive architecture. Instead of " +
-      "generating all pairwise judgments upfront (O(n\u00b2) model pairs), " +
-      "the system uses confidence intervals to decide what work to do " +
-      "next, stopping as soon as ratings are sufficiently precise."
-    ),
-    el("h3", {}, "Phase 1: Cache Seeding"),
-    el("p", {},
-      "Before making any API calls, the runner exhaustively scans the disk " +
-      "cache and loads all previously computed artifacts: writing samples, " +
-      "feedback, revisions, and judgments. This populates the rating model " +
-      "at zero cost and ensures no redundant work is repeated."
-    ),
-    el("h3", {}, "Phase 2: Adaptive Pull Loop"),
-    el("p", {},
-      "The system iterates: compute Whole History Rating with confidence " +
-      "intervals \u2192 identify the model pair and judgment type whose data " +
-      "would most reduce uncertainty \u2192 generate only that work \u2192 repeat " +
-      "until all CIs are below a configurable threshold (default \u00b1100 Elo points)."
-    ),
-    el("p", {},
-      "When a judgment is needed, the system cascades through dependencies " +
-      "automatically. For example, requesting an improvement judgment " +
-      "triggers writing the initial sample, generating feedback, and " +
-      "producing the revision if any of those are missing. This " +
-      "ensure-cascade pattern means the system only creates artifacts " +
-      "that are actually needed to reduce rating uncertainty."
-    ),
-    el("h3", {}, "Judgment Types"),
-    el("ol", {},
-      el("li", {},
-        el("strong", {}, "Initial"),
-        " \u2014 Pairwise blind comparison of initial writing outputs. " +
-        "Measures raw writing quality."
-      ),
-      el("li", {},
-        el("strong", {}, "Improvement"),
-        " \u2014 Each revision is compared against its own original to " +
-        "measure whether the feedback actually helped. This determines " +
-        "feedback quality ratings."
-      ),
-      el("li", {},
-        el("strong", {}, "Revised"),
-        " \u2014 Revised outputs are compared head-to-head, scoped by " +
-        "feedback source. Measures revised writing quality."
-      ),
-    ),
-    el("h3", {}, "Information-Gain Scoring"),
-    el("p", {},
-      "The need identifier scores candidate judgments by expected " +
-      "information gain: score = (\u03c3\u00b2_A + \u03c3\u00b2_B) \u00d7 p \u00d7 (1\u2212p) / (1+N), where " +
-      "\u03c3 is each model\u2019s CI half-width, p is the predicted win " +
-      "probability, and N is the maximum output index in the comparison. " +
-      "Pairs with high uncertainty and close predicted " +
-      "strength score highest. Improvement and revised judgments receive " +
-      "cascade cost discounts (0.25 and 0.2 respectively) since they " +
-      "require additional prerequisite API calls. " +
-      "The depth penalty 1/(1+N) ensures breadth-first exploration: " +
-      "all prompts are covered at each output index before the system " +
-      "generates additional outputs for any single prompt."
-    ),
-
-    // ── Whole History Rating System ─────────────────
-    el("h2", {}, "Whole History Rating System"),
-    el("p", {},
-      "Within each run, ratings are computed using Whole History Rating " +
-      "(WHR), a Bayesian extension of the Bradley-Terry model. WHR uses " +
-      "Newton\u2019s method to find the maximum a posteriori (MAP) estimate " +
-      "of model strengths, producing both point estimates and confidence " +
-      "intervals. These CIs drive the adaptive loop\u2019s stopping criterion."
-    ),
-    el("h3", {}, "The Algorithm"),
-    el("p", {},
-      "Each model is assigned a log-strength parameter r (initially 0). " +
-      "The algorithm maximizes the log-posterior:"
-    ),
-    el("div", { className: "formula" },
-      "log P(r | data) = \u03a3 [wins\u1d62\u2c7c \u00b7 log \u03c3(r\u1d62 \u2212 r\u2c7c) + wins\u2c7c\u1d62 \u00b7 log \u03c3(r\u2c7c \u2212 r\u1d62)]\n" +
-      "                 \u2212 \u03a3 r\u1d62\u00b2 / (2\u03c3\u00b2)    (Gaussian prior, \u03c3\u00b2 = 0.25)\n\n" +
-      "Newton update: (\u2212H) \u00b7 \u0394 = g,  r \u2190 r + \u0394\n" +
-      "Repeat until convergence (max |\u0394| < 10\u207b\u2076, up to 50 iterations).\n" +
-      "Center ratings by subtracting the mean."
-    ),
-    el("p", {},
-      "The Gaussian prior (\u03c3\u00b2 = 0.25) regularizes the optimization, " +
-      "preventing divergence when a model wins or loses all games. " +
-      "This replaces the geometric-mean normalization used in standard " +
-      "Bradley-Terry and ensures symmetric, well-defined confidence intervals."
-    ),
-    el("h3", {}, "Confidence Intervals"),
-    el("p", {},
-      "95% confidence intervals are derived from the diagonal of the " +
-      "inverse Hessian (the observed Fisher information). The CI " +
-      "half-width for model i is 1.96 \u00d7 \u221a([\u2212H]\u207b\u00b9\u1d62\u1d62), converted to " +
-      "Elo scale. Wider CIs indicate less certainty; the adaptive loop " +
-      "targets the model pair that would most efficiently reduce the " +
-      "largest CI."
-    ),
-    el("h3", {}, "ELO-Scale Conversion"),
-    el("p", {},
-      "Log-strengths are converted to a familiar ELO-like scale:"
-    ),
-    el("div", { className: "formula" },
-      "rating = round(r \u00d7 400 / ln(10) + 1500)"
-    ),
-    el("p", {},
-      "A 400-point gap corresponds to roughly 10:1 expected win odds. " +
-      "The baseline is 1500."
-    ),
-
-    // ── Three Rating Dimensions ───────────────────────
-    el("h2", {}, "Three Rating Dimensions"),
-    el("p", {},
-      "The adaptive loop tracks three independent rating dimensions, " +
-      "each of which must converge before the run completes:"
-    ),
-    el("h3", {}, "Writing ELO"),
-    el("p", {},
-      "Direct head-to-head writing quality from initial stage judgments. " +
-      "Two writing samples for the same prompt are shown to a judge; " +
-      "the winning model gets credit."
-    ),
-    el("h3", {}, "Feedback ELO"),
-    el("p", {},
-      "How useful a model\u2019s editorial feedback is, measured indirectly. " +
-      "The system does not compare feedback texts directly. Instead, it " +
-      "uses improvement judgments (revision vs. original) to determine " +
-      "whether feedback led to a better revision."
-    ),
-    el("p", {},
-      "The algorithm groups improvement judgments by prompt and judge, " +
-      "then pairs up different feedback providers within each group. If " +
-      "feedback model A\u2019s revision beat the original but feedback model " +
-      "B\u2019s did not, A wins. If both improved or both failed, it\u2019s a tie. " +
-      "These synthetic pairwise outcomes are then fed into the same " +
-      "WHR computation."
-    ),
-    el("h3", {}, "Revised Writing ELO"),
-    el("p", {},
-      "Revised outputs are compared head-to-head, scoped by feedback " +
-      "source so the comparison isolates writing ability from feedback " +
-      "quality. This uses the same WHR computation as initial writing."
-    ),
-    el("h3", {}, "Per-Tag ELO"),
-    el("p", {},
-      "Each prompt has genre tags (e.g. \"speech\", \"theological\", " +
-      "\"creative\"). Per-tag ratings run the same Bradley-Terry computation " +
-      "restricted to judgments from prompts with a given tag. This reveals " +
-      "category-specific strengths \u2014 a model might excel at essays but " +
-      "struggle with creative fiction."
-    ),
-
-    // ── Cumulative Ratings ──────────────────────────
-    el("h2", {}, "Cumulative Ratings"),
-    el("p", {},
-      "Ratings accumulate across multiple benchmark runs. The cumulative " +
-      "system uses standard Bradley-Terry (not WHR), storing pairwise " +
-      "records: for each pair of models, the total number of wins for " +
-      "each side and ties."
-    ),
-    el("p", {},
-      "When a new run completes, its pairwise outcomes are merged with " +
-      "the existing accumulated records. Ratings are then recomputed " +
-      "from scratch using Bradley-Terry on the full merged dataset. This " +
-      "means the order in which runs are processed does not affect the " +
-      "final ratings."
-    ),
-    el("p", {},
-      "The leaderboard on the dashboard page always reflects the " +
-      "cumulative ratings across all runs. Individual run pages show " +
-      "WHR ratings with confidence intervals computed from that run\u2019s " +
-      "judgments alone."
-    ),
-
-    // ── Reading the Results ─────────────────────────
-    el("h2", {}, "Reading the Results"),
-    el("ul", {},
-      el("li", {},
-        el("strong", {}, "1500"),
-        " is the baseline rating. A model at the mean of all model " +
-        "strengths sits at 1500."
-      ),
-      el("li", {},
-        el("strong", {}, "400-point gap"),
-        " corresponds to roughly 10:1 expected win odds. A model rated " +
-        "1900 is expected to beat a 1500-rated model about 90% of the time."
-      ),
-      el("li", {},
-        el("strong", {}, "\u00b1CI"),
-        " is the 95% confidence interval half-width in Elo points, " +
-        "derived from the Hessian of the WHR log-posterior. Smaller " +
-        "values indicate more precise ratings."
-      ),
-      el("li", {},
-        el("strong", {}, "W / L / T"),
-        " are raw win, loss, and tie counts from all pairwise matches " +
-        "the model participated in."
-      ),
-      el("li", {},
-        el("strong", {}, "Matches"),
-        " is the total number of pairwise comparisons involving the model " +
-        "(W + L + T). More matches produce more reliable ratings."
-      ),
-    ),
-    el("p", { className: "note" },
-      "The adaptive runner stops collecting judgments once all model CIs " +
-      "are below the configured threshold (default \u00b1100 Elo points). " +
-      "Use --confidence to adjust this target."
-    ),
-  );
-
+  const container = el("div", { className: "methodology" });
+  container.innerHTML = methodologyHtml;
   render(container.outerHTML);
 }
 
