@@ -1,13 +1,22 @@
 import { describe, it, expect } from "bun:test";
 import {
-  identifyNeeds,
+  identifyNeeds as identifyNeedsRaw,
   isConverged,
   judgmentKey,
+  formatNeedDescription,
+  formatBatchSummary,
   DEFAULT_CONVERGENCE,
 } from "./need-identifier.js";
-import type { CompletedWork, ConvergenceConfig } from "./need-identifier.js";
+import type { Need, CompletedWork, ConvergenceConfig } from "./need-identifier.js";
 import type { WhrRating } from "./whr.js";
 import type { ModelConfig, PromptConfig } from "../types.js";
+
+/** Wrapper that returns just the needs array for test convenience. */
+function identifyNeeds(
+  ...args: Parameters<typeof identifyNeedsRaw>
+): Need[] {
+  return identifyNeedsRaw(...args).needs;
+}
 
 describe("identifyNeeds", () => {
   it("returns empty list when all CIs are below threshold", () => {
@@ -542,7 +551,130 @@ describe("judgmentKey", () => {
   });
 });
 
+describe("formatBatchSummary", () => {
+  it("counts needs by type", () => {
+    const needs: Need[] = [
+      makeInitialNeed("modelA", "modelB"),
+      makeInitialNeed("modelA", "modelB"),
+      makeImprovementNeed("modelA", "modelB"),
+      makeRevisedNeed("modelA", "modelB", "modelC"),
+    ];
+    expect(formatBatchSummary(needs)).toBe("2 writing, 1 feedback, 1 revision");
+  });
+
+  it("omits types with zero count", () => {
+    const needs: Need[] = [
+      makeImprovementNeed("modelA", "modelB"),
+      makeImprovementNeed("modelA", "modelC"),
+    ];
+    expect(formatBatchSummary(needs)).toBe("2 feedback");
+  });
+
+  it("returns empty string for empty list", () => {
+    expect(formatBatchSummary([])).toBe("");
+  });
+});
+
+describe("formatNeedDescription", () => {
+  it("formats initial judgment with both CIs", () => {
+    const need = makeInitialNeed("claude", "gpt-4o");
+    const map = new Map<string, WhrRating>();
+    map.set("writing:claude", makeWhrRating("claude", 1550, 142, 5));
+    map.set("writing:gpt-4o", makeWhrRating("gpt-4o", 1450, 98, 8));
+    expect(formatNeedDescription(need, map)).toBe(
+      "writing: claude vs gpt-4o (±142 / ±98)",
+    );
+  });
+
+  it("formats improvement judgment with single CI", () => {
+    const need = makeImprovementNeed("gpt-4o", "claude");
+    const map = new Map<string, WhrRating>();
+    map.set("feedback:claude", makeWhrRating("claude", 1500, 200, 3));
+    expect(formatNeedDescription(need, map)).toBe(
+      "feedback: claude on gpt-4o (±200)",
+    );
+  });
+
+  it("formats revised judgment with feedback model", () => {
+    const need = makeRevisedNeed("claude", "gpt-4o", "gemini");
+    const map = new Map<string, WhrRating>();
+    map.set("revised:claude", makeWhrRating("claude", 1500, 180, 5));
+    map.set("revised:gpt-4o", makeWhrRating("gpt-4o", 1500, 120, 8));
+    expect(formatNeedDescription(need, map)).toBe(
+      "revision: claude vs gpt-4o fb:gemini (±180 / ±120)",
+    );
+  });
+
+  it("shows ±∞ for models without ratings", () => {
+    const need = makeInitialNeed("claude", "gpt-4o");
+    const map = new Map<string, WhrRating>();
+    // No ratings in the map at all
+    expect(formatNeedDescription(need, map)).toBe(
+      "writing: claude vs gpt-4o (±∞ / ±∞)",
+    );
+  });
+
+  it("shows ±∞ for Infinity CI", () => {
+    const need = makeInitialNeed("claude", "gpt-4o");
+    const map = new Map<string, WhrRating>();
+    map.set("writing:claude", makeWhrRating("claude", 1500, Infinity, 0));
+    map.set("writing:gpt-4o", makeWhrRating("gpt-4o", 1500, 50, 10));
+    expect(formatNeedDescription(need, map)).toBe(
+      "writing: claude vs gpt-4o (±∞ / ±50)",
+    );
+  });
+
+  it("rounds CI to integer", () => {
+    const need = makeInitialNeed("claude", "gpt-4o");
+    const map = new Map<string, WhrRating>();
+    map.set("writing:claude", makeWhrRating("claude", 1500, 142.7, 5));
+    map.set("writing:gpt-4o", makeWhrRating("gpt-4o", 1500, 98.3, 8));
+    expect(formatNeedDescription(need, map)).toBe(
+      "writing: claude vs gpt-4o (±143 / ±98)",
+    );
+  });
+});
+
 // ── Helpers ─────────────────────────────────────────
+
+function makeInitialNeed(modelA: string, modelB: string): Need {
+  return {
+    type: "initial_judgment",
+    modelA,
+    modelB,
+    outputIdxA: 0,
+    outputIdxB: 0,
+    promptId: "p1",
+    judgeModel: makeModel("judge"),
+    score: 10,
+  };
+}
+
+function makeImprovementNeed(writer: string, feedbackModel: string): Need {
+  return {
+    type: "improvement_judgment",
+    writer,
+    feedbackModel,
+    outputIdx: 0,
+    promptId: "p1",
+    judgeModel: makeModel("judge"),
+    score: 5,
+  };
+}
+
+function makeRevisedNeed(modelA: string, modelB: string, feedbackModel: string): Need {
+  return {
+    type: "revised_judgment",
+    modelA,
+    modelB,
+    outputIdxA: 0,
+    outputIdxB: 0,
+    feedbackModel,
+    promptId: "p1",
+    judgeModel: makeModel("judge"),
+    score: 3,
+  };
+}
 
 function makeWhrRating(
   model: string,

@@ -136,6 +136,8 @@ export function App({ subscribe, showSpeed }: AppProps) {
         judgingRound={progress.judgingRound}
         maxCi={progress.maxCi}
         ciThreshold={progress.ciThreshold}
+        needDescription={progress.needDescription}
+        batchSummary={progress.batchSummary}
       />
 
       <RunProgress progress={progress.stageProgress} opsDone={progress.stageDone} />

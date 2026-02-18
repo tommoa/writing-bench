@@ -338,6 +338,10 @@ export interface BenchmarkProgress {
   maxCi?: number;
   /** Target CI threshold (Elo points). */
   ciThreshold?: number;
+  /** Human-readable description of the need driving the current action. */
+  needDescription?: string;
+  /** Summary of needs in the current adaptive batch. */
+  batchSummary?: string;
 }
 
 export type BenchmarkEvent =

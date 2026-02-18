@@ -36,6 +36,8 @@ interface StatusBarProps {
   judgingRound?: number;
   maxCi?: number;
   ciThreshold?: number;
+  needDescription?: string;
+  batchSummary?: string;
 }
 
 export function StatusBar({
@@ -51,6 +53,8 @@ export function StatusBar({
   judgingRound,
   maxCi,
   ciThreshold,
+  needDescription,
+  batchSummary,
 }: StatusBarProps) {
   const isComplete = stage === "complete";
   const pct = isComplete ? 100 : Math.round(stageProgress * 100);
@@ -138,6 +142,7 @@ export function StatusBar({
         <Box marginLeft={3}>
           <Text color="magenta">
             {`Round ${judgingRound}`}
+            {batchSummary ? ` | ${batchSummary}` : ""}
             {maxCi != null ? ` | CI \u00b1${maxCi}` : ""}
             {ciThreshold != null ? ` \u2192 target \u00b1${ciThreshold}` : ""}
           </Text>
@@ -145,7 +150,10 @@ export function StatusBar({
       )}
       {!isComplete && currentOp && (
         <Box marginLeft={3}>
-          <Text color="gray">{currentOp}</Text>
+          {needDescription && (
+            <Text color="gray">{needDescription}{" \u2014 "}</Text>
+          )}
+          <Text color="gray" dimColor>{currentOp}</Text>
         </Box>
       )}
     </Box>

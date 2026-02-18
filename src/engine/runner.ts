@@ -31,6 +31,8 @@ import {
   identifyNeeds,
   isConverged,
   judgmentKey,
+  formatNeedDescription,
+  formatBatchSummary,
   DEFAULT_CONVERGENCE,
 } from "./need-identifier.js";
 import type { Need, CompletedWork } from "./need-identifier.js";
@@ -121,6 +123,11 @@ export class BenchmarkRunner {
   private lastRatingRecompute = 0;
   private maxOutputCount = 0;
   private inflight: Record<string, number> = {};
+
+  // Need context for UI
+  private currentNeedDescription?: string;
+  private currentBatchSummary?: string;
+  private currentRatingMap = new Map<string, WhrRating>();
 
   // ── Cache provenance tracking ─────────────────────
   private cache = new SampleCache();
@@ -290,6 +297,8 @@ export class BenchmarkRunner {
         judgingRound: this.judgingRound,
         maxCi: maxCi === Infinity ? undefined : maxCi,
         ciThreshold,
+        needDescription: this.currentNeedDescription,
+        batchSummary: this.currentBatchSummary,
       },
     });
   }
@@ -856,6 +865,7 @@ export class BenchmarkRunner {
    * Fulfill a single need by cascading through ensure* methods.
    */
   private async fulfillNeed(need: Need): Promise<void> {
+    this.currentNeedDescription = formatNeedDescription(need, this.currentRatingMap);
     const prompt = this.promptMap.get(need.promptId)!;
 
     if (need.type === "initial_judgment") {
@@ -986,7 +996,7 @@ export class BenchmarkRunner {
         this.maxOutputCount + 1,
       );
 
-      const needs = identifyNeeds(
+      const { needs, ratingMap } = identifyNeeds(
         this.writingWhr.ratings,
         this.revisedWhr.ratings,
         this.feedbackWhr.ratings,
@@ -1000,6 +1010,9 @@ export class BenchmarkRunner {
       );
 
       if (needs.length === 0) break; // exhausted all possible work
+
+      this.currentRatingMap = ratingMap;
+      this.currentBatchSummary = formatBatchSummary(needs);
 
       const maxCi = Math.max(
         maxCiHalfWidth(this.writingWhr),
@@ -1022,6 +1035,10 @@ export class BenchmarkRunner {
       this.recomputeRatings();
       this.emitProgress(`Round ${this.judgingRound} complete`);
     }
+
+    // Clear need context — no longer in the adaptive loop
+    this.currentNeedDescription = undefined;
+    this.currentBatchSummary = undefined;
 
     // Compute final ELO (for cumulative system, which still uses BT)
     this.beginStage("computingElo");

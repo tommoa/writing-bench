@@ -59,6 +59,72 @@ export interface CompletedWork {
   judgments: Set<string>;
 }
 
+// ── Rating Map ──────────────────────────────────────
+
+/** Build a dimension:label → WhrRating lookup map from all three dimensions. */
+export function buildRatingMap(
+  writingRatings: WhrRating[],
+  revisedRatings: WhrRating[],
+  feedbackRatings: WhrRating[],
+): Map<string, WhrRating> {
+  const map = new Map<string, WhrRating>();
+  for (const r of writingRatings) map.set(`writing:${r.model}`, r);
+  for (const r of revisedRatings) map.set(`revised:${r.model}`, r);
+  for (const r of feedbackRatings) map.set(`feedback:${r.model}`, r);
+  return map;
+}
+
+// ── Formatting ──────────────────────────────────────
+
+/** Look up a model's CI half-width from a dimension:label keyed map. */
+function lookupCi(
+  map: Map<string, WhrRating>,
+  dimension: string,
+  model: string,
+): string {
+  const r = map.get(`${dimension}:${model}`);
+  if (!r || !Number.isFinite(r.ci95)) return "±∞";
+  return `±${Math.round(r.ci95)}`;
+}
+
+/**
+ * Format a concise human-readable description of a need, including
+ * the rating dimension and CI values for the involved models.
+ */
+export function formatNeedDescription(
+  need: Need,
+  ratingMap: Map<string, WhrRating>,
+): string {
+  if (need.type === "initial_judgment") {
+    const ciA = lookupCi(ratingMap, "writing", need.modelA);
+    const ciB = lookupCi(ratingMap, "writing", need.modelB);
+    return `writing: ${need.modelA} vs ${need.modelB} (${ciA} / ${ciB})`;
+  }
+  if (need.type === "improvement_judgment") {
+    const ci = lookupCi(ratingMap, "feedback", need.feedbackModel);
+    return `feedback: ${need.feedbackModel} on ${need.writer} (${ci})`;
+  }
+  // revised_judgment
+  const ciA = lookupCi(ratingMap, "revised", need.modelA);
+  const ciB = lookupCi(ratingMap, "revised", need.modelB);
+  return `revision: ${need.modelA} vs ${need.modelB} fb:${need.feedbackModel} (${ciA} / ${ciB})`;
+}
+
+/** Summarize a batch of needs by type count. */
+export function formatBatchSummary(needs: Need[]): string {
+  let w = 0, f = 0, r = 0;
+  for (const n of needs) {
+    if (n.type === "initial_judgment") w++;
+    else if (n.type === "improvement_judgment") f++;
+    else r++;
+  }
+  return [
+    w && `${w} writing`,
+    f && `${f} feedback`,
+    r && `${r} revision`,
+  ].filter(Boolean).join(", ");
+}
+
 // ── Helpers ─────────────────────────────────────────
 
 /**
@@ -157,14 +223,9 @@ export function identifyNeeds(
   convergence: ConvergenceConfig,
   batchSize: number,
   outputsPerModel: number,
-): Need[] {
+): { needs: Need[]; ratingMap: Map<string, WhrRating> } {
   const candidates: Need[] = [];
-  const ratingMap = new Map<string, WhrRating>();
-
-  // Build lookup maps
-  for (const r of writingRatings) ratingMap.set(`writing:${r.model}`, r);
-  for (const r of revisedRatings) ratingMap.set(`revised:${r.model}`, r);
-  for (const r of feedbackRatings) ratingMap.set(`feedback:${r.model}`, r);
+  const ratingMap = buildRatingMap(writingRatings, revisedRatings, feedbackRatings);
 
   // Default rating for models not yet in WHR
   const defaultRating: WhrRating = {
@@ -324,7 +385,7 @@ export function identifyNeeds(
     pairCount.set(pairKey, count + 1);
   }
 
-  return selected;
+  return { needs: selected, ratingMap };
 }
 
 /**
