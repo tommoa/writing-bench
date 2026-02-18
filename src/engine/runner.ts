@@ -869,73 +869,91 @@ export class BenchmarkRunner {
     if (need.type === "initial_judgment") {
       const modelACfg = this.modelMap.get(need.modelA)!;
       const modelBCfg = this.modelMap.get(need.modelB)!;
+      const key = judgmentKey(
+        "initial", need.modelA, need.modelB, need.promptId, need.judgeModel.label,
+        need.outputIdxA, need.outputIdxB,
+      );
 
       // Ensure both samples exist (may generate)
       const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, co);
       const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, co);
-      if (!sampleA || !sampleB) return;
+      if (!sampleA || !sampleB) {
+        this.completedWork.judgments.add(key);
+        return;
+      }
 
       // Judge
-      const result = await this.ensureJudgment(
+      await this.ensureJudgment(
         need.judgeModel, prompt, sampleA, sampleB, "initial", co,
       );
-      if (result) {
-        this.completedWork.judgments.add(judgmentKey(
-          "initial", need.modelA, need.modelB, need.promptId, need.judgeModel.label,
-          need.outputIdxA, need.outputIdxB,
-        ));
-      }
+      this.completedWork.judgments.add(key);
     } else if (need.type === "improvement_judgment") {
       const writerCfg = this.modelMap.get(need.writer)!;
       const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
+      const key = judgmentKey(
+        "improvement", need.writer, need.feedbackModel,
+        need.promptId, need.judgeModel.label, need.outputIdx,
+      );
 
       // Ensure the full cascade: sample → feedback → revision → judge
       const sample = await this.ensureSample(writerCfg, prompt, need.outputIdx, co);
-      if (!sample) return;
+      if (!sample) {
+        this.completedWork.judgments.add(key);
+        return;
+      }
 
       const feedback = await this.ensureFeedback(fbModelCfg, sample, prompt, co);
-      if (!feedback) return;
+      if (!feedback) {
+        this.completedWork.judgments.add(key);
+        return;
+      }
 
       const revision = await this.ensureRevision(writerCfg, sample, feedback, prompt, co);
-      if (!revision) return;
+      if (!revision) {
+        this.completedWork.judgments.add(key);
+        return;
+      }
 
-      const result = await this.ensureJudgment(
+      await this.ensureJudgment(
         need.judgeModel, prompt, sample, revision, "improvement", co,
       );
-      if (result) {
-        this.completedWork.judgments.add(judgmentKey(
-          "improvement", need.writer, need.feedbackModel,
-          need.promptId, need.judgeModel.label, need.outputIdx,
-        ));
-      }
+      this.completedWork.judgments.add(key);
     } else if (need.type === "revised_judgment") {
       const modelACfg = this.modelMap.get(need.modelA)!;
       const modelBCfg = this.modelMap.get(need.modelB)!;
       const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
+      const key = judgmentKey(
+        "revised", need.modelA, need.modelB,
+        `${need.promptId}:${need.feedbackModel}`, need.judgeModel.label,
+        need.outputIdxA, need.outputIdxB,
+      );
 
       // Ensure both models have samples, feedback from the same source, and revisions
       const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, co);
       const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, co);
-      if (!sampleA || !sampleB) return;
+      if (!sampleA || !sampleB) {
+        this.completedWork.judgments.add(key);
+        return;
+      }
 
       const fbA = await this.ensureFeedback(fbModelCfg, sampleA, prompt, co);
       const fbB = await this.ensureFeedback(fbModelCfg, sampleB, prompt, co);
-      if (!fbA || !fbB) return;
+      if (!fbA || !fbB) {
+        this.completedWork.judgments.add(key);
+        return;
+      }
 
       const revA = await this.ensureRevision(modelACfg, sampleA, fbA, prompt, co);
       const revB = await this.ensureRevision(modelBCfg, sampleB, fbB, prompt, co);
-      if (!revA || !revB) return;
+      if (!revA || !revB) {
+        this.completedWork.judgments.add(key);
+        return;
+      }
 
-      const result = await this.ensureJudgment(
+      await this.ensureJudgment(
         need.judgeModel, prompt, revA, revB, "revised", co,
       );
-      if (result) {
-        this.completedWork.judgments.add(judgmentKey(
-          "revised", need.modelA, need.modelB,
-          `${need.promptId}:${need.feedbackModel}`, need.judgeModel.label,
-          need.outputIdxA, need.outputIdxB,
-        ));
-      }
+      this.completedWork.judgments.add(key);
     }
   }
 
@@ -1028,6 +1046,7 @@ export class BenchmarkRunner {
         );
 
         // Fulfill needs in parallel — errors are recorded, not propagated
+        const opsBefore = this.opsDone;
         await Promise.allSettled(needs.map((n) =>
           this.fulfillNeed(n).catch((err) => {
             const model = n.type === "improvement_judgment" ? n.writer : n.modelA;
@@ -1036,6 +1055,11 @@ export class BenchmarkRunner {
             this.emit({ type: "error", data: taskError });
           }),
         ));
+
+        // If no artifacts were loaded or generated this round, further
+        // rounds cannot make progress either — break to avoid spinning.
+        if (this.opsDone === opsBefore) break;
+
         this.recomputeRatings();
         this.emitProgress(`Round ${this.judgingRound} complete`);
       }
