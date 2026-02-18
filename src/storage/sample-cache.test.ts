@@ -6,6 +6,9 @@ import {
   SampleCache,
   hashPromptContent,
   randomSample,
+  trimModelOutputs,
+  judgmentPairHash,
+  modelKey,
   type CachedWrite,
   type CachedFeedback,
   type CachedRevision,
@@ -559,5 +562,290 @@ describe("SampleCache - full provenance chain", () => {
     const rev = await cache.getCachedRevision("openai", "gpt-4o", fb!.cacheId);
     expect(rev).not.toBeNull();
     expect(rev!.feedbackCacheId).toBe("chain-fb1");
+  });
+});
+
+// ── trimModelOutputs ────────────────────────────────
+
+describe("trimModelOutputs", () => {
+  let cache: SampleCache;
+  const WRITER = { provider: "openai", model: "gpt-4o" };
+  const WRITER2 = { provider: "anthropic", model: "claude-sonnet-4-20250514" };
+  const FB_MODEL = { provider: "google", model: "gemini-2" };
+  const JUDGE = { provider: "openai", model: "gpt-4o" };
+  const PROMPT = "Write a story.";
+  const MK = modelKey(WRITER.provider, WRITER.model);
+
+  beforeEach(async () => {
+    if (existsSync(TEST_CACHE_DIR)) {
+      await rm(TEST_CACHE_DIR, { recursive: true });
+    }
+    cache = new SampleCache(TEST_CACHE_DIR);
+  });
+
+  afterEach(async () => {
+    if (existsSync(TEST_CACHE_DIR)) {
+      await rm(TEST_CACHE_DIR, { recursive: true });
+    }
+  });
+
+  it("trims outputs above N, keeping indices 0 through N-1", async () => {
+    // Create 5 writes
+    for (let i = 0; i < 5; i++) {
+      await cache.addCachedWrite(
+        WRITER.provider, WRITER.model, PROMPT,
+        makeCachedWrite({ cacheId: `w${i}`, text: `Output ${i}` }),
+      );
+    }
+
+    const result = await trimModelOutputs(TEST_CACHE_DIR, MK, 3);
+
+    expect(result.writesDeleted).toBe(2);
+    expect(result.promptsAffected).toBe(1);
+    expect(result.totalPrompts).toBe(1);
+
+    // Verify surviving writes
+    const remaining = await cache.getCachedWrites(WRITER.provider, WRITER.model, PROMPT);
+    expect(remaining).toHaveLength(3);
+    expect(remaining.map((r) => r.cacheId)).toEqual(["w0", "w1", "w2"]);
+  });
+
+  it("no-ops when N >= existing outputs", async () => {
+    for (let i = 0; i < 3; i++) {
+      await cache.addCachedWrite(
+        WRITER.provider, WRITER.model, PROMPT,
+        makeCachedWrite({ cacheId: `w${i}` }),
+      );
+    }
+
+    const result = await trimModelOutputs(TEST_CACHE_DIR, MK, 5);
+
+    expect(result.writesDeleted).toBe(0);
+    expect(result.promptsAffected).toBe(0);
+    expect(result.totalPrompts).toBe(1);
+
+    const remaining = await cache.getCachedWrites(WRITER.provider, WRITER.model, PROMPT);
+    expect(remaining).toHaveLength(3);
+  });
+
+  it("handles N=0 by deleting all outputs", async () => {
+    for (let i = 0; i < 3; i++) {
+      await cache.addCachedWrite(
+        WRITER.provider, WRITER.model, PROMPT,
+        makeCachedWrite({ cacheId: `w${i}` }),
+      );
+    }
+
+    const result = await trimModelOutputs(TEST_CACHE_DIR, MK, 0);
+
+    expect(result.writesDeleted).toBe(3);
+    expect(result.promptsAffected).toBe(1);
+  });
+
+  it("returns zeros when no cache exists for the model", async () => {
+    const result = await trimModelOutputs(TEST_CACHE_DIR, "nonexistent_model", 3);
+
+    expect(result.writesDeleted).toBe(0);
+    expect(result.totalPrompts).toBe(0);
+    expect(result.promptsAffected).toBe(0);
+  });
+
+  it("cascades deletion to linked feedback and revisions", async () => {
+    // Create 4 writes
+    for (let i = 0; i < 4; i++) {
+      await cache.addCachedWrite(
+        WRITER.provider, WRITER.model, PROMPT,
+        makeCachedWrite({ cacheId: `w${i}` }),
+      );
+    }
+
+    // Add feedback on writes w2 and w3 (will be deleted)
+    await cache.addCachedFeedback(
+      FB_MODEL.provider, FB_MODEL.model, "w2",
+      makeCachedFeedback({ cacheId: "fb-w2", writeCacheId: "w2" }),
+    );
+    await cache.addCachedFeedback(
+      FB_MODEL.provider, FB_MODEL.model, "w3",
+      makeCachedFeedback({ cacheId: "fb-w3", writeCacheId: "w3" }),
+    );
+
+    // Also add feedback on w0 (should survive)
+    await cache.addCachedFeedback(
+      FB_MODEL.provider, FB_MODEL.model, "w0",
+      makeCachedFeedback({ cacheId: "fb-w0", writeCacheId: "w0" }),
+    );
+
+    // Add revisions linked to the feedback
+    await cache.addCachedRevision(
+      WRITER.provider, WRITER.model, "fb-w2",
+      makeCachedRevision({ cacheId: "rev-w2", feedbackCacheId: "fb-w2" }),
+    );
+    await cache.addCachedRevision(
+      WRITER.provider, WRITER.model, "fb-w3",
+      makeCachedRevision({ cacheId: "rev-w3", feedbackCacheId: "fb-w3" }),
+    );
+    await cache.addCachedRevision(
+      WRITER.provider, WRITER.model, "fb-w0",
+      makeCachedRevision({ cacheId: "rev-w0", feedbackCacheId: "fb-w0" }),
+    );
+
+    const result = await trimModelOutputs(TEST_CACHE_DIR, MK, 2);
+
+    expect(result.writesDeleted).toBe(2);
+    expect(result.feedbackDeleted).toBe(2);
+    expect(result.revisionsDeleted).toBe(2);
+
+    // Surviving feedback for w0 should still be there
+    const fbSurvived = await cache.getCachedFeedback(
+      FB_MODEL.provider, FB_MODEL.model, "w0",
+    );
+    expect(fbSurvived).not.toBeNull();
+    expect(fbSurvived!.cacheId).toBe("fb-w0");
+
+    // Deleted feedback should be gone
+    const fbDeleted = await cache.getCachedFeedback(
+      FB_MODEL.provider, FB_MODEL.model, "w2",
+    );
+    expect(fbDeleted).toBeNull();
+
+    // Surviving revision should still be there
+    const revSurvived = await cache.getCachedRevision(
+      WRITER.provider, WRITER.model, "fb-w0",
+    );
+    expect(revSurvived).not.toBeNull();
+
+    // Deleted revision should be gone
+    const revDeleted = await cache.getCachedRevision(
+      WRITER.provider, WRITER.model, "fb-w2",
+    );
+    expect(revDeleted).toBeNull();
+  });
+
+  it("deletes only stale judgments, keeps unrelated ones", async () => {
+    // Writer 1: 4 writes
+    for (let i = 0; i < 4; i++) {
+      await cache.addCachedWrite(
+        WRITER.provider, WRITER.model, PROMPT,
+        makeCachedWrite({ cacheId: `w1-${i}` }),
+      );
+    }
+
+    // Writer 2: 2 writes (won't be trimmed, different model)
+    const mk2 = modelKey(WRITER2.provider, WRITER2.model);
+    for (let i = 0; i < 2; i++) {
+      await cache.addCachedWrite(
+        WRITER2.provider, WRITER2.model, PROMPT,
+        makeCachedWrite({ cacheId: `w2-${i}` }),
+      );
+    }
+
+    // Judgment: w1-0 vs w2-0 (initial) — both survive trimming, should remain
+    await cache.addCachedJudgment(
+      JUDGE.provider, JUDGE.model, "initial", "w1-0", "w2-0",
+      makeCachedJudgment({ cacheId: "j-survive" }),
+    );
+
+    // Judgment: w1-2 vs w2-0 (initial) — w1-2 will be deleted, judgment is stale
+    await cache.addCachedJudgment(
+      JUDGE.provider, JUDGE.model, "initial", "w1-2", "w2-0",
+      makeCachedJudgment({ cacheId: "j-stale" }),
+    );
+
+    // Judgment: w2-0 vs w2-1 (initial) — unrelated to trimmed model, should survive
+    await cache.addCachedJudgment(
+      JUDGE.provider, JUDGE.model, "initial", "w2-0", "w2-1",
+      makeCachedJudgment({ cacheId: "j-unrelated" }),
+    );
+
+    const result = await trimModelOutputs(TEST_CACHE_DIR, MK, 2);
+
+    expect(result.writesDeleted).toBe(2);
+    expect(result.judgmentsDeleted).toBe(1);
+
+    // Surviving judgment should still be retrievable
+    const jSurvive = await cache.getCachedJudgment(
+      JUDGE.provider, JUDGE.model, "initial", "w1-0", "w2-0",
+    );
+    expect(jSurvive).not.toBeNull();
+    expect(jSurvive!.cacheId).toBe("j-survive");
+
+    // Stale judgment should be gone
+    const jStale = await cache.getCachedJudgment(
+      JUDGE.provider, JUDGE.model, "initial", "w1-2", "w2-0",
+    );
+    expect(jStale).toBeNull();
+
+    // Unrelated judgment should survive
+    const jUnrelated = await cache.getCachedJudgment(
+      JUDGE.provider, JUDGE.model, "initial", "w2-0", "w2-1",
+    );
+    expect(jUnrelated).not.toBeNull();
+    expect(jUnrelated!.cacheId).toBe("j-unrelated");
+  });
+
+  it("handles multiple feedback models per write", async () => {
+    // Create 2 writes
+    for (let i = 0; i < 2; i++) {
+      await cache.addCachedWrite(
+        WRITER.provider, WRITER.model, PROMPT,
+        makeCachedWrite({ cacheId: `w${i}` }),
+      );
+    }
+
+    // Two different feedback models on w1 (will be deleted)
+    await cache.addCachedFeedback(
+      FB_MODEL.provider, FB_MODEL.model, "w1",
+      makeCachedFeedback({ cacheId: "fb-g-w1", writeCacheId: "w1" }),
+    );
+    await cache.addCachedFeedback(
+      WRITER2.provider, WRITER2.model, "w1",
+      makeCachedFeedback({ cacheId: "fb-c-w1", writeCacheId: "w1" }),
+    );
+
+    const result = await trimModelOutputs(TEST_CACHE_DIR, MK, 1);
+
+    expect(result.writesDeleted).toBe(1);
+    expect(result.feedbackDeleted).toBe(2);
+
+    // Both feedback files should be gone
+    const fb1 = await cache.getCachedFeedback(
+      FB_MODEL.provider, FB_MODEL.model, "w1",
+    );
+    const fb2 = await cache.getCachedFeedback(
+      WRITER2.provider, WRITER2.model, "w1",
+    );
+    expect(fb1).toBeNull();
+    expect(fb2).toBeNull();
+  });
+
+  it("handles multiple prompts, only trims where needed", async () => {
+    const PROMPT2 = "Write a poem.";
+
+    // 5 writes for prompt 1, 2 writes for prompt 2
+    for (let i = 0; i < 5; i++) {
+      await cache.addCachedWrite(
+        WRITER.provider, WRITER.model, PROMPT,
+        makeCachedWrite({ cacheId: `s-w${i}` }),
+      );
+    }
+    for (let i = 0; i < 2; i++) {
+      await cache.addCachedWrite(
+        WRITER.provider, WRITER.model, PROMPT2,
+        makeCachedWrite({ cacheId: `p-w${i}` }),
+      );
+    }
+
+    const result = await trimModelOutputs(TEST_CACHE_DIR, MK, 3);
+
+    // Only prompt 1 should be trimmed (5 > 3), prompt 2 (2 <= 3) untouched
+    expect(result.promptsAffected).toBe(1);
+    expect(result.totalPrompts).toBe(2);
+    expect(result.writesDeleted).toBe(2);
+
+    const remaining1 = await cache.getCachedWrites(WRITER.provider, WRITER.model, PROMPT);
+    expect(remaining1).toHaveLength(3);
+
+    const remaining2 = await cache.getCachedWrites(WRITER.provider, WRITER.model, PROMPT2);
+    expect(remaining2).toHaveLength(2);
   });
 });

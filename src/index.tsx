@@ -11,7 +11,7 @@ import { saveRun, loadRun, loadLatestRun, listRuns } from "./storage/run-store.j
 import { updateCumulativeElo, loadCumulativeElo } from "./storage/elo-store.js";
 import { exportForWeb } from "./export/web-export.js";
 import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson } from "./storage/cache-status.js";
-import { modelKey } from "./storage/sample-cache.js";
+import { modelKey, trimModelOutputs } from "./storage/sample-cache.js";
 import { parseModelSpec } from "./providers/registry.js";
 import { checkProviderEnv } from "./providers/models.js";
 import { App } from "./ui/App.js";
@@ -355,8 +355,33 @@ async function handleClearCache(
   args: Extract<Command, { command: "cache-clear" }>["args"]
 ) {
   const mk = specToKey(args.model);
-
   const cacheBase = join(process.cwd(), "data", "cache");
+
+  // ── Trim mode: keep first N outputs, delete the rest ──
+  if (args.outputs !== undefined) {
+    const result = await trimModelOutputs(cacheBase, mk, args.outputs);
+
+    if (result.writesDeleted === 0) {
+      if (result.totalPrompts === 0) {
+        console.log(`No cache found for ${args.model}.`);
+      } else {
+        console.log(
+          `Nothing to trim — all prompts already have \u2264 ${args.outputs} outputs for ${args.model}.`,
+        );
+      }
+      return;
+    }
+
+    console.log(`Trimmed ${args.model} to ${args.outputs} outputs per prompt:`);
+    console.log(`  ${result.promptsAffected} prompts affected (of ${result.totalPrompts} total)`);
+    console.log(`  ${result.writesDeleted} writes removed`);
+    console.log(`  ${result.feedbackDeleted} feedback files removed`);
+    console.log(`  ${result.revisionsDeleted} revisions removed`);
+    console.log(`  ${result.judgmentsDeleted} stale judgments removed`);
+    return;
+  }
+
+  // ── Full clear mode (existing behavior) ──
   let totalRemoved = 0;
 
   if (!args.judgmentsOnly) {

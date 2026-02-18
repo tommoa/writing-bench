@@ -39,6 +39,7 @@ export interface ServeArgs {
 export interface ClearCacheArgs {
   model: string;
   judgmentsOnly: boolean;
+  outputs?: number;
 }
 
 export interface CacheStatusArgs {
@@ -138,6 +139,21 @@ function buildCacheCommand(resolve: (cmd: Command) => void) {
               default: false,
               describe:
                 "Only clear judgment caches, keep writes/feedback/revisions",
+            })
+            .option("outputs", {
+              alias: "n",
+              type: "number",
+              describe:
+                "Keep first N outputs per prompt; trim the rest and linked artifacts",
+            })
+            .check((argv) => {
+              if (argv.outputs !== undefined && argv.judgmentsOnly) {
+                throw new Error("--outputs and --judgments-only are mutually exclusive");
+              }
+              if (argv.outputs !== undefined && argv.outputs < 0) {
+                throw new Error("--outputs must be non-negative");
+              }
+              return true;
             }),
         (argv: ArgumentsCamelCase<ClearCacheArgs>) => {
           resolve({
@@ -145,6 +161,7 @@ function buildCacheCommand(resolve: (cmd: Command) => void) {
             args: {
               model: argv.model,
               judgmentsOnly: argv.judgmentsOnly,
+              outputs: argv.outputs,
             },
           });
         }

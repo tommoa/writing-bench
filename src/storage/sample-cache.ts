@@ -1,8 +1,9 @@
 import { existsSync } from "fs";
-import { readFile, writeFile, mkdir, readdir, rename } from "fs/promises";
-import { join } from "path";
+import { readFile, writeFile, mkdir, readdir, rename, unlink } from "fs/promises";
+import { join, basename } from "path";
 import { createHash, randomBytes } from "crypto";
 import type { TokenUsage, CostBreakdown } from "../types.js";
+import { safeReaddir, safeReadJson, removeIfEmpty } from "./fs-utils.js";
 
 // ── Cached entry types ──────────────────────────────
 
@@ -351,4 +352,209 @@ export function randomSample<T>(arr: T[], count: number): T[] {
     copy.splice(idx, 1);
   }
   return result;
+}
+
+// ── Cache Trimming ──────────────────────────────────
+
+export interface TrimResult {
+  promptsAffected: number;
+  totalPrompts: number;
+  writesDeleted: number;
+  feedbackDeleted: number;
+  revisionsDeleted: number;
+  judgmentsDeleted: number;
+}
+
+
+/**
+ * Trim cached outputs for a model to at most `maxOutputs` per prompt.
+ * Cascades to linked feedback, revisions, and surgically removes only
+ * the judgment files that reference deleted artifacts.
+ */
+export async function trimModelOutputs(
+  cacheDir: string,
+  mk: string,
+  maxOutputs: number,
+): Promise<TrimResult> {
+  const writesBase = join(cacheDir, "writes", mk);
+  const feedbackBase = join(cacheDir, "feedback");
+  const revisionsBase = join(cacheDir, "revisions");
+  const judgmentsBase = join(cacheDir, "judgments");
+
+  // ── Phase 1: Trim writes ──────────────────────────
+
+  const promptHashes = await safeReaddir(writesBase);
+  const totalPrompts = promptHashes.length;
+  let promptsAffected = 0;
+
+  const deletedWriteIds: string[] = [];
+  const survivingWriteIds: string[] = [];
+
+  for (const promptHash of promptHashes) {
+    const promptDir = join(writesBase, promptHash);
+    const files = (await safeReaddir(promptDir))
+      .filter((f) => f.endsWith(".json"))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)?.[0] ?? "0", 10);
+        const nb = parseInt(b.match(/\d+/)?.[0] ?? "0", 10);
+        return na - nb;
+      });
+
+    const keepCount = Math.min(files.length, maxOutputs);
+    if (keepCount < files.length) promptsAffected++;
+
+    for (let i = 0; i < files.length; i++) {
+      const filePath = join(promptDir, files[i]);
+      const entry = await safeReadJson<{ cacheId: string }>(filePath);
+      if (i < keepCount) {
+        if (entry?.cacheId) survivingWriteIds.push(entry.cacheId);
+      } else {
+        if (entry?.cacheId) deletedWriteIds.push(entry.cacheId);
+        await unlink(filePath);
+      }
+    }
+
+    if (keepCount === 0) await removeIfEmpty(promptDir);
+  }
+
+  if (deletedWriteIds.length === 0) {
+    return {
+      promptsAffected: 0,
+      totalPrompts,
+      writesDeleted: 0,
+      feedbackDeleted: 0,
+      revisionsDeleted: 0,
+      judgmentsDeleted: 0,
+    };
+  }
+
+  // ── Phase 2: Cascade delete feedback + revisions ──
+
+  const deletedFeedbackIds: string[] = [];
+  const deletedRevisionIds: string[] = [];
+  let feedbackDeleted = 0;
+  let revisionsDeleted = 0;
+
+  const feedbackModelDirs = await safeReaddir(feedbackBase);
+  const revisionModelDirs = await safeReaddir(revisionsBase);
+
+  for (const writeCacheId of deletedWriteIds) {
+    for (const fbModelDir of feedbackModelDirs) {
+      const fbPath = join(feedbackBase, fbModelDir, `${writeCacheId}.json`);
+      const fbEntry = await safeReadJson<{ cacheId: string }>(fbPath);
+      if (!fbEntry?.cacheId) continue;
+
+      deletedFeedbackIds.push(fbEntry.cacheId);
+      await unlink(fbPath);
+      feedbackDeleted++;
+
+      for (const revModelDir of revisionModelDirs) {
+        const revPath = join(revisionsBase, revModelDir, `${fbEntry.cacheId}.json`);
+        const revEntry = await safeReadJson<{ cacheId: string }>(revPath);
+        if (!revEntry?.cacheId) continue;
+
+        deletedRevisionIds.push(revEntry.cacheId);
+        await unlink(revPath);
+        revisionsDeleted++;
+      }
+    }
+  }
+
+  // ── Phase 3: Surgical judgment cleanup ────────────
+
+  const deletedIds = new Set<string>([
+    ...deletedWriteIds,
+    ...deletedFeedbackIds,
+    ...deletedRevisionIds,
+  ]);
+
+  // Build inventory of ALL known write + revision cacheIds across
+  // the cache (needed to compute judgment pair hashes). Feedback IDs
+  // are not used in judgment hashes so they are skipped. Deleted IDs
+  // are already in `deletedIds` and matched from that side of the
+  // pairing, so only surviving write IDs are seeded here.
+  const allKnownIds = new Set<string>([
+    ...survivingWriteIds,
+  ]);
+
+  // Writes from OTHER models (Phase 1 only covers the trimmed model)
+  const allWriteModelDirs = await safeReaddir(join(cacheDir, "writes"));
+  for (const wModelDir of allWriteModelDirs) {
+    if (wModelDir === mk) continue; // already collected
+    const prompts = await safeReaddir(join(cacheDir, "writes", wModelDir));
+    for (const ph of prompts) {
+      const samples = (await safeReaddir(join(cacheDir, "writes", wModelDir, ph)))
+        .filter((f) => f.endsWith(".json"));
+      for (const sf of samples) {
+        const entry = await safeReadJson<{ cacheId: string }>(
+          join(cacheDir, "writes", wModelDir, ph, sf),
+        );
+        if (entry?.cacheId) allKnownIds.add(entry.cacheId);
+      }
+    }
+  }
+
+  // Revisions from ALL models (needed for revised/improvement judgment hashes)
+  for (const revDir of revisionModelDirs) {
+    const files = (await safeReaddir(join(revisionsBase, revDir)))
+      .filter((f) => f.endsWith(".json"));
+    for (const f of files) {
+      const entry = await safeReadJson<{ cacheId: string }>(
+        join(revisionsBase, revDir, f),
+      );
+      if (entry?.cacheId) allKnownIds.add(entry.cacheId);
+    }
+  }
+
+  // Compute all stale judgment hashes: every (deletedId, otherId) pair
+  // across all three stages. Invalid stage+type combos simply won't
+  // match any file on disk — harmless extra hash computations.
+  const STAGES = ["initial", "improvement", "revised"] as const;
+  const staleHashes = new Set<string>();
+
+  const allKnownArr = Array.from(allKnownIds);
+  for (const deletedId of deletedIds) {
+    for (const otherId of allKnownArr) {
+      if (deletedId === otherId) continue;
+      for (const stage of STAGES) {
+        staleHashes.add(judgmentPairHash(stage, deletedId, otherId));
+      }
+    }
+  }
+
+  // Scan judgment directories and delete matching files
+  let judgmentsDeleted = 0;
+  const judgeModelDirs = await safeReaddir(judgmentsBase);
+  for (const judgeDir of judgeModelDirs) {
+    const judgeDirPath = join(judgmentsBase, judgeDir);
+    const files = (await safeReaddir(judgeDirPath))
+      .filter((f) => f.endsWith(".json"));
+    for (const f of files) {
+      const hash = basename(f, ".json");
+      if (staleHashes.has(hash)) {
+        await unlink(join(judgeDirPath, f));
+        judgmentsDeleted++;
+      }
+    }
+    await removeIfEmpty(judgeDirPath);
+  }
+
+  // Clean up empty directories
+  await removeIfEmpty(join(cacheDir, "writes", mk));
+  for (const fbDir of feedbackModelDirs) {
+    await removeIfEmpty(join(feedbackBase, fbDir));
+  }
+  for (const revDir of revisionModelDirs) {
+    await removeIfEmpty(join(revisionsBase, revDir));
+  }
+  await removeIfEmpty(judgmentsBase);
+
+  return {
+    promptsAffected,
+    totalPrompts,
+    writesDeleted: deletedWriteIds.length,
+    feedbackDeleted,
+    revisionsDeleted,
+    judgmentsDeleted,
+  };
 }
