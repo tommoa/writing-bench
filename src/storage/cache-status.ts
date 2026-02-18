@@ -1,7 +1,8 @@
-import { readFile, readdir } from "fs/promises";
+import { readdir } from "fs/promises";
 import { join } from "path";
 import type { PromptConfig, ProviderName } from "../types.js";
 import { hashPromptContent, modelKey, judgmentPairHash } from "./sample-cache.js";
+import { safeReaddir, safeReadJson } from "./fs-utils.js";
 
 // ── Types ───────────────────────────────────────────
 
@@ -122,25 +123,8 @@ export function reverseModelKey(dirName: string): string | null {
 
 // ── Directory listing helpers ───────────────────────
 
-async function safeReaddir(dir: string): Promise<string[]> {
-  try {
-    return await readdir(dir);
-  } catch {
-    return [];
-  }
-}
-
 async function safeDirSet(dir: string): Promise<Set<string>> {
   return new Set(await safeReaddir(dir));
-}
-
-async function safeReadJson<T>(path: string): Promise<T | null> {
-  try {
-    const raw = await readFile(path, "utf-8");
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
 }
 
 /** Check if a cache file exists in the pre-loaded set, read it, return its cacheId. */
