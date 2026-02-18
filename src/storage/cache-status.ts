@@ -1,4 +1,4 @@
-import { readdir } from "fs/promises";
+import { stat, readdir } from "fs/promises";
 import { join } from "path";
 import type { PromptConfig, ProviderName } from "../types.js";
 import { hashPromptContent, modelKey, judgmentPairHash } from "./sample-cache.js";
@@ -77,6 +77,7 @@ export interface CacheStatusResult {
   matrix: Map<string, Map<string, CellCoverage>>;
   coverings: Covering[];
   summary: StageMap;
+  diskSize: CacheDiskSize;
 }
 
 // ── Known providers for reverse-mapping ─────────────
@@ -137,6 +138,64 @@ async function readCacheId(
   if (!fileSet.has(fname)) return null;
   const entry = await safeReadJson<{ cacheId: string }>(join(dir, fname));
   return entry?.cacheId ?? null;
+}
+
+// ── Disk size ───────────────────────────────────────
+
+export interface CacheDiskSize {
+  writes: number;
+  feedback: number;
+  revisions: number;
+  judgments: number;
+  total: number;
+}
+
+const CACHE_CATEGORIES = ["writes", "feedback", "revisions", "judgments"] as const;
+
+/**
+ * Walk the cache directory and sum file sizes per category.
+ * Returns byte counts for each category and a grand total.
+ */
+export async function computeCacheDiskSize(cacheDir: string): Promise<CacheDiskSize> {
+  const sizes: CacheDiskSize = { writes: 0, feedback: 0, revisions: 0, judgments: 0, total: 0 };
+  await Promise.all(
+    CACHE_CATEGORIES.map(async (cat) => {
+      const catDir = join(cacheDir, cat);
+      try {
+        const entries = await readdir(catDir, { recursive: true });
+        const stats = await Promise.all(
+          entries.map(async (entry) => {
+            try {
+              const s = await stat(join(catDir, entry));
+              return s.isFile() ? s.size : 0;
+            } catch {
+              return 0;
+            }
+          })
+        );
+        sizes[cat] = stats.reduce((sum, s) => sum + s, 0);
+      } catch {
+        // Directory doesn't exist — size stays 0
+      }
+    })
+  );
+  sizes.total = sizes.writes + sizes.feedback + sizes.revisions + sizes.judgments;
+  return sizes;
+}
+
+/**
+ * Format a byte count as a human-readable string (e.g. "1.2 MB").
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1
+  );
+  const value = bytes / Math.pow(1024, i);
+  if (i === 0) return `${Math.round(value)} ${units[i]}`;
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
 }
 
 // ── Core analysis ───────────────────────────────────
@@ -495,6 +554,9 @@ export async function analyzeCacheStatus(
     judgesFixed,
   });
 
+  // ── 13. Compute disk usage ───────────────────────
+  const diskSize = await computeCacheDiskSize(cacheDir);
+
   return {
     outputsPerModel: N,
     writerKeys,
@@ -504,6 +566,7 @@ export async function analyzeCacheStatus(
     matrix,
     coverings,
     summary,
+    diskSize,
   };
 }
 
@@ -1036,6 +1099,17 @@ export function formatCacheStatusTable(result: CacheStatusResult): string {
     `  Improvement judging: ${summary.improvementJudgments.have}/${summary.improvementJudgments.need}` +
     `  Revised judging: ${summary.revisedJudgments.have}/${summary.revisedJudgments.need}`
   );
+  lines.push("");
+
+  // ── Disk usage ────────────────────────────────
+  const { diskSize } = result;
+  lines.push(
+    `Disk usage: ${formatBytes(diskSize.total)}` +
+    ` (writes: ${formatBytes(diskSize.writes)}` +
+    `, feedback: ${formatBytes(diskSize.feedback)}` +
+    `, revisions: ${formatBytes(diskSize.revisions)}` +
+    `, judgments: ${formatBytes(diskSize.judgments)})`
+  );
 
   return lines.join("\n");
 }
@@ -1083,6 +1157,7 @@ export function formatCacheStatusJson(result: CacheStatusResult): string {
       matrix: matrixObj,
       coverings: coveringsObj,
       summary: result.summary,
+      diskSize: result.diskSize,
     },
     null,
     2

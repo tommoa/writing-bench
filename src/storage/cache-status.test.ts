@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync } from "fs";
 import { rm, mkdir, writeFile, readdir, readFile } from "fs/promises";
 import { join } from "path";
-import type { CacheStatusResult, Covering } from "./cache-status.js";
+import type { CacheStatusResult, Covering, CacheDiskSize } from "./cache-status.js";
 import {
   reverseModelKey,
   allPairs,
@@ -11,6 +11,8 @@ import {
   analyzeCacheStatus,
   formatCacheStatusTable,
   formatCacheStatusJson,
+  formatBytes,
+  computeCacheDiskSize,
 } from "./cache-status.js";
 import { hashPromptContent, modelKey, judgmentPairHash } from "./sample-cache.js";
 import type { PromptConfig } from "../types.js";
@@ -931,6 +933,125 @@ describe("formatCacheStatusJson", () => {
     expect(parsed.summary.writes).toBeDefined();
     expect(parsed.summary.initialJudgments).toBeDefined();
   });
+
+  it("includes diskSize in JSON output", () => {
+    const result = makeMinimalResult();
+    const parsed = JSON.parse(formatCacheStatusJson(result));
+    expect(parsed.diskSize).toBeDefined();
+    expect(parsed.diskSize.total).toBe(2560);
+    expect(parsed.diskSize.writes).toBe(1024);
+    expect(parsed.diskSize.feedback).toBe(512);
+    expect(parsed.diskSize.revisions).toBe(768);
+    expect(parsed.diskSize.judgments).toBe(256);
+  });
+});
+
+// ── formatBytes ─────────────────────────────────────
+
+describe("formatBytes", () => {
+  it("returns '0 B' for zero bytes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+  });
+
+  it("formats bytes below 1 KB", () => {
+    expect(formatBytes(500)).toBe("500 B");
+  });
+
+  it("formats kilobytes", () => {
+    expect(formatBytes(1024)).toBe("1.0 KB");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(15 * 1024)).toBe("15 KB");
+  });
+
+  it("formats megabytes", () => {
+    expect(formatBytes(1024 * 1024)).toBe("1.0 MB");
+    expect(formatBytes(5.5 * 1024 * 1024)).toBe("5.5 MB");
+    expect(formatBytes(42 * 1024 * 1024)).toBe("42 MB");
+  });
+
+  it("formats gigabytes", () => {
+    expect(formatBytes(1024 * 1024 * 1024)).toBe("1.0 GB");
+    expect(formatBytes(2.3 * 1024 * 1024 * 1024)).toBe("2.3 GB");
+  });
+});
+
+// ── computeCacheDiskSize ────────────────────────────
+
+describe("computeCacheDiskSize", () => {
+  const DISK_TEST_DIR = join(process.cwd(), "data", "test-cache-disk-size");
+
+  beforeEach(async () => {
+    if (existsSync(DISK_TEST_DIR)) {
+      await rm(DISK_TEST_DIR, { recursive: true });
+    }
+  });
+
+  afterEach(async () => {
+    if (existsSync(DISK_TEST_DIR)) {
+      await rm(DISK_TEST_DIR, { recursive: true });
+    }
+  });
+
+  it("returns all zeros for nonexistent directory", async () => {
+    const sizes = await computeCacheDiskSize(DISK_TEST_DIR);
+    expect(sizes.total).toBe(0);
+    expect(sizes.writes).toBe(0);
+    expect(sizes.feedback).toBe(0);
+    expect(sizes.revisions).toBe(0);
+    expect(sizes.judgments).toBe(0);
+  });
+
+  it("sums file sizes per category", async () => {
+    // Create files in each category
+    const content = JSON.stringify({ text: "hello world", cacheId: "x1" });
+    await writeJson(join(DISK_TEST_DIR, "writes", "model_a", "hash1", "sample_0.json"), { text: "hello" });
+    await writeJson(join(DISK_TEST_DIR, "feedback", "model_a", "fb1.json"), { text: "feedback" });
+    await writeJson(join(DISK_TEST_DIR, "revisions", "model_a", "rev1.json"), { text: "revision" });
+    await writeJson(join(DISK_TEST_DIR, "judgments", "model_a", "j1.json"), { text: "judgment" });
+
+    const sizes = await computeCacheDiskSize(DISK_TEST_DIR);
+    expect(sizes.writes).toBeGreaterThan(0);
+    expect(sizes.feedback).toBeGreaterThan(0);
+    expect(sizes.revisions).toBeGreaterThan(0);
+    expect(sizes.judgments).toBeGreaterThan(0);
+    expect(sizes.total).toBe(sizes.writes + sizes.feedback + sizes.revisions + sizes.judgments);
+  });
+
+  it("handles empty category directories", async () => {
+    await mkdir(join(DISK_TEST_DIR, "writes"), { recursive: true });
+    await mkdir(join(DISK_TEST_DIR, "judgments"), { recursive: true });
+
+    const sizes = await computeCacheDiskSize(DISK_TEST_DIR);
+    expect(sizes.total).toBe(0);
+  });
+});
+
+// ── disk size in formatCacheStatusTable ──────────────
+
+describe("formatCacheStatusTable disk size", () => {
+  it("includes disk usage line with total and per-category sizes", () => {
+    const result = makeMinimalResult();
+    result.diskSize = {
+      writes: 5 * 1024 * 1024,
+      feedback: 1024 * 1024,
+      revisions: 2 * 1024 * 1024,
+      judgments: 512 * 1024,
+      total: 5 * 1024 * 1024 + 1024 * 1024 + 2 * 1024 * 1024 + 512 * 1024,
+    };
+    const output = formatCacheStatusTable(result);
+    expect(output).toContain("Disk usage:");
+    expect(output).toContain("writes:");
+    expect(output).toContain("feedback:");
+    expect(output).toContain("revisions:");
+    expect(output).toContain("judgments:");
+  });
+
+  it("shows 0 B when cache is empty", () => {
+    const result = makeMinimalResult();
+    result.diskSize = { writes: 0, feedback: 0, revisions: 0, judgments: 0, total: 0 };
+    const output = formatCacheStatusTable(result);
+    expect(output).toContain("Disk usage: 0 B");
+  });
 });
 
 // ── filterDominated ─────────────────────────────────
@@ -1393,5 +1514,6 @@ function makeMinimalResult(): CacheStatusResult {
       improvementJudgments: { have: 4, need: 4 },
       revisedJudgments: { have: 2, need: 2 },
     },
+    diskSize: { writes: 1024, feedback: 512, revisions: 768, judgments: 256, total: 2560 },
   };
 }
