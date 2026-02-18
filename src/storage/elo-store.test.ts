@@ -128,20 +128,19 @@ describe("updateCumulativeElo - feedback ELO", () => {
   });
 
   it("updates feedbackGiving from improvement judgments", async () => {
-    // Two writers (modelA, modelB) each get feedback from feedbackX and feedbackY.
+    // Writer modelA gets feedback from feedbackX and feedbackY on the same original.
     // feedbackX's revision wins (B beats original), feedbackY's loses.
     const run = makeRunResult({
       samples: [
         makeSample("origA", "modelA", "sermon"),
-        makeSample("origB", "modelB", "sermon"),
         makeSample("revA", "modelA", "sermon", "revised", "feedbackX"),
-        makeSample("revB", "modelB", "sermon", "revised", "feedbackY"),
+        makeSample("revB", "modelA", "sermon", "revised", "feedbackY"),
       ],
       judgments: [
         // feedbackX led to a better revision (revision beat original)
         makeJudgment("j1", "sermon", "origA", "revA", "B", "improvement"),
         // feedbackY did not help (original beat revision)
-        makeJudgment("j2", "sermon", "origB", "revB", "A", "improvement"),
+        makeJudgment("j2", "sermon", "origA", "revB", "A", "improvement"),
       ],
       prompts: [{ id: "sermon", tags: ["sermon"] }],
     });

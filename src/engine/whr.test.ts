@@ -628,7 +628,7 @@ describe("improvementJudgmentsToGames", () => {
     const judgments = [
       { sampleA: "orig1", sampleB: "rev1", winner: "B" as const,
         promptId: "p1", judgeModel: "judge" },
-      { sampleA: "orig2", sampleB: "rev2", winner: "A" as const,
+      { sampleA: "orig1", sampleB: "rev2", winner: "A" as const,
         promptId: "p1", judgeModel: "judge" },
     ];
 
@@ -647,7 +647,7 @@ describe("improvementJudgmentsToGames", () => {
     const judgments = [
       { sampleA: "orig1", sampleB: "rev1", winner: "B" as const,
         promptId: "p1", judgeModel: "judge" },
-      { sampleA: "orig2", sampleB: "rev2", winner: "B" as const,
+      { sampleA: "orig1", sampleB: "rev2", winner: "B" as const,
         promptId: "p1", judgeModel: "judge" },
     ];
 
@@ -664,10 +664,27 @@ describe("improvementJudgmentsToGames", () => {
     const judgments = [
       { sampleA: "orig1", sampleB: "rev1", winner: "B" as const,
         promptId: "p1", judgeModel: "judge" },
+      { sampleA: "orig1", sampleB: "rev2", winner: "A" as const,
+        promptId: "p1", judgeModel: "judge" },
+    ];
+
+    const games = improvementJudgmentsToGames(judgments, sampleToFeedbackModel);
+    expect(games).toHaveLength(0);
+  });
+
+  it("does not pair feedback models tested on different base texts", () => {
+    const sampleToFeedbackModel = new Map([
+      ["rev1", "feedbackA"],
+      ["rev2", "feedbackB"],
+    ]);
+    const judgments = [
+      { sampleA: "orig1", sampleB: "rev1", winner: "B" as const,
+        promptId: "p1", judgeModel: "judge" },
       { sampleA: "orig2", sampleB: "rev2", winner: "A" as const,
         promptId: "p1", judgeModel: "judge" },
     ];
 
+    // Different sampleA values → different base texts → no comparison
     const games = improvementJudgmentsToGames(judgments, sampleToFeedbackModel);
     expect(games).toHaveLength(0);
   });
@@ -814,7 +831,7 @@ describe("gamesToRecords and mergeRecords", () => {
     ]);
     const judgments: PairwiseJudgment[] = [
       makeJudgment("j1", "orig1", "rev1", "B", "improvement", "p1"),
-      makeJudgment("j2", "orig2", "rev2", "A", "improvement", "p1"),
+      makeJudgment("j2", "orig1", "rev2", "A", "improvement", "p1"),
     ];
 
     const records = gamesToRecords(

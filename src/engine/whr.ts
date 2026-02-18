@@ -646,8 +646,10 @@ export function judgmentsToGames(
 
 /**
  * Convert improvement judgments into WhrGame format using the
- * grouped-pairing logic. Groups by (promptId, judgeModel), then
- * pairs different feedback providers within each group.
+ * grouped-pairing logic. Groups by (promptId, judgeModel, sampleA)
+ * so that feedback providers are only compared when tested on the
+ * same base text. Within each group, pairs different feedback
+ * providers.
  *
  * If feedback model A's revision beat the original but B's didn't,
  * A wins. Both improved or both failed = tie.
@@ -664,14 +666,16 @@ export function improvementJudgmentsToGames(
 ): WhrGame[] {
   const games: WhrGame[] = [];
 
-  // Group by (promptId, judgeModel)
+  // Group by (promptId, judgeModel, sampleA) -- sampleA is the original
+  // sample ID, ensuring feedback models are only paired when tested on
+  // the same base text.
   type ImpResult = { feedbackModel: string; winner: "A" | "B" | "tie" };
   const groups = new Map<string, ImpResult[]>();
 
   for (const j of improvementJudgments) {
     const fbModel = sampleToFeedbackModel.get(j.sampleB);
     if (!fbModel) continue;
-    const groupKey = `${j.promptId}:${j.judgeModel}`;
+    const groupKey = `${j.promptId}:${j.judgeModel}:${j.sampleA}`;
     const group = groups.get(groupKey) ?? [];
     group.push({ feedbackModel: fbModel, winner: j.winner });
     groups.set(groupKey, group);

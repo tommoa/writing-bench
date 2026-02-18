@@ -80,7 +80,7 @@ Direct head-to-head writing quality from initial stage judgments. Two writing sa
 
 How useful a model's editorial feedback is, measured indirectly. The system does not compare feedback texts directly. Instead, it uses improvement judgments (revision vs. original) to determine whether feedback led to a better revision.
 
-The algorithm groups improvement judgments by prompt and judge, then pairs up different feedback providers within each group. If feedback model A's revision beat the original but feedback model B's did not, A wins. If both improved or both failed, it's a tie. These synthetic pairwise outcomes are then fed into the same WHR computation.
+The algorithm groups improvement judgments by prompt, judge, and original sample, so that feedback providers are only compared when tested on the same base text. Within each group, it pairs up different feedback providers. If feedback model A's revision beat the original but feedback model B's did not, A wins. If both improved or both failed, it's a tie. These synthetic pairwise outcomes are then fed into the same WHR computation.
 
 ### Revised Writing ELO
 
