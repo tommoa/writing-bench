@@ -14,6 +14,7 @@ export interface RunArgs {
   reasoning: boolean;
   noCache: boolean;
   confidence: number;
+  maxRounds: number;
   cacheOnly: boolean;
   skipSeeding: boolean;
 }
@@ -250,6 +251,12 @@ export async function parseArgs(): Promise<Command> {
               describe:
                 "Stop when 95% CI half-width is below this Elo points (default: 100)",
             })
+            .option("max-rounds", {
+              type: "number",
+              default: 50,
+              describe:
+                "Maximum number of productive adaptive rounds (default: 50)",
+            })
             .option("cache-only", {
               type: "boolean",
               default: false,
@@ -286,6 +293,7 @@ export async function parseArgs(): Promise<Command> {
               reasoning: argv.reasoning,
               noCache: !argv.cache,
               confidence: argv.confidence,
+              maxRounds: argv.maxRounds,
               cacheOnly: argv.cacheOnly,
               skipSeeding: argv.skipSeeding,
             },

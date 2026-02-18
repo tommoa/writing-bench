@@ -157,6 +157,7 @@ export function createRunConfig(opts: {
   cacheOnly?: boolean;
   skipSeeding?: boolean;
   ciThreshold?: number;
+  maxRounds?: number;
 }): RunConfig {
   const now = new Date();
   const id = now.toISOString().replace(/[:.]/g, "-");
@@ -173,5 +174,6 @@ export function createRunConfig(opts: {
     skipSeeding: opts.skipSeeding ?? false,
     timestamp: now.toISOString(),
     ciThreshold: opts.ciThreshold,
+    maxRounds: opts.maxRounds,
   };
 }

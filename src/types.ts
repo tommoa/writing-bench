@@ -103,6 +103,8 @@ export interface RunConfig {
   /** 95% CI half-width threshold (Elo points). Adaptive loop stops when
    *  all model CIs are below this. Default: 100. */
   ciThreshold?: number;
+  /** Maximum number of productive adaptive rounds. Default: 50. */
+  maxRounds?: number;
 }
 
 export interface WritingSample {

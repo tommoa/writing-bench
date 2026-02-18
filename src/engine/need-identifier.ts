@@ -41,7 +41,7 @@ export type Need =
 export interface ConvergenceConfig {
   /** 95% CI half-width threshold in Elo points. Default: 100. */
   ciThreshold: number;
-  /** Maximum number of adaptive rounds. Default: 30. */
+  /** Maximum number of adaptive rounds. Default: 50. */
   maxRounds: number;
   /** Minimum games per model before checking CI. Default: 3. */
   minPairsPerModel: number;

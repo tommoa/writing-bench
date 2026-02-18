@@ -1029,6 +1029,7 @@ export class BenchmarkRunner {
     const convergence = {
       ...DEFAULT_CONVERGENCE,
       ciThreshold: this.config.ciThreshold ?? DEFAULT_CONVERGENCE.ciThreshold,
+      maxRounds: this.config.maxRounds ?? DEFAULT_CONVERGENCE.maxRounds,
     };
 
     // Fetch model metadata for all models (writers + judges, deduplicated)

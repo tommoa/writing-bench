@@ -131,6 +131,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     cacheOnly: args.cacheOnly,
     skipSeeding: args.skipSeeding,
     ciThreshold: args.confidence,
+    maxRounds: args.maxRounds,
   });
 
   const runner = new BenchmarkRunner(config);
