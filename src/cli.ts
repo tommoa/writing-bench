@@ -3,7 +3,7 @@ import type { Argv, ArgumentsCamelCase } from "yargs";
 import { hideBin } from "yargs/helpers";
 
 export interface RunArgs {
-  models: string[];
+  models?: string[];
   judges?: string[];
   prompts: string;
   filter?: string[];
@@ -14,6 +14,7 @@ export interface RunArgs {
   reasoning: boolean;
   noCache: boolean;
   confidence: number;
+  cacheOnly: boolean;
 }
 
 export interface ResultsArgs {
@@ -186,9 +187,8 @@ export async function parseArgs(): Promise<Command> {
               alias: "m",
               type: "string",
               array: true,
-              demandOption: true,
               describe:
-                "Model specs: provider:model[=label] (repeatable)",
+                "Model specs: provider:model[=label] (repeatable). Required unless --cache-only is used.",
             })
             .option("judges", {
               alias: "j",
@@ -247,6 +247,21 @@ export async function parseArgs(): Promise<Command> {
               default: 100,
               describe:
                 "Stop when 95% CI half-width is below this Elo points (default: 100)",
+            })
+            .option("cache-only", {
+              type: "boolean",
+              default: false,
+              describe:
+                "Only use cached data, no API calls. Auto-discovers models from cache if --models is omitted.",
+            })
+            .check((argv) => {
+              if (!argv.cacheOnly && (!argv.models || argv.models.length === 0)) {
+                throw new Error("--models is required unless --cache-only is used");
+              }
+              if (argv.cacheOnly && !argv.cache) {
+                throw new Error("--cache-only and --no-cache are mutually exclusive");
+              }
+              return true;
             }),
         (argv) => {
           resolve({
@@ -263,6 +278,7 @@ export async function parseArgs(): Promise<Command> {
               reasoning: argv.reasoning,
               noCache: !argv.cache,
               confidence: argv.confidence,
+              cacheOnly: argv.cacheOnly,
             },
           });
         }

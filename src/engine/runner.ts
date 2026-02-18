@@ -973,67 +973,70 @@ export class BenchmarkRunner {
     this.recomputeRatings();
 
     // Phase 2: Adaptive pull loop — only runs if CIs are still too wide
-    // Batch should be large enough to make real progress each round.
-    // All work within a batch runs in parallel via the scheduler.
-    const W = this.config.models.length;
-    const J = this.judgeModels.length;
-    const P = this.config.prompts.length;
-    const batchSize = Math.max(W * J * P, W * W);
+    // Skipped entirely in cache-only mode (no API calls allowed).
+    if (!this.config.cacheOnly) {
+      // Batch should be large enough to make real progress each round.
+      // All work within a batch runs in parallel via the scheduler.
+      const W = this.config.models.length;
+      const J = this.judgeModels.length;
+      const P = this.config.prompts.length;
+      const batchSize = Math.max(W * J * P, W * W);
 
-    for (this.judgingRound = 1; this.judgingRound <= convergence.maxRounds; this.judgingRound++) {
-      if (isConverged(
-        this.writingWhr.ratings,
-        this.revisedWhr.ratings,
-        this.feedbackWhr.ratings,
-        convergence,
-      )) {
-        break;
+      for (this.judgingRound = 1; this.judgingRound <= convergence.maxRounds; this.judgingRound++) {
+        if (isConverged(
+          this.writingWhr.ratings,
+          this.revisedWhr.ratings,
+          this.feedbackWhr.ratings,
+          convergence,
+        )) {
+          break;
+        }
+
+        // Compute effective output count: current max + 1 for growth, capped
+        const effectiveOutputs = Math.min(
+          this.config.outputsPerModel,
+          this.maxOutputCount + 1,
+        );
+
+        const { needs, ratingMap } = identifyNeeds(
+          this.writingWhr.ratings,
+          this.revisedWhr.ratings,
+          this.feedbackWhr.ratings,
+          this.completedWork,
+          this.config.models,
+          this.judgeModels,
+          this.config.prompts,
+          convergence,
+          batchSize,
+          effectiveOutputs,
+        );
+
+        if (needs.length === 0) break; // exhausted all possible work
+
+        this.currentRatingMap = ratingMap;
+        this.currentBatchSummary = formatBatchSummary(needs);
+
+        const maxCi = Math.max(
+          maxCiHalfWidth(this.writingWhr),
+          maxCiHalfWidth(this.revisedWhr),
+          maxCiHalfWidth(this.feedbackWhr),
+        );
+        this.emitProgress(
+          `Adaptive round ${this.judgingRound}: max CI ±${maxCi === Infinity ? "∞" : maxCi} → target ±${convergence.ciThreshold}`,
+        );
+
+        // Fulfill needs in parallel — errors are recorded, not propagated
+        await Promise.allSettled(needs.map((n) =>
+          this.fulfillNeed(n).catch((err) => {
+            const model = n.type === "improvement_judgment" ? n.writer : n.modelA;
+            const taskError = extractTaskError(err, model);
+            this.taskErrors.push(taskError);
+            this.emit({ type: "error", data: taskError });
+          }),
+        ));
+        this.recomputeRatings();
+        this.emitProgress(`Round ${this.judgingRound} complete`);
       }
-
-      // Compute effective output count: current max + 1 for growth, capped
-      const effectiveOutputs = Math.min(
-        this.config.outputsPerModel,
-        this.maxOutputCount + 1,
-      );
-
-      const { needs, ratingMap } = identifyNeeds(
-        this.writingWhr.ratings,
-        this.revisedWhr.ratings,
-        this.feedbackWhr.ratings,
-        this.completedWork,
-        this.config.models,
-        this.judgeModels,
-        this.config.prompts,
-        convergence,
-        batchSize,
-        effectiveOutputs,
-      );
-
-      if (needs.length === 0) break; // exhausted all possible work
-
-      this.currentRatingMap = ratingMap;
-      this.currentBatchSummary = formatBatchSummary(needs);
-
-      const maxCi = Math.max(
-        maxCiHalfWidth(this.writingWhr),
-        maxCiHalfWidth(this.revisedWhr),
-        maxCiHalfWidth(this.feedbackWhr),
-      );
-      this.emitProgress(
-        `Adaptive round ${this.judgingRound}: max CI ±${maxCi === Infinity ? "∞" : maxCi} → target ±${convergence.ciThreshold}`,
-      );
-
-      // Fulfill needs in parallel — errors are recorded, not propagated
-      await Promise.allSettled(needs.map((n) =>
-        this.fulfillNeed(n).catch((err) => {
-          const model = n.type === "improvement_judgment" ? n.writer : n.modelA;
-          const taskError = extractTaskError(err, model);
-          this.taskErrors.push(taskError);
-          this.emit({ type: "error", data: taskError });
-        }),
-      ));
-      this.recomputeRatings();
-      this.emitProgress(`Round ${this.judgingRound} complete`);
     }
 
     // Clear need context — no longer in the adaptive loop

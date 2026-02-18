@@ -154,6 +154,7 @@ export function createRunConfig(opts: {
   outputsPerModel?: number;
   reasoning?: boolean;
   noCache?: boolean;
+  cacheOnly?: boolean;
   ciThreshold?: number;
 }): RunConfig {
   const now = new Date();
@@ -167,6 +168,7 @@ export function createRunConfig(opts: {
     outputsPerModel: opts.outputsPerModel ?? Infinity,
     reasoning: opts.reasoning ?? true,
     noCache: opts.noCache ?? false,
+    cacheOnly: opts.cacheOnly ?? false,
     timestamp: now.toISOString(),
     ciThreshold: opts.ciThreshold,
   };

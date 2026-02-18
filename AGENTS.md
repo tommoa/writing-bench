@@ -12,6 +12,8 @@ Runtime is **Bun** (not Node). The CLI entry point is `src/index.tsx`.
 ```bash
 bun install                       # install dependencies
 bun run start run -m provider:model -m provider:model   # run benchmark
+bun run start run --cache-only                          # run from cache only (auto-discovers models)
+bun run start run --cache-only -m provider:model        # run from cache for specific models
 bun run start serve               # build + export + serve web viewer
 bun run build:web                 # bundle web/src/app.ts -> web/app.js
 ```

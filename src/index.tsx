@@ -10,8 +10,9 @@ import { BenchmarkRunner } from "./engine/runner.js";
 import { saveRun, loadRun, loadLatestRun, listRuns } from "./storage/run-store.js";
 import { updateCumulativeElo, loadCumulativeElo } from "./storage/elo-store.js";
 import { exportForWeb } from "./export/web-export.js";
-import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson } from "./storage/cache-status.js";
+import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson, reverseModelKey } from "./storage/cache-status.js";
 import { modelKey, trimModelOutputs } from "./storage/sample-cache.js";
+import { safeReaddir } from "./storage/fs-utils.js";
 import { parseModelSpec } from "./providers/registry.js";
 import { checkProviderEnv } from "./providers/models.js";
 import { App } from "./ui/App.js";
@@ -45,26 +46,53 @@ async function loadAndFilterPrompts(
   return prompts;
 }
 
+/** Discover model specs from the cache writes directory. */
+async function discoverModelsFromCache(): Promise<string[]> {
+  const dirs = await safeReaddir(join(process.cwd(), "data", "cache", "writes"));
+  return dirs.map(reverseModelKey).filter((s): s is string => s !== null);
+}
+
 async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
-  const models = parseModelConfigs(args.models);
+  let modelSpecs = args.models;
+
+  // In cache-only mode, auto-discover models from cache if not specified
+  if (args.cacheOnly && (!modelSpecs || modelSpecs.length === 0)) {
+    modelSpecs = await discoverModelsFromCache();
+    if (modelSpecs.length === 0) {
+      console.error("No cached model data found. Nothing to analyze.");
+      process.exit(1);
+    }
+    console.log(
+      `Auto-discovered ${modelSpecs.length} model(s) from cache: ${modelSpecs.join(", ")}`
+    );
+  }
+
+  const models = parseModelConfigs(modelSpecs!);
   const judges = args.judges?.length
     ? parseModelConfigs(args.judges)
     : undefined;
 
-  // Resolve display names from models.dev
-  await resolveModelLabels(models);
-  if (judges) await resolveModelLabels(judges);
+  // Resolve display names from models.dev (best-effort in cache-only mode)
+  try {
+    await resolveModelLabels(models);
+    if (judges) await resolveModelLabels(judges);
+  } catch (err) {
+    if (!args.cacheOnly) throw err; // In normal mode, propagate the error
+    // In cache-only mode, silently fall back to raw model IDs as labels
+  }
 
   const prompts = await loadAndFilterPrompts(args.prompts, args.filter);
 
-  // Check provider env vars and warn about missing ones
-  const allProviders = [...new Set([
-    ...models.map((m) => m.provider),
-    ...(judges ?? []).map((m) => m.provider),
-  ])];
-  const envWarnings = await checkProviderEnv(allProviders);
-  for (const warn of envWarnings) {
-    console.warn(`Warning: ${warn}`);
+  // Check provider env vars — skip in cache-only mode (no API calls needed)
+  if (!args.cacheOnly) {
+    const allProviders = [...new Set([
+      ...models.map((m) => m.provider),
+      ...(judges ?? []).map((m) => m.provider),
+    ])];
+    const envWarnings = await checkProviderEnv(allProviders);
+    for (const warn of envWarnings) {
+      console.warn(`Warning: ${warn}`);
+    }
   }
 
   if (args.dryRun) {
@@ -79,13 +107,17 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     }
     console.log(`  Prompts: ${prompts.map((p) => p.name).join(", ")}`);
     console.log(`  Outputs per model: ${outputsDesc}`);
-    console.log(`  Convergence target: ±${ciThreshold} Elo points`);
-    console.log(
-      `\n  The adaptive loop will generate outputs and judgments as needed`
-    );
-    console.log(
-      `  until all 95% CI half-widths are below ±${ciThreshold} Elo points.`
-    );
+    if (args.cacheOnly) {
+      console.log(`  Mode: cache-only (no API calls)`);
+    } else {
+      console.log(`  Convergence target: ±${ciThreshold} Elo points`);
+      console.log(
+        `\n  The adaptive loop will generate outputs and judgments as needed`
+      );
+      console.log(
+        `  until all 95% CI half-widths are below ±${ciThreshold} Elo points.`
+      );
+    }
     return;
   }
 
@@ -96,6 +128,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     outputsPerModel: args.outputs,
     reasoning: args.reasoning,
     noCache: args.noCache,
+    cacheOnly: args.cacheOnly,
     ciThreshold: args.confidence,
   });
 
