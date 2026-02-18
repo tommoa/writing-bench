@@ -55,6 +55,34 @@ export function sigmoid(x: number): number {
   return ex / (1 + ex);
 }
 
+/**
+ * Check whether two models' 95% CI ranges overlap.
+ * Overlap means the models are not yet clearly distinguishable:
+ * |ratingA - ratingB| < ci95_A + ci95_B
+ *
+ * Infinity CI always overlaps (model has no data yet).
+ */
+export function hasOverlap(a: WhrRating, b: WhrRating): boolean {
+  if (a.ci95 === Infinity || b.ci95 === Infinity) return true;
+  return Math.abs(a.rating - b.rating) < a.ci95 + b.ci95;
+}
+
+/**
+ * Check whether a model's CI range overlaps with ANY other model.
+ * Returns true if the model has at least one neighbor it can't be
+ * distinguished from. A single-model list always returns false.
+ */
+export function hasAnyOverlap(
+  model: WhrRating,
+  allRatings: WhrRating[],
+): boolean {
+  for (const other of allRatings) {
+    if (other.model === model.model) continue;
+    if (hasOverlap(model, other)) return true;
+  }
+  return false;
+}
+
 /** Convert natural-log strength to Elo-scale rating. */
 function naturalToElo(r: number): number {
   return Math.round(LOG10E_TIMES_400 * r + DEFAULT_RATING);
@@ -417,13 +445,19 @@ export function computeWhr(games: WhrGame[]): WhrResult {
 }
 
 /**
- * Return the largest 95% CI half-width across all models in a WHR result.
- * Returns Infinity if any model has infinite CI (e.g., no games).
+ * Return the largest 95% CI half-width across models that still have
+ * overlapping CIs with at least one other model. Models whose CIs are
+ * fully separated from all others are "effectively converged" and
+ * excluded, so the progress display reflects real remaining uncertainty.
+ *
+ * Returns Infinity if any overlapping model has infinite CI (e.g., no games).
+ * Returns 0 if no models have overlapping CIs or the result is empty.
  */
 export function maxCiHalfWidth(result: WhrResult): number {
   if (result.ratings.length === 0) return 0;
   let max = 0;
   for (const r of result.ratings) {
+    if (!hasAnyOverlap(r, result.ratings)) continue;
     if (r.ci95 === Infinity) return Infinity;
     if (r.ci95 > max) max = r.ci95;
   }

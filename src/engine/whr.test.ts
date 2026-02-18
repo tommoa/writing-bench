@@ -2,11 +2,12 @@ import { describe, it, expect } from "bun:test";
 import {
   computeWhr,
   maxCiHalfWidth,
+  hasOverlap,
   estimateRemainingJudgments,
   judgmentsToGames,
   improvementJudgmentsToGames,
 } from "./whr.js";
-import type { WhrGame } from "./whr.js";
+import type { WhrGame, WhrRating } from "./whr.js";
 
 describe("computeWhr", () => {
   it("returns default ratings for empty game list", () => {
@@ -247,8 +248,65 @@ describe("confidence intervals", () => {
   });
 });
 
+describe("hasOverlap", () => {
+  it("returns true for models with overlapping CIs", () => {
+    const a = makeWhrRating("A", 1500, 100, 5);
+    const b = makeWhrRating("B", 1550, 100, 5);
+    // |1500 - 1550| = 50 < 100 + 100 = 200
+    expect(hasOverlap(a, b)).toBe(true);
+  });
+
+  it("returns false for models with non-overlapping CIs", () => {
+    const a = makeWhrRating("A", 1800, 50, 20);
+    const b = makeWhrRating("B", 1200, 50, 20);
+    // |1800 - 1200| = 600 > 50 + 50 = 100
+    expect(hasOverlap(a, b)).toBe(false);
+  });
+
+  it("returns false at exact boundary", () => {
+    const a = makeWhrRating("A", 1600, 100, 10);
+    const b = makeWhrRating("B", 1400, 100, 10);
+    // |1600 - 1400| = 200, not < 200 (strict <)
+    expect(hasOverlap(a, b)).toBe(false);
+  });
+
+  it("returns true when CIs just barely overlap", () => {
+    const a = makeWhrRating("A", 1599, 100, 10);
+    const b = makeWhrRating("B", 1400, 100, 10);
+    // |1599 - 1400| = 199 < 200
+    expect(hasOverlap(a, b)).toBe(true);
+  });
+
+  it("returns true when either model has Infinity CI", () => {
+    const a = makeWhrRating("A", 1500, Infinity, 0);
+    const b = makeWhrRating("B", 1500, 50, 10);
+    expect(hasOverlap(a, b)).toBe(true);
+    expect(hasOverlap(b, a)).toBe(true);
+  });
+
+  it("returns true when both models have Infinity CI", () => {
+    const a = makeWhrRating("A", 1500, Infinity, 0);
+    const b = makeWhrRating("B", 1500, Infinity, 0);
+    expect(hasOverlap(a, b)).toBe(true);
+  });
+
+  it("handles zero CI with same rating", () => {
+    const a = makeWhrRating("A", 1500, 0, 50);
+    const b = makeWhrRating("B", 1500, 0, 50);
+    // |0| = 0, not < 0 + 0 = 0
+    expect(hasOverlap(a, b)).toBe(false);
+  });
+
+  it("handles zero CI with different ratings", () => {
+    const a = makeWhrRating("A", 1500, 0, 50);
+    const b = makeWhrRating("B", 1501, 50, 10);
+    // |1500 - 1501| = 1 < 0 + 50 = 50
+    expect(hasOverlap(a, b)).toBe(true);
+  });
+});
+
 describe("maxCiHalfWidth", () => {
-  it("returns the largest CI across all models", () => {
+  it("returns the largest CI across overlapping models", () => {
     const games: WhrGame[] = [
       makeGame("modelA", "modelB", "white"),
       makeGame("modelA", "modelB", "black"),
@@ -257,12 +315,64 @@ describe("maxCiHalfWidth", () => {
     const result = computeWhr(games);
     const maxCi = maxCiHalfWidth(result);
     const individualMax = Math.max(...result.ratings.map((r) => r.ci95));
+    // With only 2 models at similar ratings, they overlap, so max is unchanged
     expect(maxCi).toBe(individualMax);
   });
 
   it("returns 0 for empty results", () => {
     const result = computeWhr([]);
     expect(maxCiHalfWidth(result)).toBe(0);
+  });
+
+  it("excludes models whose CIs do not overlap with any other", () => {
+    const result = {
+      ratings: [
+        makeWhrRating("A", 1800, 50, 20),
+        makeWhrRating("B", 1200, 80, 20),
+      ],
+      converged: true,
+      iterations: 5,
+    };
+    // |1800 - 1200| = 600 > 50 + 80 = 130, no overlap
+    expect(maxCiHalfWidth(result)).toBe(0);
+  });
+
+  it("returns 0 for a single model", () => {
+    const result = {
+      ratings: [makeWhrRating("A", 1500, 200, 5)],
+      converged: true,
+      iterations: 1,
+    };
+    expect(maxCiHalfWidth(result)).toBe(0);
+  });
+
+  it("returns Infinity when an overlapping model has Infinity CI", () => {
+    const result = {
+      ratings: [
+        makeWhrRating("A", 1500, Infinity, 0),
+        makeWhrRating("B", 1500, 50, 10),
+      ],
+      converged: false,
+      iterations: 0,
+    };
+    expect(maxCiHalfWidth(result)).toBe(Infinity);
+  });
+
+  it("considers only overlapping subset in mixed scenario", () => {
+    const result = {
+      ratings: [
+        makeWhrRating("A", 1800, 150, 5),  // separated from B and C
+        makeWhrRating("B", 1500, 80, 10),   // overlaps with C
+        makeWhrRating("C", 1480, 60, 10),   // overlaps with B
+      ],
+      converged: true,
+      iterations: 5,
+    };
+    // A vs B: |300| > 230 → no overlap
+    // A vs C: |320| > 210 → no overlap
+    // B vs C: |20| < 140 → overlap!
+    // Only B (80) and C (60) are overlapping, so max = 80
+    expect(maxCiHalfWidth(result)).toBe(80);
   });
 });
 
@@ -457,7 +567,7 @@ describe("improvementJudgmentsToGames", () => {
   });
 });
 
-// ── Helper ──────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────
 
 function makeGame(
   white: string,
@@ -468,5 +578,22 @@ function makeGame(
     playerWhite: white,
     playerBlack: black,
     result: result === "white" ? 1.0 : result === "black" ? 0.0 : 0.5,
+  };
+}
+
+function makeWhrRating(
+  model: string,
+  rating: number,
+  ci95: number,
+  matchCount: number,
+): WhrRating {
+  return {
+    model,
+    rating,
+    ci95,
+    wins: Math.floor(matchCount / 2),
+    losses: Math.floor(matchCount / 2),
+    ties: matchCount % 2,
+    matchCount,
   };
 }

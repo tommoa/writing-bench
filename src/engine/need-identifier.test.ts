@@ -253,9 +253,11 @@ describe("information gain scoring", () => {
       makeWhrRating("modelA", 1500, 200, 5),
       makeWhrRating("modelB", 1500, 200, 5),
     ];
+    // Use ratings close enough that CIs still overlap (|200| < 200+200)
+    // but lopsided enough that p*(1-p) is lower than equal-strength.
     const lopsided = [
-      makeWhrRating("modelA", 1800, 200, 5),
-      makeWhrRating("modelB", 1200, 200, 5),
+      makeWhrRating("modelA", 1650, 200, 5),
+      makeWhrRating("modelB", 1350, 200, 5),
     ];
 
     const equalNeeds = identifyNeeds(
@@ -290,7 +292,7 @@ describe("information gain scoring", () => {
 });
 
 describe("isConverged", () => {
-  it("returns true when all dimensions are below threshold", () => {
+  it("returns true when all models have tight non-overlapping CIs", () => {
     const tight = [
       makeWhrRating("modelA", 1550, 30, 10),
       makeWhrRating("modelB", 1450, 25, 10),
@@ -322,6 +324,115 @@ describe("isConverged", () => {
 
   it("returns false for empty ratings", () => {
     expect(isConverged([], [], [], DEFAULT_CONVERGENCE)).toBe(false);
+  });
+
+  it("converges when CIs are wide but non-overlapping", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1800, 150, 10),
+      makeWhrRating("modelB", 1200, 150, 10),
+    ];
+    // |1800-1200| = 600 > 150+150 = 300 → no overlap
+    // Both have wide CIs (150 > 100) but models are distinguishable
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(true);
+  });
+
+  it("does not converge when CIs are wide and overlapping", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1550, 150, 10),
+      makeWhrRating("modelB", 1450, 150, 10),
+    ];
+    // |1550-1450| = 100 < 150+150 = 300 → overlap
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(false);
+  });
+
+  it("does not converge when minPairsPerModel is not met even without overlap", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1800, 150, 1),
+      makeWhrRating("modelB", 1200, 150, 10),
+    ];
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(false);
+  });
+
+  it("converges with single model after minimum pairs", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 5),
+    ];
+    // Single model, no overlap possible → converged
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(true);
+  });
+
+  it("converges when one model has tight CI and another has wide but non-overlapping", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1800, 30, 20),
+      makeWhrRating("modelB", 1200, 150, 10),
+    ];
+    // |1800-1200| = 600 > 30+150 = 180 → no overlap
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(true);
+  });
+});
+
+describe("identifyNeeds with overlap", () => {
+  it("skips non-overlapping model pairs", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1800, 150, 5),
+      makeWhrRating("modelB", 1200, 150, 5),
+    ];
+    // |1800-1200| = 600 > 300 → no overlap
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    expect(needs).toHaveLength(0);
+  });
+
+  it("generates needs for overlapping pairs", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1550, 150, 5),
+      makeWhrRating("modelB", 1450, 150, 5),
+    ];
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    expect(needs.length).toBeGreaterThan(0);
+  });
+
+  it("only generates needs for overlapping pairs in 3-model scenario", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1800, 80, 10),
+      makeWhrRating("modelB", 1500, 150, 5),
+      makeWhrRating("modelC", 1480, 150, 5),
+    ];
+    // A-B: |300| > 230 → no overlap
+    // A-C: |320| > 230 → no overlap
+    // B-C: |20| < 300 → overlap!
+    const needs = identifyNeeds(
+      ratings, convergedRatings(3), convergedRatings(3),
+      emptyWork(), threeModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
+    expect(initialNeeds.length).toBeGreaterThan(0);
+    for (const n of initialNeeds) {
+      if (n.type === "initial_judgment") {
+        expect([n.modelA, n.modelB].sort()).toEqual(["modelB", "modelC"]);
+      }
+    }
+  });
+
+  it("generates needs for Infinity CI models (always overlap)", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, Infinity, 0),
+      makeWhrRating("modelB", 1500, 50, 10),
+    ];
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    expect(needs.length).toBeGreaterThan(0);
   });
 });
 

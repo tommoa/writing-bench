@@ -1,4 +1,4 @@
-import { sigmoid, LOG10E_TIMES_400 } from "./whr.js";
+import { sigmoid, LOG10E_TIMES_400, hasOverlap, hasAnyOverlap } from "./whr.js";
 import type { WhrRating } from "./whr.js";
 import type { ModelConfig, PromptConfig } from "../types.js";
 
@@ -84,6 +84,24 @@ function informationGain(ratingA: WhrRating, ratingB: WhrRating): number {
 }
 
 /**
+ * Check whether a model pair is already resolved and needs no further
+ * comparisons. A pair is resolved if both models have individually
+ * converged (tight CIs with enough games) or their CIs don't overlap
+ * (models are already distinguishable).
+ */
+function pairResolved(
+  a: WhrRating,
+  b: WhrRating,
+  convergence: ConvergenceConfig,
+): boolean {
+  const bothTight = a.ci95 <= convergence.ciThreshold
+    && b.ci95 <= convergence.ciThreshold
+    && a.matchCount >= convergence.minPairsPerModel
+    && b.matchCount >= convergence.minPairsPerModel;
+  return bothTight || !hasOverlap(a, b);
+}
+
+/**
  * Build a dedup key for a judgment.
  * For symmetric comparisons (initial, revised), models are sorted
  * (and output indices are swapped accordingly).
@@ -156,12 +174,7 @@ export function identifyNeeds(
       const rA = ratingMap.get(`writing:${models[i].label}`) ?? { ...defaultRating, model: models[i].label };
       const rB = ratingMap.get(`writing:${models[j].label}`) ?? { ...defaultRating, model: models[j].label };
 
-      // Skip if both models have tight enough CIs
-      if (rA.ci95 <= convergence.ciThreshold && rB.ci95 <= convergence.ciThreshold
-          && rA.matchCount >= convergence.minPairsPerModel
-          && rB.matchCount >= convergence.minPairsPerModel) {
-        continue;
-      }
+      if (pairResolved(rA, rB, convergence)) continue;
 
       const gain = informationGain(rA, rB);
 
@@ -200,11 +213,7 @@ export function identifyNeeds(
       const fbA = ratingMap.get(`feedback:${models[i].label}`) ?? { ...defaultRating, model: models[i].label };
       const fbB = ratingMap.get(`feedback:${models[j].label}`) ?? { ...defaultRating, model: models[j].label };
 
-      const fbNeedsWork = fbA.ci95 > convergence.ciThreshold
-        || fbB.ci95 > convergence.ciThreshold
-        || fbA.matchCount < convergence.minPairsPerModel
-        || fbB.matchCount < convergence.minPairsPerModel;
-      if (!fbNeedsWork) continue;
+      if (pairResolved(fbA, fbB, convergence)) continue;
 
       const gain = informationGain(fbA, fbB) * 0.25; // cascade cost discount
 
@@ -253,11 +262,7 @@ export function identifyNeeds(
       const rA = ratingMap.get(`revised:${models[i].label}`) ?? { ...defaultRating, model: models[i].label };
       const rB = ratingMap.get(`revised:${models[j].label}`) ?? { ...defaultRating, model: models[j].label };
 
-      if (rA.ci95 <= convergence.ciThreshold && rB.ci95 <= convergence.ciThreshold
-          && rA.matchCount >= convergence.minPairsPerModel
-          && rB.matchCount >= convergence.minPairsPerModel) {
-        continue;
-      }
+      if (pairResolved(rA, rB, convergence)) continue;
 
       const gain = informationGain(rA, rB) * 0.2; // cascade cost discount
 
@@ -336,7 +341,10 @@ export function isConverged(
 
 /**
  * Check whether a single rating dimension has converged.
- * Converged = all models have CI below threshold AND enough games.
+ * A model is effectively converged if:
+ *   - it has enough games (matchCount >= minPairsPerModel), AND
+ *   - its CI is below threshold, OR its CI doesn't overlap with any
+ *     other model (meaning it's already clearly distinguishable).
  */
 function dimensionConverged(
   ratings: WhrRating[],
@@ -345,7 +353,9 @@ function dimensionConverged(
   if (ratings.length === 0) return false;
   for (const r of ratings) {
     if (r.matchCount < convergence.minPairsPerModel) return false;
-    if (r.ci95 > convergence.ciThreshold) return false;
+    if (r.ci95 > convergence.ciThreshold && hasAnyOverlap(r, ratings)) {
+      return false;
+    }
   }
   return true;
 }
