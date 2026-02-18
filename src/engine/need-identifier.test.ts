@@ -458,18 +458,35 @@ describe("isConverged", () => {
 });
 
 describe("identifyNeeds with overlap", () => {
-  it("skips non-overlapping model pairs", () => {
+  it("skips non-overlapping pairs when both models are converged", () => {
     const ratings = [
-      makeWhrRating("modelA", 1800, 150, 5),
-      makeWhrRating("modelB", 1200, 150, 5),
+      makeWhrRating("modelA", 1800, 50, 5),
+      makeWhrRating("modelB", 1200, 50, 5),
     ];
-    // |1800-1200| = 600 > 300 → no overlap
+    // |1800-1200| = 600 > 100 → no overlap, both CIs (50) below threshold (100) → skip
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
       emptyWork(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
     expect(needs).toHaveLength(0);
+  });
+
+  it("keeps non-overlapping pairs when one model has wide CI", () => {
+    // Non-overlapping, but modelA's CI (150) is above the convergence threshold
+    // (100). WHR benefits from all games, so we still generate candidates to
+    // help narrow modelA's CI even though the pair outcome is already clear.
+    const ratings = [
+      makeWhrRating("modelA", 1800, 150, 5),
+      makeWhrRating("modelB", 1200, 50, 5),
+    ];
+    // |1800-1200| = 600 > 200 → no overlap, but modelA CI (150) > threshold (100)
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      emptyWork(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    expect(needs.length).toBeGreaterThan(0);
   });
 
   it("generates needs for overlapping pairs", () => {
@@ -485,15 +502,18 @@ describe("identifyNeeds with overlap", () => {
     expect(needs.length).toBeGreaterThan(0);
   });
 
-  it("only generates needs for overlapping pairs in 3-model scenario", () => {
+  it("only generates needs for overlapping pairs in 3-model converged scenario", () => {
+    // All three models have CIs below threshold (100) and few matches
+    // (matchCount 1 < minPairsPerModel 2), so bothTight is false but
+    // bothConverged is true. Non-overlapping pairs are skipped.
     const ratings = [
-      makeWhrRating("modelA", 1800, 80, 10),
-      makeWhrRating("modelB", 1500, 150, 5),
-      makeWhrRating("modelC", 1480, 150, 5),
+      makeWhrRating("modelA", 1800, 50, 1),
+      makeWhrRating("modelB", 1500, 50, 1),
+      makeWhrRating("modelC", 1480, 50, 1),
     ];
-    // A-B: |300| > 230 → no overlap
-    // A-C: |320| > 230 → no overlap
-    // B-C: |20| < 300 → overlap!
+    // A-B: |300| > 100 → no overlap, both converged → skip
+    // A-C: |320| > 100 → no overlap, both converged → skip
+    // B-C: |20| < 100 → overlap!
     const needs = identifyNeeds(
       ratings, convergedRatings(3), convergedRatings(3),
       emptyWork(), threeModels(), oneJudge(), onePrompt(),
@@ -506,6 +526,31 @@ describe("identifyNeeds with overlap", () => {
         expect([n.modelA, n.modelB].sort()).toEqual(["modelB", "modelC"]);
       }
     }
+  });
+
+  it("generates needs for non-overlapping pairs when one model is unconverged", () => {
+    // modelB has wide CI (150 > threshold 100), so even non-overlapping pairs
+    // involving modelB generate candidates — WHR uses all games to narrow CIs.
+    const ratings = [
+      makeWhrRating("modelA", 1800, 50, 10),
+      makeWhrRating("modelB", 1500, 150, 5),
+      makeWhrRating("modelC", 1480, 50, 5),
+    ];
+    // A-B: no overlap, but modelB unconverged → generates needs
+    // A-C: no overlap, both converged → skip
+    // B-C: overlap → generates needs
+    const needs = identifyNeeds(
+      ratings, convergedRatings(3), convergedRatings(3),
+      emptyWork(), threeModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
+    const pairs = new Set(initialNeeds.map((n) =>
+      n.type === "initial_judgment" ? [n.modelA, n.modelB].sort().join(":") : "",
+    ));
+    expect(pairs.has("modelA:modelB")).toBe(true);  // non-overlapping but modelB unconverged
+    expect(pairs.has("modelB:modelC")).toBe(true);  // overlapping
+    expect(pairs.has("modelA:modelC")).toBe(false);  // non-overlapping, both converged
   });
 
   it("generates needs for Infinity CI models (always overlap)", () => {

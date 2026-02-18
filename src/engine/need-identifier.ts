@@ -160,11 +160,17 @@ function pairResolved(
   b: WhrRating,
   convergence: ConvergenceConfig,
 ): boolean {
-  const bothTight = a.ci95 <= convergence.ciThreshold
-    && b.ci95 <= convergence.ciThreshold
-    && a.matchCount >= convergence.minPairsPerModel
+  const bothConverged = a.ci95 <= convergence.ciThreshold
+    && b.ci95 <= convergence.ciThreshold;
+  if (!bothConverged) return false;
+
+  // Both CIs are tight. Skip if either both models have enough matches
+  // (fully resolved) or the pair doesn't overlap (clearly separated).
+  // Non-overlapping pairs still need converged CIs — WHR uses all games,
+  // so even resolved-pair data helps narrow an unconverged model's CI.
+  const bothHaveEnoughMatches = a.matchCount >= convergence.minPairsPerModel
     && b.matchCount >= convergence.minPairsPerModel;
-  return bothTight || !hasOverlap(a, b);
+  return bothHaveEnoughMatches || !hasOverlap(a, b);
 }
 
 /**
