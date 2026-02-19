@@ -50,10 +50,10 @@ export function extractUsage(
 }
 
 export interface CostBreakdown {
-  input: number; // USD — actual (accounts for cached token pricing)
+  input: number; // USD -- actual (accounts for cached token pricing)
   output: number; // USD
-  total: number; // USD — actual
-  totalUncached: number; // USD — what it would cost with no cache hits
+  total: number; // USD -- actual
+  totalUncached: number; // USD -- what it would cost with no cache hits
 }
 
 // ── Model Metadata (models.dev) ─────────────────────
@@ -245,7 +245,7 @@ export function extractTaskError(err: unknown, model?: string): TaskError {
   // Unwrap RetryError to get the actual cause
   let root: unknown = err;
   if (root instanceof Error && "errors" in root && Array.isArray((root as any).errors)) {
-    // RetryError — use lastError for detail
+    // RetryError -- use lastError for detail
     root = (root as any).lastError ?? (root as any).errors[(root as any).errors.length - 1] ?? root;
   }
 

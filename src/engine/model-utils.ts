@@ -1,6 +1,6 @@
 import type { ModelInfo } from "../types.js";
 
-/** Global cap — same as opencode's OUTPUT_TOKEN_MAX. */
+/** Global cap -- same as opencode's OUTPUT_TOKEN_MAX. */
 const OUTPUT_TOKEN_CAP = 32_000;
 
 /**

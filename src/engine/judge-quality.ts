@@ -7,7 +7,7 @@ import { computeWhr } from "./whr.js";
 /** Minimum evaluation instances (with >=2 judges) before judge ratings are used. */
 export const MIN_JUDGE_INSTANCES = 5;
 
-/** Floor for judge weights — never fully zero out a judge. */
+/** Floor for judge weights -- never fully zero out a judge. */
 export const MIN_JUDGE_WEIGHT = 0.1;
 
 // ── Types ───────────────────────────────────────────
@@ -155,7 +155,7 @@ export function ratingsToWeights(ratings: WhrRating[], k: number): Map<string, n
   const weights = new Map<string, number>();
   if (ratings.length === 0) return weights;
 
-  // Best rating anchors at weight 1.0 — no normalization needed
+  // Best rating anchors at weight 1.0 -- no normalization needed
   let bestRating = -Infinity;
   for (const r of ratings) {
     if (r.rating > bestRating) bestRating = r.rating;

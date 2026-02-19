@@ -41,6 +41,8 @@ Bun runs TypeScript directly.
 - 2-space indentation, semicolons always, double quotes
 - Trailing commas in multi-line objects, arrays, and parameters
 - No enforced line length limit
+- ASCII only -- use `--` instead of em-dashes, plain quotes instead
+  of smart quotes, etc.
 
 ### Naming
 | What | Convention | Example |
@@ -231,7 +233,7 @@ feedback quality (improvement judgments).
   with configurable priority weights for writing (`--writing-weight`,
   default 1.0), improvement (`--feedback-weight`, default 0.25), and
   revised (`--revised-weight`, default 0.4) judgments. The depth penalty `1/(1+N)` ensures
-  breadth-first exploration — all prompts are covered at a given output
+  breadth-first exploration -- all prompts are covered at a given output
   index before advancing to the next.
 - **Ensure-cascade** -- `fulfillNeed()` calls `ensureJudgment()` which
   calls `ensureSample()`/`ensureFeedback()`/`ensureRevision()` as needed.

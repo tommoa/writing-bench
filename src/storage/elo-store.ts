@@ -63,7 +63,7 @@ export async function saveCumulativeElo(
  * Update cumulative ELO ratings with results from a new run.
  * Uses WHR: extracts pairwise records from the run, merges with
  * existing accumulated records, and recomputes ratings from
- * scratch. This is order-independent — the same set of judgments
+ * scratch. This is order-independent -- the same set of judgments
  * always produces the same ratings.
  */
 export async function updateCumulativeElo(
@@ -222,7 +222,7 @@ function remapPairwiseRecords(
 
 /**
  * Migrate old "provider:model" keys in cumulative ELO data to
- * models.dev display names. Idempotent — keys that don't contain
+ * models.dev display names. Idempotent -- keys that don't contain
  * a colon or can't be resolved are left untouched.
  * Returns true if any keys were migrated.
  */

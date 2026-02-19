@@ -169,7 +169,7 @@ export async function judgePair(
             : "";
       });
     } catch (err) {
-      // Transient errors already exhausted retries — propagate rather than
+      // Transient errors already exhausted retries -- propagate rather than
       // falling through to the streamText path (which would also fail).
       if (isRetryable(err)) throw err;
 

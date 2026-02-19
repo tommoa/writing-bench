@@ -1,4 +1,4 @@
-/* writing-bench web viewer — matches tommoa.me theme */
+/* writing-bench web viewer -- matches tommoa.me theme */
 
 :root {
   --bg: #fafafa;
@@ -339,7 +339,7 @@ details[open] summary {
   border-radius: 4px;
 }
 
-/* intentionally blank — selects styled globally below */
+/* intentionally blank -- selects styled globally below */
 
 /* Revision nested under feedback */
 .revision-nested {
@@ -662,9 +662,9 @@ details[open] summary {
   margin-bottom: 0;
 }
 
-/* intentionally blank — selects styled globally below */
+/* intentionally blank -- selects styled globally below */
 
-/* Dropdown selects — global style */
+/* Dropdown selects -- global style */
 select {
   font-family: inherit;
   font-size: inherit;

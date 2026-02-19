@@ -47,7 +47,7 @@ export function isRetryable(err: unknown): boolean {
   // APICallError with isRetryable flag (429, 5xx, etc.)
   if ("isRetryable" in err && (err as any).isRetryable === true) return true;
   // In-stream errors (e.g. SSE error events with type: "too_many_requests")
-  // don't get the isRetryable flag — match by message or response body.
+  // don't get the isRetryable flag -- match by message or response body.
   const text = err.message + (("responseBody" in err) ? String((err as any).responseBody) : "");
   if (RETRYABLE_PATTERNS.some((p) => p.test(text))) return true;
   return false;
@@ -74,13 +74,13 @@ export async function withRetry<T>(
     console.warn = (...args: unknown[]) => { buffered.push(args); };
     try {
       const result = await fn();
-      // Success — drop warnings (transient noise from retried attempts)
+      // Success -- drop warnings (transient noise from retried attempts)
       console.warn = originalWarn;
       return result;
     } catch (err) {
       console.warn = originalWarn;
       if (attempt >= maxAttempts || !isRetryable(err)) {
-        // Final failure — replay warnings for debugging
+        // Final failure -- replay warnings for debugging
         for (const args of buffered) originalWarn(...args);
         throw err;
       }

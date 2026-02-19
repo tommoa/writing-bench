@@ -39,7 +39,7 @@ export function renderPromptSection(
     return outerDetails;
   }
 
-  // Loading placeholder — replaced when content fetches
+  // Loading placeholder -- replaced when content fetches
   const loadingEl = el("p", { className: "muted" }, "Loading...");
   content.appendChild(loadingEl);
   outerDetails.appendChild(content);
@@ -290,7 +290,7 @@ export async function scrollToSample(
     activateTab(panel, tabIndex);
     target = panel;
   } else {
-    // Revised sample — find by id, activate the original's tab
+    // Revised sample -- find by id, activate the original's tab
     const revEl = $(`#sample-${sampleId}`);
     if (!revEl) return;
 
@@ -328,12 +328,12 @@ export function activateTab(panel: Element, index: number): void {
   if (!panelsContainer) return;
   const tabsBar = panelsContainer.previousElementSibling;
   if (tabsBar && tabsBar.classList.contains("tabs")) {
-    // Dropdown mode — update the select value
+    // Dropdown mode -- update the select value
     const select = $("select.model-select", tabsBar);
     if (select) {
       (select as HTMLSelectElement).value = String(index);
     }
-    // Tab button mode — toggle active class
+    // Tab button mode -- toggle active class
     $$(".tab", tabsBar).forEach((t, i) => {
       t.classList.toggle("active", i === index);
     });

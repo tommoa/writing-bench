@@ -9,20 +9,20 @@ The talk should:
 - Start with a question, a simple story from everyday life, or a "what would you do?" scenario that hooks kids immediately
 - Retell the parable in vivid, child-friendly language (not watered down, but accessible)
 - Help children understand why the Samaritan's actions were surprising and important
-- Draw out a clear, memorable lesson about showing kindness to everyone — not just friends
+- Draw out a clear, memorable lesson about showing kindness to everyone -- not just friends
 - End with one concrete thing they can do this week to be a "Good Samaritan"
 
-Tone: warm, enthusiastic, and fun — like a favourite teacher, not a lecture.
+Tone: warm, enthusiastic, and fun -- like a favourite teacher, not a lecture.
 Language: simple vocabulary, short sentences, conversational. Use sensory details and dialogue to bring the story alive.
 Length: 500-800 words.
 """
 
 judging_criteria = [
-  "age-appropriateness — vocabulary, sentence length, and concepts suitable for 5-10 year olds",
-  "engagement — hooks attention and keeps it with vivid storytelling",
+  "age-appropriateness -- vocabulary, sentence length, and concepts suitable for 5-10 year olds",
+  "engagement -- hooks attention and keeps it with vivid storytelling",
   "faithful retelling of the parable without oversimplification",
   "clear, memorable takeaway that a child could repeat back",
-  "warm, fun tone — enthusiastic without being patronising or saccharine",
+  "warm, fun tone -- enthusiastic without being patronising or saccharine",
 ]
 
 max_words = 800

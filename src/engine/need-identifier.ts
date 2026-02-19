@@ -233,7 +233,7 @@ export function uncachedSteps(
 }
 
 /** Sum of all completed/missing entries for stall detection.
- *  Excludes existingFeedback/existingRevisions — those track cached
+ *  Excludes existingFeedback/existingRevisions -- those track cached
  *  artifacts for cost estimation, not work-unit progress. Stall
  *  detection uses opsDone as the primary progress signal. */
 export function completedWorkSize(work: CompletedWork): number {
@@ -381,7 +381,7 @@ export function identifyNeeds(
   // Judge weights: use jq.weights directly (defaults to 1.0 for unknown judges)
   const jw = jq.weights;
 
-  // Per-model output cap: breadth-first enforcement — a model must cover
+  // Per-model output cap: breadth-first enforcement -- a model must cover
   // all prompts at depth N before advancing to N+1.
   const capFor = (label: string) => modelOutputCaps?.get(label) ?? outputsPerModel;
 
@@ -688,7 +688,7 @@ function dimensionConverged(
   modelCount: number,
 ): boolean {
   if (ratings.length === 0) return false;
-  // All configured models must have ratings — a model with zero games
+  // All configured models must have ratings -- a model with zero games
   // is absent from WHR output and must not be silently "converged".
   if (ratings.length < modelCount) return false;
   for (const r of ratings) {

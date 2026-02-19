@@ -156,7 +156,7 @@ describe("updateCumulativeElo - feedback ELO", () => {
   });
 
   it("does NOT use revised judgments for feedback ELO", async () => {
-    // Revised judgments compare writers (same feedback provider) — should not affect feedback ELO.
+    // Revised judgments compare writers (same feedback provider) -- should not affect feedback ELO.
     const run = makeRunResult({
       samples: [
         makeSample("origA", "modelA", "sermon"),
@@ -323,7 +323,7 @@ describe("updateCumulativeElo - per-category", () => {
         makeSample("s2", "modelB", "sermon"),
       ],
       judgments: [
-        // Only improvement judgments — should NOT affect category ELO
+        // Only improvement judgments -- should NOT affect category ELO
         makeJudgment("j1", "sermon", "s1", "s2", "A", "improvement"),
       ],
       prompts: [{ id: "sermon", tags: ["sermon"] }],

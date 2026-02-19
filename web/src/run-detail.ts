@@ -20,7 +20,7 @@ export function renderRunDetail(manifest: RunManifest): void {
   frag.appendChild(el("p", {}, el("a", { href: "?" }, "< back to leaderboard")));
   const totalCost = manifest.meta.totalCostUncached ?? manifest.meta.totalCost;
   frag.appendChild(
-    el("h2", {}, `Run: ${formatDate(manifest.config.timestamp)} — $${totalCost.toFixed(2)}`),
+    el("h2", {}, `Run: ${formatDate(manifest.config.timestamp)} -- $${totalCost.toFixed(2)}`),
   );
 
   // Run info: writers and judges
@@ -36,7 +36,7 @@ export function renderRunDetail(manifest: RunManifest): void {
     );
   }
 
-  // ELO tables — per-run ratings have W/L/T instead of just match count
+  // ELO tables -- per-run ratings have W/L/T instead of just match count
   const wlt = (r: { model: string; wins?: number; losses?: number; ties?: number }) =>
     r.wins != null ? `${r.wins}/${r.losses}/${r.ties}` : "-";
 

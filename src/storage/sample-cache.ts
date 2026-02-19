@@ -521,7 +521,7 @@ export async function trimModelOutputs(
 
   // Compute all stale judgment hashes: every (deletedId, otherId) pair
   // across all three stages. Invalid stage+type combos simply won't
-  // match any file on disk — harmless extra hash computations.
+  // match any file on disk -- harmless extra hash computations.
   const STAGES = ["initial", "improvement", "revised"] as const;
   const staleHashes = new Set<string>();
 

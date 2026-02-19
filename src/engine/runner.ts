@@ -74,7 +74,7 @@ const ZERO_COST: CostBreakdown = Object.freeze({ input: 0, output: 0, total: 0, 
  * Pull-based adaptive benchmark runner. Instead of generating all work
  * upfront (push), this runner:
  *
- *   1. Seeds from cache — loads ALL cached artifacts at zero cost
+ *   1. Seeds from cache -- loads ALL cached artifacts at zero cost
  *   2. Computes WHR ratings with confidence intervals
  *   3. Pulls only the work needed to reduce uncertainty below threshold
  *   4. Repeats until all CIs converge or work is exhausted
@@ -109,14 +109,14 @@ export class BenchmarkRunner {
   private revisionStore = new Map<string, WritingSample>(); // "writer:originalSampleId:feedbackId" → revision
   private completedWork: CompletedWork = emptyCompletedWork();
 
-  // Judgment array dedup — prevents double-adding the same judgment
+  // Judgment array dedup -- prevents double-adding the same judgment
   // (e.g. from opportunistic cache probing after the batch already fulfilled it).
   // Separate from completedWork.judgments: that set uses need-identifier key
   // format (model labels + prompt + output index) while this uses judgment-level
   // keys (judge model + sample IDs), checked at push time vs. need-generation time.
   private addedJudgmentKeys = new Set<string>();
 
-  // Inflight dedup — coalesce concurrent requests for the same artifact
+  // Inflight dedup -- coalesce concurrent requests for the same artifact
   private inflightSamples = new Map<string, Promise<WritingSample | null>>();
   private inflightFeedback = new Map<string, Promise<Feedback | null>>();
   private inflightRevisions = new Map<string, Promise<WritingSample | null>>();
@@ -155,7 +155,7 @@ export class BenchmarkRunner {
   /** Per-model-prompt consecutive output count, updated in ensureSample. Key: "model:promptId". */
   private sampleCounts = new Map<string, number>();
   private inflight: Record<string, number> = {};
-  // Cached progress values — recomputed in recomputeRatings() instead
+  // Cached progress values -- recomputed in recomputeRatings() instead
   // of on every emitProgress call (avoids O(n²) per progress update).
   private cachedMaxCi = 0;
   private cachedOverlapProgress = 0;
@@ -176,7 +176,7 @@ export class BenchmarkRunner {
     judgments:   { cached: 0, fresh: 0, savedCost: 0 },
   };
 
-  /** Models used for judging — separate from writers if --judges is set. */
+  /** Models used for judging -- separate from writers if --judges is set. */
   private judgeModels: ModelConfig[];
 
   constructor(private config: RunConfig) {
@@ -199,7 +199,7 @@ export class BenchmarkRunner {
    * Compute per-model output caps for breadth-first enforcement.
    * For each model, cap = min(outputsPerModel, minOutputCountAcrossPrompts + growth).
    * This ensures a model writes all prompts at depth N before any at N+1.
-   * Growth (+1) is only allowed when the model's writing position is unsettled —
+   * Growth (+1) is only allowed when the model's writing position is unsettled --
    * its CI overlaps a neighbor or hasn't met the convergence threshold. Settled
    * models stay at their current cached depth: capFor() controls the output-index
    * range at every cascade level, so this gates the single growth driver.
@@ -223,7 +223,7 @@ export class BenchmarkRunner {
       // so minCount can be 0 even after the model has been used at some
       // prompts.  Without the floor, settled + minCount=0 → cap=0, which
       // blocks ALL dimensions (capFor returns 0 → the output-index loop
-      // never runs) — stalling feedback/revised convergence.
+      // never runs) -- stalling feedback/revised convergence.
       caps.set(model.label, Math.max(1, Math.min(
         this.config.outputsPerModel,
         minCount + (settled ? 0 : 1),
@@ -432,7 +432,7 @@ export class BenchmarkRunner {
 
   // ── WHR Recomputation ─────────────────────────────
 
-  /** Concatenation of all judgment arrays (cheap — just spreads references). */
+  /** Concatenation of all judgment arrays (cheap -- just spreads references). */
   private get allJudgments(): PairwiseJudgment[] {
     return [
       ...this.initialJudgments,
@@ -1015,7 +1015,7 @@ export class BenchmarkRunner {
 
     this.emitProgress("Seeding from cache...");
 
-    // Cache read failures are silently ignored — the adaptive loop
+    // Cache read failures are silently ignored -- the adaptive loop
     // will regenerate anything that couldn't be loaded from cache.
     // Within each layer, lookups are independent and run in parallel.
     // Layers are sequential: writes → feedback → revisions → judgments.
@@ -1024,7 +1024,7 @@ export class BenchmarkRunner {
       // Each (model, prompt) iterates output indices sequentially (break on miss),
       // but all (model, prompt) combos run in parallel.
       // NOTE: When outputsPerModel is Infinity (adaptive mode), the loop
-      // guard is always true — it terminates via break when ensureSample
+      // guard is always true -- it terminates via break when ensureSample
       // returns null (cache exhausted). This is safe because getCachedWrites
       // reads a finite directory.
       await Promise.allSettled(
@@ -1073,7 +1073,7 @@ export class BenchmarkRunner {
       // Layer 4: Load all cached judgments
       await this.seedJudgmentsFromArrays();
     } catch {
-      // Cache read failure — continue with whatever was loaded
+      // Cache read failure -- continue with whatever was loaded
     }
   }
 
@@ -1081,7 +1081,7 @@ export class BenchmarkRunner {
 
   /**
    * Record whether a judgment triple (pair + prompt) was hit or missed.
-   * A hit (result != null) always wins — once true, stays true.
+   * A hit (result != null) always wins -- once true, stays true.
    */
   private recordTripleResult(
     tripleResults: Map<string, boolean>,
@@ -1101,7 +1101,7 @@ export class BenchmarkRunner {
    * level land in the same `Promise.allSettled` batch. This holds because
    * `identifyNeeds` scores all judges for a given (pair, prompt, outputIdx)
    * identically, so they are selected together unless the per-pair cap
-   * truncates them — which is unlikely given the generous cap formula.
+   * truncates them -- which is unlikely given the generous cap formula.
    */
   private async fulfillNeed(
     need: Need,
@@ -1261,7 +1261,7 @@ export class BenchmarkRunner {
     for (const m of this.judgeModels) this.modelMap.set(m.label, m);
     for (const p of this.config.prompts) this.promptMap.set(p.id, p);
 
-    // Phase 1: Seed from cache — load ALL cached artifacts before any API calls
+    // Phase 1: Seed from cache -- load ALL cached artifacts before any API calls
     // Skipped with --skip-seeding; the adaptive loop discovers cache lazily.
     if (!this.config.skipSeeding) {
       await this.seedFromCache();
@@ -1269,7 +1269,7 @@ export class BenchmarkRunner {
       this.recomputeRatings();
     }
 
-    // Phase 2: Adaptive pull loop — runs until convergence, exhaustion, or
+    // Phase 2: Adaptive pull loop -- runs until convergence, exhaustion, or
     // max rounds. With --cache-only the ensure methods refuse API calls,
     // so the loop self-terminates once cached work is exhausted.
     {
@@ -1294,7 +1294,7 @@ export class BenchmarkRunner {
 
         // Per-model output caps enforce breadth-first: each model must
         // cover all prompts at depth N before advancing to depth N+1.
-        // The caps fully subsume the old global effectiveOutputs logic —
+        // The caps fully subsume the old global effectiveOutputs logic --
         // outputsPerModel is passed only as a fallback ceiling.
         const modelOutputCaps = this.computeModelOutputCaps();
 
@@ -1322,7 +1322,7 @@ export class BenchmarkRunner {
           `Adaptive round ${this.judgingRound + 1}: max CI ±${this.cachedMaxCi === Infinity ? "∞" : this.cachedMaxCi} → target ${formatConvergenceTarget(convergence.ciThreshold)}`,
         );
 
-        // Fulfill needs in parallel — errors are recorded, not propagated.
+        // Fulfill needs in parallel -- errors are recorded, not propagated.
         // tripleResults tracks per-triple judgment hit/miss within this batch;
         // only triples where ALL judges missed are added to missingJudgments
         // after the batch (post-batch aggregation).
@@ -1344,7 +1344,7 @@ export class BenchmarkRunner {
           if (!hadHit) this.completedWork.missingJudgments.add(key);
         }
 
-        // Discover cached judgments for ALL pairs in the stores — not
+        // Discover cached judgments for ALL pairs in the stores -- not
         // just pairs from this batch. On the first run after stores are
         // populated, this finds the bulk of cached judgments. On
         // subsequent runs, completedWork.judgments.has() skips known
@@ -1355,7 +1355,7 @@ export class BenchmarkRunner {
         const completedAfter = completedWorkSize(this.completedWork);
 
         // Only count productive rounds (with actual ops) toward maxRounds.
-        // Cache-miss-only rounds are free — just pruning the candidate space.
+        // Cache-miss-only rounds are free -- just pruning the candidate space.
         // Include ops from both batch fulfillment and opportunistic discovery.
         if (this.opsDone > opsBefore) {
           this.judgingRound++;
@@ -1367,13 +1367,13 @@ export class BenchmarkRunner {
         }
 
         // Stall: no new ops AND no new discoveries (missing artifact sets
-        // didn't grow either). Negative caching IS progress — it prunes
+        // didn't grow either). Negative caching IS progress -- it prunes
         // the candidate space for the next round.
         if (this.opsDone === opsBefore && completedAfter === completedBefore) break;
       }
     }
 
-    // Clear need context — no longer in the adaptive loop
+    // Clear need context -- no longer in the adaptive loop
     this.currentNeedDescription = undefined;
     this.currentBatchSummary = undefined;
 
@@ -1638,7 +1638,7 @@ Please provide your detailed feedback.`;
         prompt.maxWords ? ` Target length: approximately ${prompt.maxWords} words.` : ""
       }
 
-Maintain your original voice and intent while addressing the feedback. Do not simply append changes — produce a cohesive, polished revision.`;
+Maintain your original voice and intent while addressing the feedback. Do not simply append changes -- produce a cohesive, polished revision.`;
 
     const userPrompt = `Original prompt: "${prompt.prompt.trim()}"
 

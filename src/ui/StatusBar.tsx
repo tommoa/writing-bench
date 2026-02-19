@@ -71,7 +71,7 @@ export function StatusBar({
   const cacheSaved = totalCostUncached - totalCost;
   const showUncached = cacheSaved > 0.00005;
 
-  // Cache breakdown — only show if anything was cached
+  // Cache breakdown -- only show if anything was cached
   const totalCached =
     cacheSavings.writes.cached +
     cacheSavings.feedback.cached +

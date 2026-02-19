@@ -1,5 +1,5 @@
 /**
- * Minimal scheduler — just tracks in-flight promises so we can
+ * Minimal scheduler -- just tracks in-flight promises so we can
  * wait for all cascading reactive work to complete.
  *
  * Each task is deferred to the next macrotask via setTimeout(0)

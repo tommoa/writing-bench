@@ -53,7 +53,7 @@ describe("computeSelfPreferenceBias", () => {
       sampleToModel.set(sA, "modelA");
       sampleToModel.set(sB, "modelB");
 
-      // modelA alternates — same rate as modelB's verdicts
+      // modelA alternates -- same rate as modelB's verdicts
       judgments.push(makeJudgment(`jA_${i}`, sA, sB, i % 2 === 0 ? "A" : "B", "modelA"));
       judgments.push(makeJudgment(`jB_${i}`, sA, sB, i % 2 === 0 ? "A" : "B", "modelB"));
     }
@@ -166,10 +166,10 @@ describe("computeSelfPreferenceBias", () => {
 
   it("computes expected win rate from other judges on same model pair", () => {
     const sampleToModel = new Map<string, string>();
-    // Pair 1: modelA vs modelB — modelA's writing is strong here
+    // Pair 1: modelA vs modelB -- modelA's writing is strong here
     sampleToModel.set("s1A", "modelA");
     sampleToModel.set("s1B", "modelB");
-    // Pair 2: modelA vs modelB — modelA's writing is weak here
+    // Pair 2: modelA vs modelB -- modelA's writing is weak here
     sampleToModel.set("s2A", "modelA");
     sampleToModel.set("s2B", "modelB");
 
@@ -212,7 +212,7 @@ describe("computeSelfPreferenceBias", () => {
     }
 
     // modelB judges a DIFFERENT set of sample pairs (output index 1)
-    // — no overlap on exact sample IDs!
+    // -- no overlap on exact sample IDs!
     for (let i = 0; i < MIN_SELF_JUDGMENTS + 2; i++) {
       const sA = `sA_idx1_${i}`;
       const sB = `sB_idx1_${i}`;

@@ -166,7 +166,7 @@ describe("filterPrompts", () => {
   });
 
   it("matches by id even when tags differ", () => {
-    // "short-story" has tags ["creative", "fiction"] — filter by id should still work
+    // "short-story" has tags ["creative", "fiction"] -- filter by id should still work
     const result = filterPrompts(prompts, ["short-story"]);
     expect(result).toHaveLength(1);
     expect(result[0].tags).toContain("fiction");

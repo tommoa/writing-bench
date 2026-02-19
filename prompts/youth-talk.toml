@@ -21,7 +21,7 @@ judging_criteria = [
   "depth of content without being condescending",
   "engaging opening and compelling structure",
   "practical and actionable application",
-  "appropriate tone — warm and honest, not preachy",
+  "appropriate tone -- warm and honest, not preachy",
 ]
 
 max_words = 1500

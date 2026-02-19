@@ -422,7 +422,7 @@ describe("SampleCache - judgments", () => {
       "openai", "gpt-4o", "initial", "alpha", "beta", entry
     );
 
-    // Retrieve with (b, a) — swapped
+    // Retrieve with (b, a) -- swapped
     const result = await cache.getCachedJudgment(
       "openai", "gpt-4o", "initial", "beta", "alpha"
     );
@@ -460,12 +460,12 @@ describe("SampleCache - judgments", () => {
 
   it("same pair stored with swapped order hits same cache entry", async () => {
     const entry = makeCachedJudgment({ winner: "A" });
-    // Store with (beta, alpha) — reverse alphabetical
+    // Store with (beta, alpha) -- reverse alphabetical
     await cache.addCachedJudgment(
       "openai", "gpt-4o", "initial", "beta", "alpha", entry
     );
 
-    // Retrieve with (alpha, beta) — alphabetical
+    // Retrieve with (alpha, beta) -- alphabetical
     const result = await cache.getCachedJudgment(
       "openai", "gpt-4o", "initial", "alpha", "beta"
     );
@@ -754,19 +754,19 @@ describe("trimModelOutputs", () => {
       );
     }
 
-    // Judgment: w1-0 vs w2-0 (initial) — both survive trimming, should remain
+    // Judgment: w1-0 vs w2-0 (initial) -- both survive trimming, should remain
     await cache.addCachedJudgment(
       JUDGE.provider, JUDGE.model, "initial", "w1-0", "w2-0",
       makeCachedJudgment({ cacheId: "j-survive" }),
     );
 
-    // Judgment: w1-2 vs w2-0 (initial) — w1-2 will be deleted, judgment is stale
+    // Judgment: w1-2 vs w2-0 (initial) -- w1-2 will be deleted, judgment is stale
     await cache.addCachedJudgment(
       JUDGE.provider, JUDGE.model, "initial", "w1-2", "w2-0",
       makeCachedJudgment({ cacheId: "j-stale" }),
     );
 
-    // Judgment: w2-0 vs w2-1 (initial) — unrelated to trimmed model, should survive
+    // Judgment: w2-0 vs w2-1 (initial) -- unrelated to trimmed model, should survive
     await cache.addCachedJudgment(
       JUDGE.provider, JUDGE.model, "initial", "w2-0", "w2-1",
       makeCachedJudgment({ cacheId: "j-unrelated" }),

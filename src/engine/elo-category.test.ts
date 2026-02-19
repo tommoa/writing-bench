@@ -107,7 +107,7 @@ describe("per-category ELO computation", () => {
   });
 
   it("category ELO only uses judgments from that category", () => {
-    // Filter just sermon — should have 0 matches for essay-only models
+    // Filter just sermon -- should have 0 matches for essay-only models
     const sermonJudgments = allJudgments.filter(
       (j) => j.promptId === "sermon",
     );

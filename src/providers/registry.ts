@@ -18,7 +18,7 @@ interface SDK {
 
 // Each factory has different option types, but custom loaders
 // are responsible for providing the correct shape. This boundary
-// is intentional — same pattern as opencode's BUNDLED_PROVIDERS.
+// is intentional -- same pattern as opencode's BUNDLED_PROVIDERS.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SDKFactory = (options?: any) => SDK;
 
@@ -192,7 +192,7 @@ export async function resolveModel(modelId: string) {
  * Provider names are models.dev provider IDs (e.g., google-vertex).
  *
  * The first colon separates provider from model. Everything after
- * that colon is the model ID — which may itself contain colons
+ * that colon is the model ID -- which may itself contain colons
  * (e.g. Ollama's "llama3.1:8b"). An optional "=label" suffix
  * provides an explicit display name.
  *

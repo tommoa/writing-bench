@@ -59,7 +59,7 @@ export function buildJudgmentLabel(
     };
   }
 
-  // initial — plain model names
+  // initial -- plain model names
   return {
     labelA: sA?.model ?? "?",
     labelB: sB?.model ?? "?",

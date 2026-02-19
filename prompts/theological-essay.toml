@@ -6,22 +6,22 @@ prompt = """
 Write a thoughtful essay exploring the problem of suffering in light of the goodness of God.
 
 The essay should:
-- Present the problem of evil/suffering honestly and fairly — don't straw-man the objection
+- Present the problem of evil/suffering honestly and fairly -- don't straw-man the objection
 - Engage with at least two distinct theological or philosophical responses (e.g. free will defence, soul-making theodicy, protest theodicy, the cross as God's answer)
-- Draw on Scripture without proof-texting — show genuine engagement with the biblical text
+- Draw on Scripture without proof-texting -- show genuine engagement with the biblical text
 - Acknowledge the limits of human understanding without using that as a cop-out
-- Maintain a tone that is intellectually serious but also pastorally aware — real people suffer
+- Maintain a tone that is intellectually serious but also pastorally aware -- real people suffer
 
 Tone: thoughtful, measured, honest. Neither coldly academic nor sentimentally evasive.
 Length: 1200-1800 words.
 """
 
 judging_criteria = [
-  "intellectual honesty — engages with the difficulty rather than deflecting",
+  "intellectual honesty -- engages with the difficulty rather than deflecting",
   "theological depth and accuracy of engagement with traditions",
-  "quality of biblical interpretation — careful, contextual, not proof-texted",
+  "quality of biblical interpretation -- careful, contextual, not proof-texted",
   "prose quality and clarity of argument",
-  "pastoral sensitivity — awareness that this is not merely an abstract question",
+  "pastoral sensitivity -- awareness that this is not merely an abstract question",
 ]
 
 max_words = 1800

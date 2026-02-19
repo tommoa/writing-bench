@@ -127,7 +127,7 @@ function buildGameData(games: WhrGame[]): {
     } else if (g.result === 0.0) {
       winsWhite[bi][wi] += w;
     } else {
-      // Tie — store symmetrically so both directions can be read
+      // Tie -- store symmetrically so both directions can be read
       tieCount[wi][bi] += w;
       tieCount[bi][wi] += w;
     }
@@ -412,7 +412,7 @@ function computeWhrFromGameData(
       losses += winsWhite[j][idx];
       ties += tieCount[idx][j];
     }
-    // tieCount[][] is symmetric — each tie game increments both [i][j]
+    // tieCount[][] is symmetric -- each tie game increments both [i][j]
     // and [j][i]. When we sum tieCount[idx][j] for all j, each tie is
     // counted once per opponent (not doubled), so no division needed.
     //
@@ -586,7 +586,7 @@ export function overlapFreeThreshold(
  *   2. CI shrinks enough that the model no longer overlaps any neighbor
  *
  * When nonOverlapThreshold is provided and positive, the effective
- * target is max(ciThreshold, nonOverlapThreshold) — whichever path
+ * target is max(ciThreshold, nonOverlapThreshold) -- whichever path
  * the model reaches first (a higher threshold means fewer games).
  *
  * Returns null when no estimate is possible (no games played, infinite CI).

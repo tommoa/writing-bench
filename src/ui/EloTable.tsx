@@ -11,7 +11,7 @@ interface EloTableProps {
   costByModel?: Record<string, number>;
   /** Stage-specific avg time per model */
   avgTimeByModel?: Record<string, number>;
-  /** Raw tok/s — only shown when --speed flag is set */
+  /** Raw tok/s -- only shown when --speed flag is set */
   speedByModel?: Record<string, ModelSpeed>;
   /** When provided, show estimated remaining judgments column. */
   ciThreshold?: number;
@@ -148,7 +148,7 @@ export function EloTable({
                 }
               >
                 {"  "}
-                {/* Cap at 9999 — larger estimates are unreliable and overflow the column */}
+                {/* Cap at 9999 -- larger estimates are unreliable and overflow the column */}
                 {(estRemaining === 0
                   ? "\u2713"
                   : estRemaining != null && estRemaining <= 9999

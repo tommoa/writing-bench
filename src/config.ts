@@ -116,7 +116,7 @@ export async function resolveModelLabels(
     const uniqueIds = new Set(group.map((m) => m.registryId));
     if (uniqueIds.size <= 1) continue;
 
-    // Different models with same display name — append provider name
+    // Different models with same display name -- append provider name
     for (const m of group) {
       const providerName = await getProviderDisplayName(m.provider);
       m.label = `${m.label} (${providerName ?? m.provider})`;

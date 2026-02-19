@@ -8,7 +8,7 @@ Judging uses structured JSON output (a Zod schema requesting winner and reasonin
 
 ### Position Bias Mitigation
 
-LLMs can exhibit position bias — a tendency to favor whichever sample appears first. To counteract this, the benchmark randomly swaps the presentation order of each pair with 50% probability. After the judge responds, the winner is mapped back to the canonical ordering. This ensures that any position preference cancels out over many comparisons.
+LLMs can exhibit position bias -- a tendency to favor whichever sample appears first. To counteract this, the benchmark randomly swaps the presentation order of each pair with 50% probability. After the judge responds, the winner is mapped back to the canonical ordering. This ensures that any position preference cancels out over many comparisons.
 
 ## The Benchmark Pipeline
 
@@ -20,15 +20,15 @@ Before making any API calls, the runner exhaustively scans the disk cache and lo
 
 ### Phase 2: Adaptive Pull Loop
 
-The system iterates: compute Whole History Rating with confidence intervals → identify the model pair and judgment type whose data would most reduce uncertainty → generate only that work → repeat until convergence. By default, convergence requires that no model's CI overlaps any other model's CI across all three rating dimensions. Use `--confidence N` to instead converge when all CIs are below $\pm N$ Elo points.
+The system iterates: compute [Whole History Rating](https://www.remi-coulom.fr/WHR/WHR.pdf) with confidence intervals → identify the model pair and judgment type whose data would most reduce uncertainty → generate only that work → repeat until convergence. By default, convergence requires that no model's CI overlaps any other model's CI across all three rating dimensions. Use `--confidence N` to instead converge when all CIs are below $\pm N$ Elo points.
 
 When a judgment is needed, the system cascades through dependencies automatically. For example, requesting an improvement judgment triggers writing the initial sample, generating feedback, and producing the revision if any of those are missing. This ensure-cascade pattern means the system only creates artifacts that are actually needed to reduce rating uncertainty.
 
 ### Judgment Types
 
-1. **Initial** — Pairwise blind comparison of initial writing outputs. Measures raw writing quality.
-2. **Improvement** — Each revision is compared against its own original to measure whether the feedback actually helped. This determines feedback quality ratings.
-3. **Revised** — Revised outputs are compared head-to-head, scoped by feedback source. Measures revised writing quality.
+1. **Initial** -- Pairwise blind comparison of initial writing outputs. Measures raw writing quality.
+2. **Improvement** -- Each revision is compared against its own original to measure whether the feedback actually helped. This determines feedback quality ratings.
+3. **Revised** -- Revised outputs are compared head-to-head, scoped by feedback source. Measures revised writing quality.
 
 ### Information-Gain Scoring
 
@@ -40,7 +40,7 @@ where $\sigma$ is each model's CI half-width, $p$ is the predicted win probabili
 
 ## Whole History Rating System
 
-Within each run, ratings are computed using Whole History Rating (WHR), a Bayesian extension of the Bradley-Terry model. WHR uses Newton's method to find the maximum a posteriori (MAP) estimate of model strengths, producing both point estimates and confidence intervals. These CIs drive the adaptive loop's stopping criterion.
+Within each run, ratings are computed using Whole History Rating (WHR), a Bayesian extension of the [Bradley-Terry model](https://en.wikipedia.org/wiki/Bradley%E2%80%93Terry_model). WHR uses [Newton's method](https://en.wikipedia.org/wiki/Newton%27s_method) to find the [maximum a posteriori](https://en.wikipedia.org/wiki/Maximum_a_posteriori_estimation) (MAP) estimate of model strengths, producing both point estimates and confidence intervals. These CIs drive the adaptive loop's stopping criterion.
 
 ### The Algorithm
 
@@ -48,13 +48,13 @@ Each model is assigned a log-strength parameter $r$ (initially 0). The algorithm
 
 $$\log P(\mathbf{r} \mid \text{data}) = \sum_{i < j} \bigl[ w_{ij} \log \sigma(r_i - r_j) + w_{ji} \log \sigma(r_j - r_i) \bigr] - \sum_i \frac{r_i^2}{2\sigma^2}$$
 
-where $\sigma^2 = 0.25$ is the Gaussian prior variance. The Newton update solves $(-H)\,\Delta = g$ and applies $\mathbf{r} \leftarrow \mathbf{r} + \Delta$, repeating until convergence ($\max|\Delta| < 10^{-6}$, up to 50 iterations). Ratings are then centered by subtracting the mean.
+where $\sigma(\cdot)$ is the [logistic function](https://en.wikipedia.org/wiki/Logistic_function) and $\sigma^2 = 0.25$ is the [Gaussian prior](https://en.wikipedia.org/wiki/Conjugate_prior#When_likelihood_function_is_a_discrete_distribution) variance. The Newton update solves $(-H)\,\Delta = g$ and applies $\mathbf{r} \leftarrow \mathbf{r} + \Delta$, repeating until convergence ($\max|\Delta| < 10^{-6}$, up to 50 iterations). Ratings are then centered by subtracting the mean.
 
 The Gaussian prior ($\sigma^2 = 0.25$) regularizes the optimization, preventing divergence when a model wins or loses all games. This replaces the geometric-mean normalization used in standard Bradley-Terry and ensures symmetric, well-defined confidence intervals.
 
 ### Confidence Intervals
 
-95% confidence intervals are derived from the diagonal of the inverse Hessian (the observed Fisher information). The CI half-width for model $i$ is:
+95% confidence intervals are derived from the diagonal of the inverse Hessian (the observed [Fisher information](https://en.wikipedia.org/wiki/Fisher_information)). The CI half-width for model $i$ is:
 
 $$\text{CI}_{95} = 1.96 \cdot \sqrt{(-H)^{-1}_{ii}} \cdot \frac{400}{\ln 10}$$
 
@@ -62,7 +62,7 @@ Wider CIs indicate less certainty; the adaptive loop targets the model pair that
 
 ### ELO-Scale Conversion
 
-Log-strengths are converted to a familiar ELO-like scale:
+Log-strengths are converted to a familiar [Elo](https://en.wikipedia.org/wiki/Elo_rating_system)-like scale:
 
 $$\text{rating} = \operatorname{round}\!\left(r \cdot \frac{400}{\ln 10} + 1500\right)$$
 
@@ -88,7 +88,7 @@ Revised outputs are compared head-to-head, scoped by feedback source so the comp
 
 ### Per-Tag ELO
 
-Each prompt has genre tags (e.g. "speech", "theological", "creative"). Per-tag ratings run the same WHR computation restricted to judgments from prompts with a given tag. This reveals category-specific strengths — a model might excel at essays but struggle with creative fiction.
+Each prompt has genre tags (e.g. "speech", "theological", "creative"). Per-tag ratings run the same WHR computation restricted to judgments from prompts with a given tag. This reveals category-specific strengths -- a model might excel at essays but struggle with creative fiction.
 
 ## Cumulative Ratings
 
@@ -110,7 +110,7 @@ For each evaluation instance (a unique prompt + sample pair) that has been judge
 
 Judge reliability ratings are converted to weights via exponential decay from the best judge: `weight = exp(k × (rating − best_rating))`. The best judge always receives weight 1.0; weaker judges decay exponentially. The decay rate `k` controls sharpness (half-life = ln(2)/k Elo points), and is configurable via `--judge-decay` or the `--judge-sensitivity` preset (low: k=0.007, medium: k=0.015, high: k=0.03).
 
-Each judgment game in the writer WHR computation is weighted by its judge's quality weight. This means a reliable judge's verdict contributes more to the posterior than an unreliable judge's verdict, allowing CIs to shrink faster with fewer total judgments. No weight exceeds 1.0 — only unreliable judges are penalized.
+Each judgment game in the writer WHR computation is weighted by its judge's quality weight. This means a reliable judge's verdict contributes more to the posterior than an unreliable judge's verdict, allowing CIs to shrink faster with fewer total judgments. No weight exceeds 1.0 -- only unreliable judges are penalized.
 
 Mathematically, this replaces the standard unit-weight likelihood contributions with weighted ones: the gradient and Hessian terms for each game are scaled by the judge's weight. The Newton solver operates identically on the weighted matrices.
 
@@ -122,7 +122,7 @@ Judges whose weight falls below a pruning threshold (default 0.5, configurable v
 
 Judge quality estimation requires sufficient multi-judge overlap data. During the first few adaptive rounds (until at least 5 evaluation instances have been judged by 2+ judges), all judges receive equal weight and no pruning occurs. Weights activate smoothly once the threshold is crossed.
 
-The feature is enabled by default and can be disabled with `--no-judge-quality`. It requires 3 or more judge models for meaningful differentiation — with only 2 judges, disagreements produce ambiguous consensus and all weights remain equal.
+The feature is enabled by default and can be disabled with `--no-judge-quality`. It requires 3 or more judge models for meaningful differentiation -- with only 2 judges, disagreements produce ambiguous consensus and all weights remain equal.
 
 ### ELO-Based Judge Quality Mode
 
@@ -146,3 +146,13 @@ This mode is useful for exploring whether a model's strength in a particular dim
 - **Matches** is the total number of pairwise comparisons involving the model (W + L + T). More matches produce more reliable ratings.
 
 > The adaptive runner stops collecting judgments once all models are distinguishable (no CI overlaps). Use `--confidence N` to instead stop when all CIs are below $\pm N$ Elo points.
+
+## Further Reading
+
+- **Bradley-Terry model** -- [Wikipedia](https://en.wikipedia.org/wiki/Bradley%E2%80%93Terry_model). The pairwise comparison model underlying all ratings in this benchmark. Original paper: R. A. Bradley and M. E. Terry, "Rank Analysis of Incomplete Block Designs: I. The Method of Paired Comparisons," *Biometrika*, 1952.
+- **Whole History Rating** -- [R. Coulom, "Whole-History Rating: A Bayesian Rating System for Players of Time-Varying Strength," 2008](https://www.remi-coulom.fr/WHR/WHR.pdf). The Bayesian extension of Bradley-Terry used here (without the time-varying component).
+- **Elo rating system** -- [Wikipedia](https://en.wikipedia.org/wiki/Elo_rating_system). The scale convention (1500 baseline, 400-point gap = 10:1 odds) used to present ratings.
+- **Newton's method** -- [Wikipedia](https://en.wikipedia.org/wiki/Newton%27s_method). The optimization algorithm used to find MAP estimates.
+- **Maximum a posteriori estimation** -- [Wikipedia](https://en.wikipedia.org/wiki/Maximum_a_posteriori_estimation). The Bayesian estimation framework combining likelihood with a prior.
+- **Fisher information** -- [Wikipedia](https://en.wikipedia.org/wiki/Fisher_information). The basis for deriving confidence intervals from the Hessian.
+- **Logistic function** -- [Wikipedia](https://en.wikipedia.org/wiki/Logistic_function). The sigmoid function used in the Bradley-Terry likelihood.

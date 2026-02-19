@@ -91,7 +91,7 @@ export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode, judg
           ? formatBias(selfBias.biasDelta, selfBias.sufficient, selfBias.selfJudgmentCount > 0)
           : { text: "n/a", color: "gray" };
         // Position bias: always "..." (accumulating) rather than "n/a" when the judge
-        // is a writer — count=0 just means no position-known judgments yet (legacy cache)
+        // is a writer -- count=0 just means no position-known judgments yet (legacy cache)
         const isWriter = selfBias != null;
         const posFmt = posBias
           ? formatBias(posBias.positionBiasDelta, posBias.sufficient, isWriter)

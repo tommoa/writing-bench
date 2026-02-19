@@ -310,7 +310,7 @@ describe("reverseModelKey", () => {
   });
 
   it("returns null for provider prefix with empty model part", () => {
-    // "openai_" has an empty model part — should skip
+    // "openai_" has an empty model part -- should skip
     expect(reverseModelKey("openai_")).toBeNull();
   });
 });
@@ -1399,8 +1399,8 @@ describe("findMaximalCoverings with overlapping coverings", () => {
     });
 
     // Should find two non-dominated coverings:
-    // 1. {A,B} × {p1,p2,p3} — more prompts
-    // 2. {A,B,C} × {p1} — more writers
+    // 1. {A,B} × {p1,p2,p3} -- more prompts
+    // 2. {A,B,C} × {p1} -- more writers
     expect(coverings.length).toBeGreaterThanOrEqual(2);
 
     const coreMks = coreWriters.map((w) => modelKey(w.provider, w.model)).sort();

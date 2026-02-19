@@ -165,8 +165,8 @@ interface JudgmentMeta {
  * Returns the number of runs exported.
  *
  * Generates a tiered file structure:
- *   data/runs/{id}.json              — manifest (lean structural data)
- *   data/runs/{id}/prompt-{pid}.json — per-prompt text content
+ *   data/runs/{id}.json              -- manifest (lean structural data)
+ *   data/runs/{id}/prompt-{pid}.json -- per-prompt text content
  *
  * All JSON files are also pre-compressed as .json.gz for gzip serving.
  */

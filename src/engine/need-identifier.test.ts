@@ -776,7 +776,7 @@ describe("identifyNeeds with overlap", () => {
   });
 
   it("resolves non-overlapping pairs even when one model has wide CI", () => {
-    // Non-overlapping pairs are always resolved regardless of CI width —
+    // Non-overlapping pairs are always resolved regardless of CI width --
     // models are distinguishable. WHR is global, so data from other pairs
     // still helps narrow the wide-CI model.
     const ratings = [
@@ -1206,7 +1206,7 @@ describe("batch dimension coverage", () => {
   it("allocates slots proportionally to cascade weights", () => {
     const emptyRatings: WhrRating[] = [];
     // Use enough models/judges/prompts so each dimension has plenty of
-    // candidates — more than its proportional share of the batch.
+    // candidates -- more than its proportional share of the batch.
     const models = Array.from({ length: 6 }, (_, i) =>
       makeModel(`model${String.fromCharCode(65 + i)}`),
     );

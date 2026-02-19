@@ -9,9 +9,9 @@ import { safeReaddir, safeReadJson } from "./fs-utils.js";
 export interface AnalyzeCacheOpts {
   prompts: PromptConfig[];
   outputsPerModel: number;
-  /** Optional writer modelKey filter — auto-discovers from cache if absent. */
+  /** Optional writer modelKey filter -- auto-discovers from cache if absent. */
   writerKeys?: string[];
-  /** Judge modelKeys — equals writerKeys if absent. */
+  /** Judge modelKeys -- equals writerKeys if absent. */
   judgeKeys?: string[];
   cacheDir?: string;
 }
@@ -175,7 +175,7 @@ export async function computeCacheDiskSize(cacheDir: string): Promise<CacheDiskS
         );
         sizes[cat] = stats.reduce((sum, s) => sum + s, 0);
       } catch {
-        // Directory doesn't exist — size stays 0
+        // Directory doesn't exist -- size stays 0
       }
     })
   );
@@ -253,7 +253,7 @@ export async function analyzeCacheStatus(
     }),
   ]);
 
-  // ── 5. Phase 1: Writes — read cache IDs ──────────
+  // ── 5. Phase 1: Writes -- read cache IDs ──────────
   // writerKey → promptId → cacheId[]
   const writeCacheIds = new Map<string, Map<string, string[]>>();
 
@@ -290,7 +290,7 @@ export async function analyzeCacheStatus(
     N = Math.max(maxFound, 1);
   }
 
-  // ── 6. Phase 2: Feedback — read cache IDs ────────
+  // ── 6. Phase 2: Feedback -- read cache IDs ────────
   // Key: "fbWriterKey:writeCacheId" → feedbackCacheId
   const feedbackCacheIdMap = new Map<string, string>();
 
@@ -313,7 +313,7 @@ export async function analyzeCacheStatus(
     })
   );
 
-  // ── 7. Phase 3: Revisions — read cache IDs ───────
+  // ── 7. Phase 3: Revisions -- read cache IDs ───────
   // Key: "writerKey:feedbackCacheId" → revisionCacheId
   const revisionCacheIdMap = new Map<string, string>();
 
@@ -528,14 +528,14 @@ export async function analyzeCacheStatus(
     improvementJudgments: { have: 0, need: 0 },
     revisedJudgments: { have: 0, need: 0 },
   };
-  // Per-prompt stages (initial/revised judgments) — identical across writers,
+  // Per-prompt stages (initial/revised judgments) -- identical across writers,
   // so read from the first writer's cell only.
   for (const p of prompts) {
     const cell = matrix.get(writerKeys[0])?.get(p.id);
     if (!cell) continue;
     for (const k of PER_PROMPT_STAGES) addCounts(summary[k], cell[k]);
   }
-  // Per-writer stages — sum across all writers × prompts.
+  // Per-writer stages -- sum across all writers × prompts.
   for (const wk of writerKeys) {
     for (const p of prompts) {
       const cell = matrix.get(wk)?.get(p.id);

@@ -85,7 +85,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
 
   const prompts = await loadAndFilterPrompts(args.prompts, args.filter);
 
-  // Check provider env vars — skip in cache-only mode (no API calls needed)
+  // Check provider env vars -- skip in cache-only mode (no API calls needed)
   if (!args.cacheOnly) {
     const allProviders = [...new Set([
       ...models.map((m) => m.provider),
@@ -102,7 +102,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     const outputsDesc = outputsCap === Infinity ? "unlimited (adaptive)" : String(outputsCap);
     const ciThreshold = args.confidence;
 
-    console.log("Dry run — would execute:");
+    console.log("Dry run -- would execute:");
     console.log(`  Writers: ${models.map((m) => m.label).join(", ")}`);
     if (judges) {
       console.log(`  Judges:  ${judges.map((m) => m.label).join(", ")}`);
@@ -469,7 +469,7 @@ async function handleClearCache(
         console.log(`No cache found for ${args.model}.`);
       } else {
         console.log(
-          `Nothing to trim — all prompts already have \u2264 ${args.outputs} outputs for ${args.model}.`,
+          `Nothing to trim -- all prompts already have \u2264 ${args.outputs} outputs for ${args.model}.`,
         );
       }
       return;
