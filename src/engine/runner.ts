@@ -21,7 +21,7 @@ import {
   improvementJudgmentsToGames,
 } from "./whr.js";
 import type { WhrRating, WhrResult } from "./whr.js";
-import { computeJudgeQuality } from "./judge-quality.js";
+import { computeJudgeQuality, computeEloBasedJudgeQuality } from "./judge-quality.js";
 import type { JudgeQualityData } from "./judge-quality.js";
 import {
   SampleCache,
@@ -298,6 +298,7 @@ export class BenchmarkRunner {
           ? Object.fromEntries(this.judgeQuality.weights)
           : undefined,
         judgePruneThreshold: this.config.convergence.judgePruneThreshold,
+        judgeQualityMode: this.config.convergence.judgeQualityMode,
         totalCost: this.totalCost,
         totalCostUncached: this.totalCostUncached,
         costByModel: { ...this.costByModel },
@@ -365,13 +366,26 @@ export class BenchmarkRunner {
    */
   private recomputeJudgeQuality(): void {
     if (!this.config.convergence.judgeQuality) return;
-    const allJudgments = [
-      ...this.initialJudgments,
-      ...this.revisedJudgments,
-      ...this.improvementJudgments,
-    ];
+    const mode = this.config.convergence.judgeQualityMode;
     const judgeLabels = this.judgeModels.map((m) => m.label);
-    this.judgeQuality = computeJudgeQuality(allJudgments, judgeLabels, this.config.convergence.judgeDecay);
+    const k = this.config.convergence.judgeDecay;
+
+    if (mode === "consensus") {
+      const allJudgments = [
+        ...this.initialJudgments,
+        ...this.revisedJudgments,
+        ...this.improvementJudgments,
+      ];
+      this.judgeQuality = computeJudgeQuality(allJudgments, judgeLabels, k);
+    } else {
+      // ELO-based: use model's rating in the chosen dimension as proxy for judge quality.
+      // Uses previous round's ratings (natural fixed-point iteration).
+      const dimensionRatings =
+        mode === "writing" ? this.writingWhr.ratings :
+        mode === "feedback" ? this.feedbackWhr.ratings :
+        this.revisedWhr.ratings;
+      this.judgeQuality = computeEloBasedJudgeQuality(dimensionRatings, judgeLabels, k);
+    }
   }
 
   // TODO: Maintain these maps incrementally (append in ensureSample/

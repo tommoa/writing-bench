@@ -183,6 +183,7 @@ export function App({ subscribe, showSpeed }: AppProps) {
           ratings={progress.elo.judgeQuality}
           weights={progress.judgeWeights}
           pruneThreshold={progress.judgePruneThreshold}
+          mode={progress.judgeQualityMode}
         />
       )}
 

@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { EloRating } from "../types.js";
+import type { EloRating, JudgeQualityMode } from "../types.js";
 import type { WhrRating } from "../engine/whr.js";
 import { DEFAULT_CONVERGENCE } from "../types.js";
 
@@ -8,9 +8,10 @@ interface JudgeQualityTableProps {
   ratings: EloRating[];
   weights?: Record<string, number>;
   pruneThreshold?: number;
+  mode?: JudgeQualityMode;
 }
 
-export function JudgeQualityTable({ ratings, weights, pruneThreshold }: JudgeQualityTableProps) {
+export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode }: JudgeQualityTableProps) {
   if (ratings.length === 0) return null;
 
   const hasCi = ratings.some((r) => "ci95" in r && typeof (r as any).ci95 === "number");
@@ -27,7 +28,7 @@ export function JudgeQualityTable({ ratings, weights, pruneThreshold }: JudgeQua
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text bold color="yellow">
-        Judge Quality
+        Judge Quality{mode && mode !== "consensus" ? ` (${mode} ELO)` : ""}
       </Text>
       <Box>
         <Text color="gray">

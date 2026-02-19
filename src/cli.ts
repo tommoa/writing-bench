@@ -1,6 +1,7 @@
 import yargs from "yargs";
 import type { Argv, ArgumentsCamelCase } from "yargs";
 import { hideBin } from "yargs/helpers";
+import type { JudgeQualityMode } from "./types.js";
 import { DEFAULT_CONVERGENCE } from "./types.js";
 
 export interface RunArgs {
@@ -20,6 +21,7 @@ export interface RunArgs {
   feedbackWeight: number;
   revisedWeight: number;
   judgeQuality: boolean;
+  judgeQualityMode: JudgeQualityMode;
   judgeSensitivity: "low" | "medium" | "high";
   judgeDecay?: number;
   judgePruneThreshold?: number;
@@ -295,6 +297,13 @@ export async function parseArgs(): Promise<Command> {
               describe:
                 "Enable judge quality estimation and weighted ratings (use --no-judge-quality to disable)",
             })
+            .option("judge-quality-mode", {
+              type: "string",
+              choices: ["consensus", "writing", "feedback", "revised"] as const,
+              default: "consensus" as const,
+              describe:
+                "Signal for judge quality weights: consensus (majority vote), or use model ELO from writing/feedback/revised dimension",
+            })
             .option("judge-sensitivity", {
               type: "string",
               choices: ["low", "medium", "high"] as const,
@@ -352,6 +361,7 @@ export async function parseArgs(): Promise<Command> {
               feedbackWeight: argv.feedbackWeight,
               revisedWeight: argv.revisedWeight,
               judgeQuality: argv.judgeQuality,
+              judgeQualityMode: argv.judgeQualityMode as JudgeQualityMode,
               judgeSensitivity: argv.judgeSensitivity as "low" | "medium" | "high",
               judgeDecay: argv.judgeDecay,
               judgePruneThreshold: argv.judgePruneThreshold,

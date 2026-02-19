@@ -89,6 +89,9 @@ export interface PromptConfig {
 
 // ── Convergence ─────────────────────────────────────
 
+/** Signal used to compute judge quality weights. */
+export type JudgeQualityMode = "consensus" | "writing" | "feedback" | "revised";
+
 /** Configuration for adaptive convergence. */
 export interface ConvergenceConfig {
   /** 95% CI half-width threshold in Elo points. 0 = overlap-based convergence. Default: 0. */
@@ -105,6 +108,8 @@ export interface ConvergenceConfig {
   revisedWeight: number;
   /** Enable judge quality estimation and weighted ratings. Default: true. */
   judgeQuality: boolean;
+  /** Signal for judge quality weighting. Default: "consensus". */
+  judgeQualityMode: JudgeQualityMode;
   /** Exponential decay rate for judge weights. Higher = sharper differentiation. Half-life = ln(2)/k Elo points. Default: 0.03. */
   judgeDecay: number;
   /** Judge prune threshold. Judges with weight below this are excluded from need generation. Default: 0.5. */
@@ -119,6 +124,7 @@ export const DEFAULT_CONVERGENCE: ConvergenceConfig = {
   feedbackWeight: 0.25,
   revisedWeight: 0.4,
   judgeQuality: true,
+  judgeQualityMode: "consensus",
   judgeDecay: 0.03,
   judgePruneThreshold: 0.5,
 };
@@ -376,6 +382,8 @@ export interface BenchmarkProgress {
   judgeWeights?: Record<string, number>;
   /** Runtime judge prune threshold for UI display. */
   judgePruneThreshold?: number;
+  /** Judge quality mode for UI display. */
+  judgeQualityMode?: JudgeQualityMode;
   totalCost: number;
   totalCostUncached: number;
   costByModel: Record<string, number>;

@@ -2,12 +2,15 @@ import { describe, it, expect } from "bun:test";
 import {
   buildJudgeGames,
   computeJudgeQuality,
+  computeEloBasedJudgeQuality,
+  ratingsToWeights,
   getJudgeWeight,
   shouldPruneJudge,
   MIN_JUDGE_INSTANCES,
   MIN_JUDGE_WEIGHT,
 } from "./judge-quality.js";
 import type { JudgeQualityData } from "./judge-quality.js";
+import type { WhrRating } from "./whr.js";
 import type { PairwiseJudgment } from "../types.js";
 import { DEFAULT_CONVERGENCE } from "../types.js";
 
@@ -308,6 +311,154 @@ describe("shouldPruneJudge", () => {
     };
     // Unknown judge defaults to weight 1.0 → above threshold
     expect(shouldPruneJudge(data, "unknown", threshold)).toBe(false);
+  });
+});
+
+// ── ELO-based judge quality ─────────────────────────
+
+describe("ratingsToWeights", () => {
+  it("anchors best at 1.0 and decays others", () => {
+    const ratings: WhrRating[] = [
+      { model: "a", rating: 1600, ci95: 30, wins: 6, losses: 4, ties: 0, matchCount: 10 },
+      { model: "b", rating: 1500, ci95: 30, wins: 5, losses: 5, ties: 0, matchCount: 10 },
+    ];
+    const weights = ratingsToWeights(ratings, 0.03);
+    expect(weights.get("a")).toBe(1.0);
+    expect(weights.get("b")!).toBeLessThan(1.0);
+    expect(weights.get("b")!).toBeGreaterThanOrEqual(MIN_JUDGE_WEIGHT);
+  });
+
+  it("returns empty map for empty ratings", () => {
+    const weights = ratingsToWeights([], 0.03);
+    expect(weights.size).toBe(0);
+  });
+
+  it("assigns 1.0 to all when ratings are equal", () => {
+    const ratings: WhrRating[] = [
+      { model: "a", rating: 1500, ci95: 30, wins: 5, losses: 5, ties: 0, matchCount: 10 },
+      { model: "b", rating: 1500, ci95: 30, wins: 5, losses: 5, ties: 0, matchCount: 10 },
+    ];
+    const weights = ratingsToWeights(ratings, 0.03);
+    expect(weights.get("a")).toBe(1.0);
+    expect(weights.get("b")).toBe(1.0);
+  });
+});
+
+describe("computeEloBasedJudgeQuality", () => {
+  it("returns inactive with no ratings (bootstrap)", () => {
+    const result = computeEloBasedJudgeQuality(
+      [],
+      ["judge1", "judge2"],
+      DEFAULT_CONVERGENCE.judgeDecay,
+    );
+    expect(result.active).toBe(false);
+    expect(result.weights.get("judge1")).toBe(1.0);
+    expect(result.weights.get("judge2")).toBe(1.0);
+  });
+
+  it("returns inactive with only one judge in ratings", () => {
+    const ratings: WhrRating[] = [
+      { model: "judge1", rating: 1600, ci95: 50, wins: 5, losses: 3, ties: 2, matchCount: 10 },
+    ];
+    const result = computeEloBasedJudgeQuality(
+      ratings,
+      ["judge1", "judge2"],
+      DEFAULT_CONVERGENCE.judgeDecay,
+    );
+    expect(result.active).toBe(false);
+    expect(result.weights.get("judge1")).toBe(1.0);
+    expect(result.weights.get("judge2")).toBe(1.0);
+  });
+
+  it("assigns higher weight to higher-rated judge", () => {
+    const ratings: WhrRating[] = [
+      { model: "judge1", rating: 1700, ci95: 30, wins: 8, losses: 2, ties: 0, matchCount: 10 },
+      { model: "judge2", rating: 1400, ci95: 30, wins: 2, losses: 8, ties: 0, matchCount: 10 },
+    ];
+    const result = computeEloBasedJudgeQuality(
+      ratings,
+      ["judge1", "judge2"],
+      DEFAULT_CONVERGENCE.judgeDecay,
+    );
+    expect(result.active).toBe(true);
+    expect(result.weights.get("judge1")!).toBeGreaterThan(result.weights.get("judge2")!);
+    expect(result.weights.get("judge1")).toBe(1.0); // best gets 1.0
+  });
+
+  it("filters ratings to only judge models", () => {
+    const ratings: WhrRating[] = [
+      { model: "writer-only", rating: 1800, ci95: 30, wins: 10, losses: 0, ties: 0, matchCount: 10 },
+      { model: "judge1", rating: 1600, ci95: 30, wins: 6, losses: 4, ties: 0, matchCount: 10 },
+      { model: "judge2", rating: 1500, ci95: 30, wins: 5, losses: 5, ties: 0, matchCount: 10 },
+    ];
+    const result = computeEloBasedJudgeQuality(
+      ratings,
+      ["judge1", "judge2"],
+      DEFAULT_CONVERGENCE.judgeDecay,
+    );
+    expect(result.active).toBe(true);
+    // "writer-only" should not affect weights
+    expect(result.weights.has("writer-only")).toBe(false);
+    expect(result.weights.get("judge1")).toBe(1.0); // best among judges
+  });
+
+  it("assigns weight 1.0 to judges not in ratings", () => {
+    const ratings: WhrRating[] = [
+      { model: "judge1", rating: 1600, ci95: 30, wins: 6, losses: 4, ties: 0, matchCount: 10 },
+      { model: "judge2", rating: 1500, ci95: 30, wins: 5, losses: 5, ties: 0, matchCount: 10 },
+    ];
+    const result = computeEloBasedJudgeQuality(
+      ratings,
+      ["judge1", "judge2", "judge3"],
+      DEFAULT_CONVERGENCE.judgeDecay,
+    );
+    // judge3 has no rating -> gets default 1.0
+    expect(result.weights.get("judge3")).toBe(1.0);
+  });
+
+  it("respects decay parameter k", () => {
+    const ratings: WhrRating[] = [
+      { model: "judge1", rating: 1600, ci95: 30, wins: 6, losses: 4, ties: 0, matchCount: 10 },
+      { model: "judge2", rating: 1400, ci95: 30, wins: 4, losses: 6, ties: 0, matchCount: 10 },
+    ];
+    const gentle = computeEloBasedJudgeQuality(ratings, ["judge1", "judge2"], 0.007);
+    const aggressive = computeEloBasedJudgeQuality(ratings, ["judge1", "judge2"], 0.03);
+
+    // Both should have judge1 at 1.0
+    expect(gentle.weights.get("judge1")).toBe(1.0);
+    expect(aggressive.weights.get("judge1")).toBe(1.0);
+
+    // Aggressive decay should penalize judge2 more
+    expect(aggressive.weights.get("judge2")!).toBeLessThan(gentle.weights.get("judge2")!);
+  });
+
+  it("sets instanceCount to 0 (not applicable for elo-based mode)", () => {
+    const ratings: WhrRating[] = [
+      { model: "judge1", rating: 1600, ci95: 30, wins: 6, losses: 4, ties: 0, matchCount: 10 },
+      { model: "judge2", rating: 1500, ci95: 30, wins: 5, losses: 5, ties: 0, matchCount: 10 },
+    ];
+    const result = computeEloBasedJudgeQuality(
+      ratings,
+      ["judge1", "judge2"],
+      DEFAULT_CONVERGENCE.judgeDecay,
+    );
+    expect(result.instanceCount).toBe(0);
+  });
+
+  it("no weight exceeds 1.0", () => {
+    const ratings: WhrRating[] = [
+      { model: "judge1", rating: 1700, ci95: 30, wins: 8, losses: 2, ties: 0, matchCount: 10 },
+      { model: "judge2", rating: 1500, ci95: 30, wins: 5, losses: 5, ties: 0, matchCount: 10 },
+      { model: "judge3", rating: 1300, ci95: 30, wins: 2, losses: 8, ties: 0, matchCount: 10 },
+    ];
+    const result = computeEloBasedJudgeQuality(
+      ratings,
+      ["judge1", "judge2", "judge3"],
+      DEFAULT_CONVERGENCE.judgeDecay,
+    );
+    for (const w of result.weights.values()) {
+      expect(w).toBeLessThanOrEqual(1.0);
+    }
   });
 });
 

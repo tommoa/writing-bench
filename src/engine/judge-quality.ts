@@ -151,7 +151,7 @@ export function buildJudgeGames(
  *
  * @param k Exponential decay rate. Higher = sharper differentiation.
  */
-function ratingsToWeights(ratings: WhrRating[], k: number): Map<string, number> {
+export function ratingsToWeights(ratings: WhrRating[], k: number): Map<string, number> {
   const weights = new Map<string, number>();
   if (ratings.length === 0) return weights;
 
@@ -229,6 +229,57 @@ export function computeJudgeQuality(
     weights,
     active: true,
     instanceCount,
+  };
+}
+
+/**
+ * Compute judge quality from a model's ELO rating in a chosen dimension.
+ *
+ * Instead of consensus-based cross-evaluation, this uses the model's
+ * performance rating (writing, feedback, or revised) as a proxy for
+ * judge quality. Better writers/feedback-givers are assumed to be
+ * better judges.
+ *
+ * Returns bootstrap (all weights 1.0) when fewer than 2 judges have ratings.
+ */
+export function computeEloBasedJudgeQuality(
+  dimensionRatings: WhrRating[],
+  judgeLabels: string[],
+  k: number,
+): JudgeQualityData {
+  const defaultWeights = new Map<string, number>();
+  for (const label of judgeLabels) {
+    defaultWeights.set(label, 1.0);
+  }
+
+  // Filter dimension ratings to only judges
+  const judgeSet = new Set(judgeLabels);
+  const judgeRatings = dimensionRatings.filter((r) => judgeSet.has(r.model));
+
+  // Need at least 2 judges with ratings for meaningful differentiation
+  if (judgeRatings.length < 2) {
+    return {
+      ratings: judgeRatings,
+      weights: defaultWeights,
+      active: false,
+      instanceCount: 0,
+    };
+  }
+
+  const weights = ratingsToWeights(judgeRatings, k);
+
+  // Fill in judges not yet in the rating dimension with weight 1.0
+  for (const label of judgeLabels) {
+    if (!weights.has(label)) {
+      weights.set(label, 1.0);
+    }
+  }
+
+  return {
+    ratings: judgeRatings,
+    weights,
+    active: true,
+    instanceCount: 0, // Not applicable for ELO-based mode
   };
 }
 

@@ -124,6 +124,19 @@ Judge quality estimation requires sufficient multi-judge overlap data. During th
 
 The feature is enabled by default and can be disabled with `--no-judge-quality`. It requires 3 or more judge models for meaningful differentiation — with only 2 judges, disagreements produce ambiguous consensus and all weights remain equal.
 
+### ELO-Based Judge Quality Mode
+
+As an alternative to consensus-based estimation, `--judge-quality-mode` allows using a model's own ELO rating in a chosen dimension as a proxy for judge quality:
+
+- `consensus` (default): Majority-vote cross-evaluation as described above.
+- `writing`: Use the model's writing ELO rating to weight its judgments.
+- `feedback`: Use the model's feedback-giving ELO rating.
+- `revised`: Use the model's revised-writing ELO rating.
+
+In ELO-based modes, the same exponential decay formula converts dimension ratings to judge weights. The weights update live each round using the previous round's ratings (a fixed-point iteration that converges naturally). Bootstrap behavior is the same: if fewer than 2 judges have ratings in the chosen dimension, all weights remain at 1.0.
+
+This mode is useful for exploring whether a model's strength in a particular dimension (e.g., giving good feedback) correlates with its reliability as a judge. When using separate `--judges` that do not participate as writers, `feedback` mode is recommended since judges typically provide feedback but may not have writing ratings.
+
 ## Reading the Results
 
 - **1500** is the baseline rating. A model at the mean of all model strengths sits at 1500.

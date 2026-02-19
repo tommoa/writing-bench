@@ -140,6 +140,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
       feedbackWeight: args.feedbackWeight,
       revisedWeight: args.revisedWeight,
       judgeQuality: args.judgeQuality,
+      judgeQualityMode: args.judgeQualityMode,
       judgeDecay: args.judgeDecay ?? judgePreset.judgeDecay,
       judgePruneThreshold: args.judgePruneThreshold ?? judgePreset.judgePruneThreshold,
     },
