@@ -333,6 +333,16 @@ async function handleExport(
 }
 
 async function buildWeb() {
+  // Generate standalone methodology.html
+  const methodologyProc = Bun.spawn(
+    ["bun", "web/src/build-methodology.ts"],
+    { stdout: "inherit", stderr: "inherit" },
+  );
+  if (await methodologyProc.exited !== 0) {
+    throw new Error("Methodology build failed");
+  }
+
+  // Bundle app.ts → web/app.js
   const result = await Bun.build({
     entrypoints: ["web/src/app.ts"],
     outdir: "web",
@@ -348,7 +358,7 @@ async function buildWeb() {
 }
 
 async function handleServe(
-  args: Extract<Command, { command: "serve" }>["args"]
+  args: Extract<Command, { command: "serve" }>["args"],
 ) {
   // Build web viewer from TypeScript
   await buildWeb();
@@ -363,6 +373,21 @@ async function handleServe(
     async fetch(req) {
       const url = new URL(req.url);
       let path = url.pathname === "/" ? "/index.html" : url.pathname;
+
+      // Serve pre-compressed .gz variant if client accepts gzip
+      const acceptsGzip = req.headers.get("accept-encoding")?.includes("gzip");
+      if (acceptsGzip) {
+        const gzFile = Bun.file(`web${path}.gz`);
+        if (await gzFile.exists()) {
+          return new Response(gzFile, {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Type": Bun.file(`web${path}`).type,
+            },
+          });
+        }
+      }
+
       const file = Bun.file(`web${path}`);
       if (await file.exists()) return new Response(file);
       return new Response("Not found", { status: 404 });

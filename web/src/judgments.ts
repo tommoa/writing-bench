@@ -1,0 +1,523 @@
+import type { RunManifest, SampleMeta, JudgmentMeta } from "./types.js";
+import { el, $$ } from "./helpers.js";
+import { setJudgmentApi, fetchPromptContent } from "./state.js";
+import { scrollToSample } from "./prompt-section.js";
+
+// ── Judgment label helpers ──────────────────────────
+
+interface JudgmentLabels {
+  labelA: string;
+  labelB: string;
+  winnerLabel: string;
+}
+
+export function buildJudgmentLabel(
+  j: JudgmentMeta,
+  sampleMap: Map<string, SampleMeta>,
+): JudgmentLabels {
+  const sA = sampleMap.get(j.sampleA);
+  const sB = sampleMap.get(j.sampleB);
+
+  if (j.stage === "improvement") {
+    // One sample is initial, one is revised (same writer)
+    const aIsOriginal = sA?.stage === "initial";
+    const orig = aIsOriginal ? sA : sB;
+    const rev = aIsOriginal ? sB : sA;
+    const fbModel = rev?.feedbackModel ?? "?";
+
+    const origLabel = `${orig?.model ?? "?"} (original)`;
+    const revLabel = `${rev?.model ?? "?"} (revised, fb: ${fbModel})`;
+
+    let winnerLabel: string;
+    if (j.winner === "tie") {
+      winnerLabel = "Tie";
+    } else {
+      const winSample = j.winner === "A" ? sA : sB;
+      winnerLabel = winSample?.stage === "initial" ? "original" : "revised";
+    }
+
+    return aIsOriginal
+      ? { labelA: origLabel, labelB: revLabel, winnerLabel }
+      : { labelA: revLabel, labelB: origLabel, winnerLabel };
+  }
+
+  if (j.stage === "revised") {
+    const fbA = sA?.feedbackModel ? ` (fb: ${sA.feedbackModel})` : "";
+    const fbB = sB?.feedbackModel ? ` (fb: ${sB.feedbackModel})` : "";
+    return {
+      labelA: `${sA?.model ?? "?"}${fbA}`,
+      labelB: `${sB?.model ?? "?"}${fbB}`,
+      winnerLabel:
+        j.winner === "tie"
+          ? "Tie"
+          : j.winner === "A"
+            ? sA?.model ?? "?"
+            : sB?.model ?? "?",
+    };
+  }
+
+  // initial — plain model names
+  return {
+    labelA: sA?.model ?? "?",
+    labelB: sB?.model ?? "?",
+    winnerLabel:
+      j.winner === "tie"
+        ? "Tie"
+        : j.winner === "A"
+          ? sA?.model ?? "?"
+          : sB?.model ?? "?",
+  };
+}
+
+// ── Judgments Section with Model vs Model comparison ─
+
+export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
+  const container = el("div");
+  container.id = "judgments-section";
+  const judgments = manifest.judgments;
+  if (judgments.length === 0) {
+    container.appendChild(el("p", { className: "muted" }, "No judgments."));
+    return container;
+  }
+
+  const runId = manifest.config.id;
+
+  // Build sample lookup once
+  const sampleMap = new Map(manifest.samples.map((s) => [s.id, s]));
+
+  // Collect unique values for filters
+  const stages = [...new Set(judgments.map((j) => j.stage))].sort();
+  const judges = [...new Set(judgments.map((j) => j.judgeModel))].sort();
+  const allModels = [...new Set(manifest.samples.map((s) => s.model))].sort();
+  const allPrompts = manifest.config.prompts;
+  const judgmentTags = [...new Set(allPrompts.flatMap((p) => p.tags))].sort();
+
+  // Filter state
+  let filterStage = "all";
+  let filterJudge = "all";
+  let filterModelA = "all";
+  let filterModelB = "all";
+  let filterPrompt = "all";
+  let filterSampleId: string | null = null;
+
+  // Pagination state
+  let pageSize = 25;
+  let currentPage = 0;
+
+  // Build filter bar
+  const filterBar = el("div", { className: "judgment-filters" });
+
+  const promptSelect = document.createElement("select");
+  promptSelect.appendChild(new Option("All prompts", "all"));
+  if (judgmentTags.length > 1) {
+    for (const tag of judgmentTags) {
+      promptSelect.appendChild(new Option(`Tag: ${tag}`, `tag:${tag}`));
+    }
+  }
+  for (const p of allPrompts) {
+    promptSelect.appendChild(new Option(p.name, `id:${p.id}`));
+  }
+
+  const stageSelect = document.createElement("select");
+  stageSelect.appendChild(new Option("All stages", "all"));
+  for (const s of stages) stageSelect.appendChild(new Option(s, s));
+
+  const judgeSelect = document.createElement("select");
+  judgeSelect.appendChild(new Option("All judges", "all"));
+  for (const j of judges) judgeSelect.appendChild(new Option(j, j));
+
+  const modelASelect = document.createElement("select");
+  modelASelect.appendChild(new Option("All models", "all"));
+  for (const m of allModels) modelASelect.appendChild(new Option(m, m));
+
+  const modelBSelect = document.createElement("select");
+  modelBSelect.appendChild(new Option("All models", "all"));
+  for (const m of allModels) modelBSelect.appendChild(new Option(m, m));
+
+  filterBar.appendChild(el("span", { className: "muted small" }, "Prompt: "));
+  filterBar.appendChild(promptSelect);
+  filterBar.appendChild(el("span", { className: "muted small" }, " Stage: "));
+  filterBar.appendChild(stageSelect);
+  filterBar.appendChild(el("span", { className: "muted small" }, " Judge: "));
+  filterBar.appendChild(judgeSelect);
+  filterBar.appendChild(el("span", { className: "muted small" }, " Model A: "));
+  filterBar.appendChild(modelASelect);
+  filterBar.appendChild(el("span", { className: "muted small" }, " vs B: "));
+  filterBar.appendChild(modelBSelect);
+
+  container.appendChild(filterBar);
+
+  // Sample filter badge (shown when filtering by specific output)
+  const sampleBadge = el("div", { className: "sample-filter-badge" });
+  sampleBadge.style.display = "none";
+  container.appendChild(sampleBadge);
+
+  // Head-to-head summary (shown when both models selected)
+  const h2hContainer = el("div", { className: "h2h-summary" });
+  h2hContainer.style.display = "none";
+  container.appendChild(h2hContainer);
+
+  // Judgment list container
+  const listContainer = el("div");
+  container.appendChild(listContainer);
+
+  // Track indexed pairs: [manifestIndex, judgment]
+  // so we can look up reasoning by position later
+  const indexed: Array<[number, JudgmentMeta]> = judgments.map((j, i) => [i, j]);
+
+  const rerender = (): void => {
+    let filtered = indexed;
+
+    // Sample ID filter (from "view judgments" button)
+    if (filterSampleId) {
+      filtered = filtered.filter(
+        ([, j]) => j.sampleA === filterSampleId || j.sampleB === filterSampleId,
+      );
+      const sample = sampleMap.get(filterSampleId);
+      sampleBadge.innerHTML = "";
+      sampleBadge.style.display = "flex";
+      sampleBadge.appendChild(
+        el(
+          "span",
+          {},
+          `Showing judgments for ${sample?.model ?? "unknown"}'s output`,
+        ),
+      );
+      sampleBadge.appendChild(
+        el(
+          "button",
+          {
+            className: "badge-clear",
+            onClick: () => {
+              filterSampleId = null;
+              rerender();
+            },
+          },
+          "\u2715 clear",
+        ),
+      );
+    } else {
+      sampleBadge.style.display = "none";
+    }
+
+    if (filterPrompt !== "all") {
+      if (filterPrompt.startsWith("tag:")) {
+        const tag = filterPrompt.slice(4);
+        const promptIds = new Set(
+          allPrompts.filter((p) => p.tags.includes(tag)).map((p) => p.id),
+        );
+        filtered = filtered.filter(([, j]) => promptIds.has(j.promptId));
+      } else if (filterPrompt.startsWith("id:")) {
+        const id = filterPrompt.slice(3);
+        filtered = filtered.filter(([, j]) => j.promptId === id);
+      }
+    }
+    if (filterStage !== "all") {
+      filtered = filtered.filter(([, j]) => j.stage === filterStage);
+    }
+    if (filterJudge !== "all") {
+      filtered = filtered.filter(([, j]) => j.judgeModel === filterJudge);
+    }
+
+    // Model A/B filtering
+    if (filterModelA !== "all" && filterModelB !== "all") {
+      filtered = filtered.filter(([, j]) => {
+        const mA = sampleMap.get(j.sampleA)?.model;
+        const mB = sampleMap.get(j.sampleB)?.model;
+        return (
+          (mA === filterModelA && mB === filterModelB) ||
+          (mA === filterModelB && mB === filterModelA)
+        );
+      });
+    } else if (filterModelA !== "all") {
+      filtered = filtered.filter(([, j]) => {
+        const mA = sampleMap.get(j.sampleA)?.model;
+        const mB = sampleMap.get(j.sampleB)?.model;
+        return mA === filterModelA || mB === filterModelA;
+      });
+    } else if (filterModelB !== "all") {
+      filtered = filtered.filter(([, j]) => {
+        const mA = sampleMap.get(j.sampleA)?.model;
+        const mB = sampleMap.get(j.sampleB)?.model;
+        return mA === filterModelB || mB === filterModelB;
+      });
+    }
+
+    // Head-to-head summary
+    if (filterModelA !== "all" && filterModelB !== "all" && filterModelA !== filterModelB) {
+      let winsA = 0;
+      let winsB = 0;
+      let ties = 0;
+      for (const [, j] of filtered) {
+        const mA = sampleMap.get(j.sampleA)?.model;
+        if (j.winner === "tie") {
+          ties++;
+        } else if (j.winner === "A") {
+          if (mA === filterModelA) winsA++;
+          else winsB++;
+        } else {
+          if (mA === filterModelA) winsB++;
+          else winsA++;
+        }
+      }
+      h2hContainer.innerHTML = "";
+      h2hContainer.style.display = "block";
+      h2hContainer.appendChild(
+        el(
+          "div",
+          { className: "h2h-record" },
+          el("span", { className: "h2h-model" }, filterModelA),
+          el("span", { className: "h2h-wins" }, ` ${winsA}W`),
+          el("span", { className: "muted" }, " / "),
+          el("span", { className: "h2h-losses" }, `${winsB}L`),
+          el("span", { className: "muted" }, " / "),
+          el("span", { className: "h2h-ties" }, `${ties}T`),
+          el("span", { className: "muted" }, ` vs `),
+          el("span", { className: "h2h-model" }, filterModelB),
+        ),
+      );
+    } else {
+      h2hContainer.style.display = "none";
+    }
+
+    listContainer.innerHTML = "";
+
+    // Pagination
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (currentPage >= totalPages) currentPage = totalPages - 1;
+    const start = currentPage * pageSize;
+    const pageItems = filtered.slice(start, start + pageSize);
+
+    function buildPaginationNav(): HTMLElement {
+      const nav = el("div", { className: "pagination" });
+      const prevBtn = el(
+        "button",
+        {
+          disabled: currentPage === 0,
+          onClick: () => { currentPage--; rerender(); },
+        },
+        "< prev",
+      );
+      const nextBtn = el(
+        "button",
+        {
+          disabled: currentPage >= totalPages - 1,
+          onClick: () => { currentPage++; rerender(); },
+        },
+        "next >",
+      );
+      nav.appendChild(prevBtn);
+      nav.appendChild(
+        el("span", { className: "muted" }, ` page ${currentPage + 1} of ${totalPages} `),
+      );
+      nav.appendChild(nextBtn);
+
+      const sizeSelect = document.createElement("select");
+      sizeSelect.className = "page-size-select";
+      for (const size of [10, 25, 50, 100]) {
+        const opt = new Option(`${size} per page`, String(size));
+        if (size === pageSize) opt.selected = true;
+        sizeSelect.appendChild(opt);
+      }
+      sizeSelect.addEventListener("change", () => {
+        pageSize = Number(sizeSelect.value);
+        currentPage = 0;
+        rerender();
+      });
+      nav.appendChild(sizeSelect);
+      return nav;
+    }
+
+    const showPagination = filtered.length > 10;
+
+    if (showPagination) {
+      listContainer.appendChild(buildPaginationNav());
+    } else {
+      listContainer.appendChild(
+        el(
+          "p",
+          { className: "muted small mb-1" },
+          `${filtered.length} judgments`,
+        ),
+      );
+    }
+
+    for (const [manifestIdx, j] of pageItems) {
+      const prompt = allPrompts.find((p) => p.id === j.promptId);
+      const { labelA, labelB, winnerLabel } = buildJudgmentLabel(j, sampleMap);
+      const winnerClass =
+        j.winner === "A" ? "a" : j.winner === "B" ? "b" : "tie";
+
+      const linkA = el(
+        "a",
+        {
+          href: "#",
+          className: "judgment-sample-link",
+          onClick: (e: Event) => {
+            e.preventDefault();
+            scrollToSample(j.sampleA, manifest);
+          },
+        },
+        labelA,
+      );
+
+      const linkB = el(
+        "a",
+        {
+          href: "#",
+          className: "judgment-sample-link",
+          onClick: (e: Event) => {
+            e.preventDefault();
+            scrollToSample(j.sampleB, manifest);
+          },
+        },
+        labelB,
+      );
+
+      const judgEl = el("div", { className: "judgment" });
+
+      // Line 1: stage, prompt, judge
+      judgEl.appendChild(
+        el(
+          "div",
+          { className: "judgment-header" },
+          el("span", { className: "judgment-stage" }, j.stage),
+          el("span", {}, ` ${prompt?.name ?? j.promptId}`),
+          el(
+            "span",
+            { className: "judgment-judge" },
+            `Judge: ${j.judgeModel}`,
+          ),
+        ),
+      );
+
+      // Line 2: matchup
+      judgEl.appendChild(
+        el(
+          "div",
+          { className: "judgment-matchup" },
+          linkA,
+          el("span", { className: "muted" }, " vs "),
+          linkB,
+        ),
+      );
+
+      // Line 3: winner
+      judgEl.appendChild(
+        el(
+          "div",
+          { className: "judgment-result" },
+          el("span", { className: "muted" }, "\u2192 "),
+          el(
+            "span",
+            { className: `judgment-winner ${winnerClass}` },
+            winnerLabel,
+          ),
+        ),
+      );
+
+      // Reasoning: lazy-loaded via expand/collapse
+      const reasoningContainer = el("div", { className: "judgment-reasoning-container" });
+      const expandBtn = el(
+        "button",
+        {
+          className: "reasoning-toggle",
+          onClick: async () => {
+            if (reasoningContainer.dataset.loaded === "true") {
+              // Toggle visibility
+              const text = reasoningContainer.querySelector(".judgment-reasoning");
+              if (text) {
+                text.classList.toggle("hidden");
+                expandBtn.textContent = text.classList.contains("hidden")
+                  ? "show reasoning" : "hide reasoning";
+              }
+              return;
+            }
+            expandBtn.textContent = "loading...";
+            try {
+              const promptData = await fetchPromptContent(runId, j.promptId);
+              // manifestIdx is an index into the manifest's judgments array,
+              // which is sorted by promptId. slice.start is the offset of
+              // this prompt's judgments within that same sorted array. The
+              // reasoning array in the per-prompt content file is parallel
+              // to this slice (same order, same length).
+              const slice = manifest.promptJudgmentSlices[j.promptId];
+              const localIndex = manifestIdx - slice.start;
+              const reasoning = promptData.reasoning[localIndex];
+
+              reasoningContainer.dataset.loaded = "true";
+              reasoningContainer.appendChild(
+                el("div", { className: "judgment-reasoning" }, reasoning ?? ""),
+              );
+              expandBtn.textContent = "hide reasoning";
+            } catch {
+              expandBtn.textContent = "failed to load";
+            }
+          },
+        },
+        "show reasoning",
+      );
+      judgEl.appendChild(expandBtn);
+      judgEl.appendChild(reasoningContainer);
+
+      listContainer.appendChild(judgEl);
+    }
+
+    if (showPagination) {
+      listContainer.appendChild(buildPaginationNav());
+    }
+  };
+
+  function bindFilter(select: HTMLSelectElement, setter: (v: string) => void): void {
+    select.addEventListener("change", () => {
+      setter(select.value);
+      filterSampleId = null;
+      currentPage = 0;
+      rerender();
+    });
+  }
+
+  bindFilter(promptSelect, (v) => { filterPrompt = v; });
+  bindFilter(stageSelect, (v) => { filterStage = v; });
+  bindFilter(judgeSelect, (v) => { filterJudge = v; });
+  bindFilter(modelASelect, (v) => { filterModelA = v; });
+  bindFilter(modelBSelect, (v) => { filterModelB = v; });
+
+  // Expose API for cross-section interaction
+  setJudgmentApi({
+    focusSample(sampleId: string) {
+      const sample = sampleMap.get(sampleId);
+      filterSampleId = sampleId;
+      filterPrompt = "all";
+      filterStage = "all";
+      filterJudge = "all";
+      filterModelA = sample?.model ?? "all";
+      filterModelB = "all";
+      promptSelect.value = "all";
+      stageSelect.value = "all";
+      judgeSelect.value = "all";
+      modelASelect.value = filterModelA;
+      modelBSelect.value = "all";
+      rerender();
+      container.scrollIntoView({ behavior: "smooth" });
+    },
+    focusModel(model: string) {
+      filterSampleId = null;
+      filterPrompt = "all";
+      filterModelA = model;
+      filterModelB = "all";
+      filterStage = "all";
+      filterJudge = "all";
+      promptSelect.value = "all";
+      stageSelect.value = "all";
+      judgeSelect.value = "all";
+      modelASelect.value = model;
+      modelBSelect.value = "all";
+      rerender();
+      container.scrollIntoView({ behavior: "smooth" });
+    },
+  });
+
+  rerender();
+  return container;
+}

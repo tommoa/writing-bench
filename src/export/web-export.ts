@@ -1,11 +1,10 @@
-import { existsSync } from "fs";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import type { RunResult, TokenUsage, ModelInfo } from "../types.js";
 import { listRuns, loadRun } from "../storage/run-store.js";
 import { loadCumulativeElo } from "../storage/elo-store.js";
 
-// ── Uncached Cost Computation ─────────────────────────
+// ── Per-model per-stage aggregation ───────────────────
 
 /**
  * Compute uncached cost for a single API call from token usage and model
@@ -20,73 +19,24 @@ function uncachedCostForUsage(info: ModelInfo, usage: TokenUsage): number {
 }
 
 /**
- * Compute uncached costs grouped by (model, stageKey) from a run's raw
- * samples, feedback, and judgments. Uses modelInfo pricing to calculate
- * what each call would cost without any caching.
+ * Single pass over a run's samples, feedback, and judgments to compute
+ * both uncached costs and total tokens grouped by (model, stageKey).
  */
-function computeUncachedCosts(
-  run: RunResult
-): Record<string, Record<string, number>> {
-  const result: Record<string, Record<string, number>> = {};
-
-  function addCost(model: string, stage: string, usage: TokenUsage): void {
-    const info = run.modelInfo?.[model];
-    if (!info) return;
-    const cost = uncachedCostForUsage(info, usage);
-    const modelStages = result[model] ?? {};
-    modelStages[stage] = (modelStages[stage] ?? 0) + cost;
-    result[model] = modelStages;
-  }
-
-  for (const s of run.samples) {
-    addCost(s.model, s.stage === "initial" ? "initial" : "revised", s.usage);
-  }
-  for (const f of run.feedback) {
-    addCost(f.sourceModel, "feedback", f.usage);
-  }
-  for (const j of run.judgments) {
-    const stage = j.stage === "initial" ? "initialJudging" : "revisedJudging";
-    addCost(j.judgeModel, stage, j.usage);
-  }
-
-  return result;
-}
-
-/**
- * Sum a model-by-stage cost map into per-model totals and a grand total.
- */
-function sumCosts(
-  byModelByStage: Record<string, Record<string, number>>
-): { byModel: Record<string, number>; total: number } {
-  const byModel: Record<string, number> = {};
-  let total = 0;
-  for (const [model, stages] of Object.entries(byModelByStage)) {
-    let modelTotal = 0;
-    for (const cost of Object.values(stages)) {
-      modelTotal += cost;
-    }
-    byModel[model] = modelTotal;
-    total += modelTotal;
-  }
-  return { byModel, total };
-}
-
-/**
- * Compute total tokens (input + output) per model per stage from a
- * run's raw data. Includes all items regardless of cache status,
- * since usage is preserved from cache. Uses the same stage keys as
- * computeUncachedCosts().
- */
-function computeTokensByModelByStage(
-  run: RunResult
-): Record<string, Record<string, number>> {
-  const result: Record<string, Record<string, number>> = {};
+function computeCostsAndTokens(run: RunResult): {
+  costs: Record<string, Record<string, number>>;
+  tokens: Record<string, Record<string, number>>;
+} {
+  const costs: Record<string, Record<string, number>> = {};
+  const tokens: Record<string, Record<string, number>> = {};
 
   function add(model: string, stage: string, usage: TokenUsage): void {
-    const tokens = usage.inputTokens + usage.outputTokens;
-    const modelStages = result[model] ?? {};
-    modelStages[stage] = (modelStages[stage] ?? 0) + tokens;
-    result[model] = modelStages;
+    const info = run.modelInfo?.[model];
+    if (info) {
+      const c = (costs[model] ??= {});
+      c[stage] = (c[stage] ?? 0) + uncachedCostForUsage(info, usage);
+    }
+    const tk = (tokens[model] ??= {});
+    tk[stage] = (tk[stage] ?? 0) + usage.inputTokens + usage.outputTokens;
   }
 
   for (const s of run.samples) {
@@ -100,7 +50,35 @@ function computeTokensByModelByStage(
     add(j.judgeModel, stage, j.usage);
   }
 
-  return result;
+  return { costs, tokens };
+}
+
+/**
+ * Sum a model-by-stage map into per-model totals and a grand total.
+ */
+function sumValues(
+  byModelByStage: Record<string, Record<string, number>>,
+): { byModel: Record<string, number>; total: number } {
+  const byModel: Record<string, number> = {};
+  let total = 0;
+  for (const [model, stages] of Object.entries(byModelByStage)) {
+    let modelTotal = 0;
+    for (const v of Object.values(stages)) {
+      modelTotal += v;
+    }
+    byModel[model] = modelTotal;
+    total += modelTotal;
+  }
+  return { byModel, total };
+}
+
+// ── Gzip helper ──────────────────────────────────────
+
+async function writeGzipped(path: string, data: string): Promise<void> {
+  await Promise.all([
+    writeFile(path, data),
+    writeFile(path + ".gz", Bun.gzipSync(data)),
+  ]);
 }
 
 // ── Index Types ───────────────────────────────────────
@@ -150,22 +128,53 @@ interface RunsIndex {
   }>;
 }
 
+// ── Manifest & Content Types ─────────────────────────
+
+interface SampleMeta {
+  id: string;
+  model: string;
+  promptId: string;
+  outputIndex: number;
+  stage: "initial" | "revised";
+  originalSampleId?: string;
+  feedbackUsed?: string;
+  feedbackModel?: string;
+  fromCache?: boolean;
+}
+
+interface FeedbackMeta {
+  id: string;
+  sourceModel: string;
+  targetSampleId: string;
+  fromCache?: boolean;
+}
+
+interface JudgmentMeta {
+  judgeModel: string;
+  promptId: string;
+  sampleA: string;
+  sampleB: string;
+  winner: "A" | "B" | "tie";
+  stage: "initial" | "revised" | "improvement";
+}
+
 // ── Export ─────────────────────────────────────────────
 
 /**
  * Export all run data to the web viewer data directory.
  * Returns the number of runs exported.
+ *
+ * Generates a tiered file structure:
+ *   data/runs/{id}.json              — manifest (lean structural data)
+ *   data/runs/{id}/prompt-{pid}.json — per-prompt text content
+ *
+ * All JSON files are also pre-compressed as .json.gz for gzip serving.
  */
 export async function exportForWeb(outDir: string): Promise<number> {
   const runsDir = join(outDir, "runs");
 
   // Ensure directories exist
-  if (!existsSync(outDir)) {
-    await mkdir(outDir, { recursive: true });
-  }
-  if (!existsSync(runsDir)) {
-    await mkdir(runsDir, { recursive: true });
-  }
+  await mkdir(runsDir, { recursive: true });
 
   const runIds = await listRuns();
   const indexEntries: RunIndexEntry[] = [];
@@ -173,35 +182,124 @@ export async function exportForWeb(outDir: string): Promise<number> {
   for (const id of runIds) {
     const run = await loadRun(id);
 
-    // Compute uncached costs from raw data
-    const uncachedByModelByStage = computeUncachedCosts(run);
+    // Compute uncached costs and tokens in a single pass
+    const { costs: uncachedByModelByStage, tokens: tokensByModelByStage } =
+      computeCostsAndTokens(run);
     const { byModel: uncachedByModel, total: totalUncached } =
-      sumCosts(uncachedByModelByStage);
-
-    // Compute tokens from raw data (includes cached items)
-    const tokensByModelByStage = computeTokensByModelByStage(run);
+      sumValues(uncachedByModelByStage);
     const { byModel: tokensByModel, total: totalTokens } =
-      sumCosts(tokensByModelByStage);
+      sumValues(tokensByModelByStage);
 
-    // Enrich run data with computed values
-    const enrichedRun = {
-      ...run,
-      meta: {
-        ...run.meta,
-        totalTokens,
-        totalCostUncached: totalUncached,
-        costByModelUncached: uncachedByModel,
-        costByModelByStageUncached: uncachedByModelByStage,
-        tokensByModel,
-        tokensByModelByStage,
-      },
+    // Enriched meta for the manifest
+    const enrichedMeta = {
+      ...run.meta,
+      totalTokens,
+      totalCostUncached: totalUncached,
+      costByModelUncached: uncachedByModel,
+      costByModelByStageUncached: uncachedByModelByStage,
+      tokensByModel,
+      tokensByModelByStage,
     };
 
-    // Write enriched run data
-    await writeFile(
-      join(runsDir, `${id}.json`),
-      JSON.stringify(enrichedRun, null, 2)
+    // ── Sort judgments by promptId for contiguous slicing ──
+
+    const sortedJudgments = [...run.judgments].sort((a, b) =>
+      a.promptId < b.promptId ? -1 : a.promptId > b.promptId ? 1 : 0,
     );
+
+    // Compute per-prompt judgment slices via single pass (judgments
+    // are already sorted by promptId, so each prompt's block is
+    // contiguous). Prompts iterated in the same sort order.
+    const promptJudgmentSlices: Record<string, { start: number; count: number }> = {};
+    const promptsByIdOrder = [...run.config.prompts].sort((a, b) =>
+      a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+    );
+    let cursor = 0;
+    for (const prompt of promptsByIdOrder) {
+      let count = 0;
+      while (
+        cursor + count < sortedJudgments.length &&
+        sortedJudgments[cursor + count].promptId === prompt.id
+      ) count++;
+      promptJudgmentSlices[prompt.id] = { start: cursor, count };
+      cursor += count;
+    }
+
+    // ── Write manifest (Tier 1) ──
+
+    const manifest = {
+      config: run.config,
+      elo: run.elo,
+      meta: enrichedMeta,
+      modelInfo: run.modelInfo,
+      samples: run.samples.map((s): SampleMeta => ({
+        id: s.id,
+        model: s.model,
+        promptId: s.promptId,
+        outputIndex: s.outputIndex,
+        stage: s.stage,
+        originalSampleId: s.originalSampleId,
+        feedbackUsed: s.feedbackUsed,
+        feedbackModel: s.feedbackModel,
+        fromCache: s.fromCache,
+      })),
+      feedback: run.feedback.map((f): FeedbackMeta => ({
+        id: f.id,
+        sourceModel: f.sourceModel,
+        targetSampleId: f.targetSampleId,
+        fromCache: f.fromCache,
+      })),
+      judgments: sortedJudgments.map((j): JudgmentMeta => ({
+        judgeModel: j.judgeModel,
+        promptId: j.promptId,
+        sampleA: j.sampleA,
+        sampleB: j.sampleB,
+        winner: j.winner,
+        stage: j.stage,
+      })),
+      promptJudgmentSlices,
+    };
+
+    await writeGzipped(
+      join(runsDir, `${id}.json`),
+      JSON.stringify(manifest),
+    );
+
+    // ── Write per-prompt content files (Tier 2) ──
+
+    const promptDir = join(runsDir, id);
+    await mkdir(promptDir, { recursive: true });
+
+    await Promise.all(run.config.prompts.map((prompt) => {
+      const promptSamples = run.samples.filter((s) => s.promptId === prompt.id);
+      const sampleIds = new Set(promptSamples.map((s) => s.id));
+      const promptFeedback = run.feedback.filter((f) =>
+        sampleIds.has(f.targetSampleId),
+      );
+      const slice = promptJudgmentSlices[prompt.id];
+      const promptJudgments = sortedJudgments.slice(slice.start, slice.start + slice.count);
+
+      const content = {
+        samples: Object.fromEntries(promptSamples.map((s) => [s.id, {
+          text: s.text,
+          usage: s.usage,
+          cost: s.cost,
+          latencyMs: s.latencyMs,
+        }])),
+        feedback: Object.fromEntries(promptFeedback.map((f) => [f.id, {
+          text: f.text,
+          usage: f.usage,
+          cost: f.cost,
+          latencyMs: f.latencyMs,
+        }])),
+        reasoning: promptJudgments.map((j) => j.reasoning),
+      };
+
+      return writeGzipped(
+        join(promptDir, `prompt-${prompt.id}.json`),
+        JSON.stringify(content),
+      );
+    }));
 
     // Build index entry
     indexEntries.push({
@@ -242,7 +340,7 @@ export async function exportForWeb(outDir: string): Promise<number> {
   const cumElo = await loadCumulativeElo();
 
   function enrichEloEntry(
-    r: { model: string; rating: number; matchCount: number; ci95?: number }
+    r: { model: string; rating: number; matchCount: number; ci95?: number },
   ): EloEntryWithCost {
     const costByStage = latestEntry?.costByModelByStage[r.model];
     const totalCost = latestEntry?.costByModel[r.model];
@@ -252,11 +350,11 @@ export async function exportForWeb(outDir: string): Promise<number> {
       model: r.model,
       rating: r.rating,
       matchCount: r.matchCount,
-      ...(r.ci95 != null ? { ci95: r.ci95 } : {}),
-      ...(costByStage ? { costByStage } : {}),
-      ...(totalCost != null ? { totalCost } : {}),
-      ...(tokensByStage ? { tokensByStage } : {}),
-      ...(totalTokens != null ? { totalTokens } : {}),
+      ci95: r.ci95,
+      costByStage,
+      totalCost,
+      tokensByStage,
+      totalTokens,
     };
   }
 
@@ -276,8 +374,8 @@ export async function exportForWeb(outDir: string): Promise<number> {
             Object.values(ratings)
               .sort((a, b) => b.rating - a.rating)
               .map(enrichEloEntry),
-          ]
-        )
+          ],
+        ),
       ),
     },
     eloHistory: cumElo.history.map((h) => ({
@@ -287,9 +385,9 @@ export async function exportForWeb(outDir: string): Promise<number> {
     })),
   };
 
-  await writeFile(
+  await writeGzipped(
     join(outDir, "runs.json"),
-    JSON.stringify(index, null, 2)
+    JSON.stringify(index),
   );
 
   return runIds.length;

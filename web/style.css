@@ -486,6 +486,24 @@ details[open] summary {
   margin-top: 0.25em;
 }
 
+.judgment-reasoning.hidden {
+  display: none;
+}
+
+.reasoning-toggle {
+  font-size: 0.8em;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.15em 0;
+  margin-top: 0.2em;
+}
+
+.reasoning-toggle:hover {
+  text-decoration: underline;
+}
+
 /* Judgment sample backlinks */
 .judgment-sample-link {
   color: var(--text);

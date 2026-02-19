@@ -67,6 +67,8 @@ export interface EloSnapshot {
   byTag?: Record<string, EloRating[]>;
 }
 
+// ── Legacy full RunResult types (kept for reference) ─
+
 export interface WritingSample {
   id: string;
   model: string;
@@ -141,6 +143,103 @@ export interface RunResult {
   };
   modelInfo: Record<string, ModelInfo>;
 }
+
+// ── Tiered data: Run Manifest (Tier 1) ──────────────
+
+/** Sample structural metadata without text or per-call cost detail. */
+export interface SampleMeta {
+  id: string;
+  model: string;
+  promptId: string;
+  outputIndex: number;
+  stage: "initial" | "revised";
+  originalSampleId?: string;
+  feedbackUsed?: string;
+  feedbackModel?: string;
+  fromCache?: boolean;
+}
+
+/** Feedback structural metadata without text or per-call cost detail. */
+export interface FeedbackMeta {
+  id: string;
+  sourceModel: string;
+  targetSampleId: string;
+  fromCache?: boolean;
+}
+
+/** Judgment structural metadata without reasoning, id, or per-call cost. */
+export interface JudgmentMeta {
+  judgeModel: string;
+  promptId: string;
+  sampleA: string;
+  sampleB: string;
+  winner: "A" | "B" | "tie";
+  stage: "initial" | "revised" | "improvement";
+}
+
+/** Lean run data loaded as the first tier (immediate page load). */
+export interface RunManifest {
+  config: {
+    id: string;
+    models: ModelConfig[];
+    judges?: ModelConfig[];
+    prompts: PromptConfig[];
+    outputsPerModel: number;
+    reasoning: boolean;
+    timestamp: string;
+  };
+  elo: {
+    initial: EloSnapshot;
+    revised: EloSnapshot;
+  };
+  meta: {
+    totalTokens: number;
+    totalCost: number;
+    totalCostUncached: number;
+    costByModel: Record<string, number>;
+    costByStage: Record<string, number>;
+    costByModelByStage: Record<string, Record<string, number>>;
+    costByModelUncached?: Record<string, number>;
+    costByModelByStageUncached?: Record<string, Record<string, number>>;
+    tokensByModel?: Record<string, number>;
+    tokensByModelByStage?: Record<string, Record<string, number>>;
+    speedByModel: Record<string, ModelSpeed>;
+    durationMs: number;
+  };
+  modelInfo: Record<string, ModelInfo>;
+  samples: SampleMeta[];
+  feedback: FeedbackMeta[];
+  judgments: JudgmentMeta[];
+  /** Maps each promptId to its contiguous slice in the judgments array. */
+  promptJudgmentSlices: Record<string, { start: number; count: number }>;
+}
+
+// ── Tiered data: Per-prompt Content (Tier 2) ────────
+
+/** Text + cost detail for a single sample, loaded on-demand. */
+export interface SampleContent {
+  text: string;
+  usage: TokenUsage;
+  cost: CostBreakdown;
+  latencyMs: number;
+}
+
+/** Text + cost detail for a single feedback, loaded on-demand. */
+export interface FeedbackContent {
+  text: string;
+  usage: TokenUsage;
+  cost: CostBreakdown;
+  latencyMs: number;
+}
+
+/** Per-prompt content bundle loaded when the user expands a prompt section. */
+export interface PromptContent {
+  samples: Record<string, SampleContent>;
+  feedback: Record<string, FeedbackContent>;
+  reasoning: string[];
+}
+
+// ── Dashboard types ─────────────────────────────────
 
 export interface EloEntry {
   model: string;

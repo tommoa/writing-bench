@@ -159,10 +159,29 @@ src/
     elo-store.ts     Cumulative ELO with pairwise records
     sample-cache.ts  Disk cache for API outputs
   export/
-    web-export.ts    Export data for web viewer
+    web-export.ts    Export tiered data for web viewer
   ui/                Ink terminal UI components (React/JSX)
 prompts/             TOML prompt definitions
 web/                 Static SPA viewer (vanilla TS, bundled by Bun)
+  src/
+    app.ts           Entry point: router, init
+    helpers.ts       DOM helpers, formatters, render utilities
+    state.ts         Shared state, judgmentApi, prompt content cache
+    types.ts         All web viewer interfaces
+    dashboard.ts     Dashboard page, cumulative ELO tables, sparklines
+    run-detail.ts    Run detail page, run ELO tables, metadata
+    prompt-section.ts  Per-prompt output display with lazy loading
+    judgments.ts     Judgment list with filters, lazy reasoning
+    build-methodology.ts  Build-time: METHODOLOGY.md → methodology.html
+  methodology.html   Generated standalone page (no JS)
+  index.html         SPA shell for dashboard/runs/run-detail
+  style.css          All styling
+  app.js             Bundled output (gitignored)
+  data/              Exported run data (gitignored)
+    runs.json        Index: cumulative ELO, run summaries
+    runs/{id}.json   Per-run manifest (lean metadata)
+    runs/{id}/       Per-run content directory
+      prompt-{pid}.json  Text content loaded on-demand
 data/                Runtime data (gitignored)
 ```
 
@@ -174,6 +193,12 @@ Dependencies flow downward: CLI -> Engine -> Providers/Storage -> Types.
 - Bun is both runtime and bundler (no separate compile step for CLI)
 - The web viewer (`web/`) is a separate vanilla TypeScript SPA, built
   with `bun run build:web`. It is independent from the Ink terminal UI.
+- The web viewer uses tiered data loading: a lean manifest (~350 KB
+  gzipped) loads immediately, and per-prompt content (~400 KB gzipped
+  each) loads on-demand when the user expands prompt sections or views
+  judgment reasoning.
+- The methodology page (`web/methodology.html`) is a standalone static
+  HTML file generated at build time -- it has no JavaScript dependency.
 - LSP errors in `src/ui/*.tsx` files are pre-existing Ink/React JSX
   type issues -- they are harmless and unrelated to actual bugs.
 - The `ai` SDK `Intl.Segmenter` type error is a known upstream issue.

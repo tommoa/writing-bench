@@ -6,7 +6,8 @@ data/elo.json
 data/models-cache.json
 
 web/app.js
-web/src/methodology-html.ts
+web/methodology.html
+web/data/**/*.gz
 
 .opencode/
 .env
