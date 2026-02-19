@@ -19,6 +19,10 @@ export interface RunArgs {
   writingWeight: number;
   feedbackWeight: number;
   revisedWeight: number;
+  judgeQuality: boolean;
+  judgeSensitivity: "low" | "medium" | "high";
+  judgeDecay?: number;
+  judgePruneThreshold?: number;
   cacheOnly: boolean;
   skipSeeding: boolean;
 }
@@ -285,6 +289,29 @@ export async function parseArgs(): Promise<Command> {
               describe:
                 "Only use cached data, no API calls. Auto-discovers models from cache if --models is omitted.",
             })
+            .option("judge-quality", {
+              type: "boolean",
+              default: DEFAULT_CONVERGENCE.judgeQuality,
+              describe:
+                "Enable judge quality estimation and weighted ratings (use --no-judge-quality to disable)",
+            })
+            .option("judge-sensitivity", {
+              type: "string",
+              choices: ["low", "medium", "high"] as const,
+              default: "high" as const,
+              describe:
+                "Judge quality sensitivity preset: low (gentle), medium, high (aggressive)",
+            })
+            .option("judge-decay", {
+              type: "number",
+              describe:
+                "Judge weight exponential decay rate (overrides --judge-sensitivity). Higher = sharper.",
+            })
+            .option("judge-prune-threshold", {
+              type: "number",
+              describe:
+                "Prune judges with weight below this (0-1). Default from --judge-sensitivity.",
+            })
             .option("skip-seeding", {
               type: "boolean",
               default: false,
@@ -301,6 +328,8 @@ export async function parseArgs(): Promise<Command> {
               if ((argv.writingWeight as number) < 0) throw new Error("--writing-weight must be non-negative");
               if ((argv.feedbackWeight as number) < 0) throw new Error("--feedback-weight must be non-negative");
               if ((argv.revisedWeight as number) < 0) throw new Error("--revised-weight must be non-negative");
+              if (argv.judgeDecay != null && (argv.judgeDecay as number) <= 0) throw new Error("--judge-decay must be positive");
+              if (argv.judgePruneThreshold != null && ((argv.judgePruneThreshold as number) < 0 || (argv.judgePruneThreshold as number) > 1)) throw new Error("--judge-prune-threshold must be between 0 and 1");
               return true;
             }),
         (argv) => {
@@ -322,6 +351,10 @@ export async function parseArgs(): Promise<Command> {
               writingWeight: argv.writingWeight,
               feedbackWeight: argv.feedbackWeight,
               revisedWeight: argv.revisedWeight,
+              judgeQuality: argv.judgeQuality,
+              judgeSensitivity: argv.judgeSensitivity as "low" | "medium" | "high",
+              judgeDecay: argv.judgeDecay,
+              judgePruneThreshold: argv.judgePruneThreshold,
               cacheOnly: argv.cacheOnly,
               skipSeeding: argv.skipSeeding,
             },

@@ -17,6 +17,7 @@ import { parseModelSpec } from "./providers/registry.js";
 import { checkProviderEnv } from "./providers/models.js";
 import { App } from "./ui/App.js";
 import type { BenchmarkEvent, EloRating, PromptConfig, TaskError } from "./types.js";
+import { DEFAULT_CONVERGENCE, JUDGE_PRESETS } from "./types.js";
 import { formatConvergenceTarget, formatConvergenceDescription } from "./engine/need-identifier.js";
 
 /** Convert a CLI model spec ("provider:model") to a cache-safe key. */
@@ -120,6 +121,9 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     return;
   }
 
+  // Resolve judge sensitivity preset, then allow explicit overrides.
+  const judgePreset = JUDGE_PRESETS[args.judgeSensitivity];
+
   const config = createRunConfig({
     models,
     judges,
@@ -135,6 +139,9 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
       writingWeight: args.writingWeight,
       feedbackWeight: args.feedbackWeight,
       revisedWeight: args.revisedWeight,
+      judgeQuality: args.judgeQuality,
+      judgeDecay: args.judgeDecay ?? judgePreset.judgeDecay,
+      judgePruneThreshold: args.judgePruneThreshold ?? judgePreset.judgePruneThreshold,
     },
   });
 

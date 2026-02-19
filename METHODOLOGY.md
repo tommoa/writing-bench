@@ -98,6 +98,32 @@ When a new run completes, its pairwise outcomes are merged with the existing acc
 
 Both the leaderboard on the dashboard page (cumulative ratings) and individual run pages use WHR ratings with confidence intervals.
 
+## Judge Quality Estimation
+
+When multiple models serve as judges (the default in self-judging mode), the system estimates judge reliability using a separate Bradley-Terry model. This enables weighted ratings and adaptive judge pruning.
+
+### How It Works
+
+For each evaluation instance (a unique prompt + sample pair) that has been judged by two or more judges, the system computes a majority consensus verdict. It then builds pairwise "games" between judges: a judge that agreed with the consensus beats one that did not; if both agreed or both disagreed, the result is a tie. These judge-vs-judge games are fed into the same WHR algorithm to produce judge reliability ratings.
+
+### Weighted Bradley-Terry
+
+Judge reliability ratings are converted to weights via exponential decay from the best judge: `weight = exp(k × (rating − best_rating))`. The best judge always receives weight 1.0; weaker judges decay exponentially. The decay rate `k` controls sharpness (half-life = ln(2)/k Elo points), and is configurable via `--judge-decay` or the `--judge-sensitivity` preset (low: k=0.007, medium: k=0.015, high: k=0.03).
+
+Each judgment game in the writer WHR computation is weighted by its judge's quality weight. This means a reliable judge's verdict contributes more to the posterior than an unreliable judge's verdict, allowing CIs to shrink faster with fewer total judgments. No weight exceeds 1.0 — only unreliable judges are penalized.
+
+Mathematically, this replaces the standard unit-weight likelihood contributions with weighted ones: the gradient and Hessian terms for each game are scaled by the judge's weight. The Newton solver operates identically on the weighted matrices.
+
+### Adaptive Judge Pruning
+
+Judges whose weight falls below a pruning threshold (default 0.5, configurable via `--judge-prune-threshold` or `--judge-sensitivity`) are excluded from future need generation. With $N$ self-judging models, dropping even a few low-quality judges saves $O(N^2 \times \text{prompts})$ API calls per adaptive round. Pruning never removes the last remaining judge.
+
+### Bootstrapping
+
+Judge quality estimation requires sufficient multi-judge overlap data. During the first few adaptive rounds (until at least 5 evaluation instances have been judged by 2+ judges), all judges receive equal weight and no pruning occurs. Weights activate smoothly once the threshold is crossed.
+
+The feature is enabled by default and can be disabled with `--no-judge-quality`. It requires 3 or more judge models for meaningful differentiation — with only 2 judges, disagreements produce ambiguous consensus and all weights remain equal.
+
 ## Reading the Results
 
 - **1500** is the baseline rating. A model at the mean of all model strengths sits at 1500.

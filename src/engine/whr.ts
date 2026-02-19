@@ -29,6 +29,8 @@ export interface WhrGame {
   playerBlack: string;
   /** 1.0 = white wins, 0.0 = black wins, 0.5 = tie */
   result: number;
+  /** Weight of this game (default 1.0). Higher = more influential. */
+  weight?: number;
 }
 
 /** WHR rating with confidence interval (extends EloRating shape). */
@@ -119,14 +121,15 @@ function buildGameData(games: WhrGame[]): {
     const bi = modelIndex.get(g.playerBlack)!;
     if (wi === bi) continue; // skip self-comparisons
 
+    const w = g.weight ?? 1.0;
     if (g.result === 1.0) {
-      winsWhite[wi][bi]++;
+      winsWhite[wi][bi] += w;
     } else if (g.result === 0.0) {
-      winsWhite[bi][wi]++;
+      winsWhite[bi][wi] += w;
     } else {
       // Tie — store symmetrically so both directions can be read
-      tieCount[wi][bi]++;
-      tieCount[bi][wi]++;
+      tieCount[wi][bi] += w;
+      tieCount[bi][wi] += w;
     }
   }
 
@@ -412,7 +415,14 @@ function computeWhrFromGameData(
     // tieCount[][] is symmetric — each tie game increments both [i][j]
     // and [j][i]. When we sum tieCount[idx][j] for all j, each tie is
     // counted once per opponent (not doubled), so no division needed.
+    //
+    // With weighted games, counts may be fractional. Compute matchCount
+    // from raw floats (effective sample size for convergence), then round
+    // for display (W/L/T columns).
     const matchCount = wins + losses + ties;
+    wins = Math.round(wins);
+    losses = Math.round(losses);
+    ties = Math.round(ties);
 
     // CI from posterior variance
     const variance = variances[idx];
@@ -637,8 +647,9 @@ export function estimateRemainingJudgments(
  * Caller provides a mapping from sample IDs to model names.
  */
 export function judgmentsToGames(
-  judgments: Array<{ sampleA: string; sampleB: string; winner: "A" | "B" | "tie" }>,
+  judgments: Array<{ sampleA: string; sampleB: string; winner: "A" | "B" | "tie"; judgeModel?: string }>,
   sampleToModel: Map<string, string>,
+  judgeWeights?: Map<string, number>,
 ): WhrGame[] {
   const games: WhrGame[] = [];
   for (const j of judgments) {
@@ -650,6 +661,7 @@ export function judgmentsToGames(
       playerWhite: modelA,
       playerBlack: modelB,
       result: j.winner === "A" ? 1.0 : j.winner === "B" ? 0.0 : 0.5,
+      weight: j.judgeModel ? judgeWeights?.get(j.judgeModel) ?? 1.0 : 1.0,
     });
   }
   return games;
@@ -674,13 +686,14 @@ export function improvementJudgmentsToGames(
     judgeModel: string;
   }>,
   sampleToFeedbackModel: Map<string, string>,
+  judgeWeights?: Map<string, number>,
 ): WhrGame[] {
   const games: WhrGame[] = [];
 
   // Group by (promptId, judgeModel, sampleA) -- sampleA is the original
   // sample ID, ensuring feedback models are only paired when tested on
   // the same base text.
-  type ImpResult = { feedbackModel: string; winner: "A" | "B" | "tie" };
+  type ImpResult = { feedbackModel: string; winner: "A" | "B" | "tie"; judgeModel: string };
   const groups = new Map<string, ImpResult[]>();
 
   for (const j of improvementJudgments) {
@@ -688,7 +701,7 @@ export function improvementJudgmentsToGames(
     if (!fbModel) continue;
     const groupKey = `${j.promptId}:${j.judgeModel}:${j.sampleA}`;
     const group = groups.get(groupKey) ?? [];
-    group.push({ feedbackModel: fbModel, winner: j.winner });
+    group.push({ feedbackModel: fbModel, winner: j.winner, judgeModel: j.judgeModel });
     groups.set(groupKey, group);
   }
 
@@ -702,13 +715,14 @@ export function improvementJudgmentsToGames(
 
         const aImproved = a.winner === "B"; // revision beat original
         const bImproved = b.winner === "B";
+        const weight = judgeWeights?.get(a.judgeModel) ?? 1.0;
 
         if (aImproved && !bImproved) {
-          games.push({ playerWhite: a.feedbackModel, playerBlack: b.feedbackModel, result: 1.0 });
+          games.push({ playerWhite: a.feedbackModel, playerBlack: b.feedbackModel, result: 1.0, weight });
         } else if (!aImproved && bImproved) {
-          games.push({ playerWhite: b.feedbackModel, playerBlack: a.feedbackModel, result: 1.0 });
+          games.push({ playerWhite: b.feedbackModel, playerBlack: a.feedbackModel, result: 1.0, weight });
         } else {
-          games.push({ playerWhite: a.feedbackModel, playerBlack: b.feedbackModel, result: 0.5 });
+          games.push({ playerWhite: a.feedbackModel, playerBlack: b.feedbackModel, result: 0.5, weight });
         }
       }
     }
@@ -780,3 +794,4 @@ export function mergeRecords(
   for (const r of incoming) addToRecordMap(map, r);
   return Array.from(map.values());
 }
+

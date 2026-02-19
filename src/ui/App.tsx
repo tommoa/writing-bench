@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { Box, Text } from "ink";
 import { StatusBar } from "./StatusBar.js";
 import { EloTable } from "./EloTable.js";
+import { JudgeQualityTable } from "./JudgeQualityTable.js";
 import { CostBreakdownTable } from "./CostBreakdownTable.js";
 import { RunProgress } from "./RunProgress.js";
 import type { BenchmarkEvent, BenchmarkProgress, CacheSavings, ModelSpeed } from "../types.js";
@@ -174,6 +175,14 @@ export function App({ subscribe, showSpeed }: AppProps) {
           avgTimeByModel={feedbackTime}
           speedByModel={showSpeed ? progress.speedByModel : undefined}
           ciThreshold={progress.ciThreshold}
+        />
+      )}
+
+      {progress.elo.judgeQuality && progress.elo.judgeQuality.length > 0 && (
+        <JudgeQualityTable
+          ratings={progress.elo.judgeQuality}
+          weights={progress.judgeWeights}
+          pruneThreshold={progress.judgePruneThreshold}
         />
       )}
 

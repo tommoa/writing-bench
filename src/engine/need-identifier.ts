@@ -1,6 +1,8 @@
 import { sigmoid, LOG10E_TIMES_400, hasOverlap, hasAnyOverlap } from "./whr.js";
 import type { WhrRating } from "./whr.js";
 import type { ModelConfig, PromptConfig, ConvergenceConfig } from "../types.js";
+import type { JudgeQualityData } from "./judge-quality.js";
+import { shouldPruneJudge } from "./judge-quality.js";
 
 // ── Types ───────────────────────────────────────────
 
@@ -21,6 +23,8 @@ export type Need =
       writer: string;
       outputIdx: number;
       feedbackModel: string;
+      /** The opposing feedback model in this comparison (for batch diversification only). */
+      againstFeedbackModel: string;
       promptId: string;
       judgeModel: ModelConfig;
       score: number;
@@ -201,6 +205,20 @@ export function completedWorkSize(work: CompletedWork): number {
     + work.missingJudgments.size;
 }
 
+// ── Batch Selection Helpers ─────────────────────────
+
+/** Compute diversification key based on the player pair in each dimension.
+ *  Keys are scoped per-group so no prefix is needed. */
+function playerPairKey(c: Need): string {
+  switch (c.type) {
+    case "improvement_judgment":
+      return [c.feedbackModel, c.againstFeedbackModel].sort().join(":");
+    case "initial_judgment":
+    case "revised_judgment":
+      return [c.modelA, c.modelB].sort().join(":");
+  }
+}
+
 // ── Helpers ─────────────────────────────────────────
 
 /**
@@ -298,6 +316,7 @@ export function identifyNeeds(
   convergence: ConvergenceConfig,
   batchSize: number,
   outputsPerModel: number,
+  judgeQuality?: JudgeQualityData,
 ): { needs: Need[]; ratingMap: Map<string, WhrRating> } {
   const candidates: Need[] = [];
   const ratingMap = buildRatingMap(writingRatings, revisedRatings, feedbackRatings);
@@ -307,6 +326,20 @@ export function identifyNeeds(
     model: "", rating: 1500, ci95: Infinity,
     wins: 0, losses: 0, ties: 0, matchCount: 0,
   };
+
+  // Default judge quality data: all weights 1.0, no pruning.
+  const jq: JudgeQualityData = judgeQuality ?? {
+    ratings: [], weights: new Map(), active: false, instanceCount: 0,
+  };
+
+  // Pre-filter pruned judges (shouldPruneJudge handles bootstrap; fallback keeps all if all pruned)
+  let effectiveJudges = judgeModels.filter(
+    (j) => !shouldPruneJudge(jq, j.label, convergence.judgePruneThreshold),
+  );
+  if (effectiveJudges.length === 0) effectiveJudges = judgeModels;
+
+  // Judge weights: use jq.weights directly (defaults to 1.0 for unknown judges)
+  const jw = jq.weights;
 
   // ── Initial judgment needs ────────────────────────
   for (let i = 0; i < models.length; i++) {
@@ -328,13 +361,14 @@ export function identifyNeeds(
             // Prune: skip if all judges missed this judgment group
             if (completedWork.missingJudgments.has(judgmentGroupKey(models[i].label, models[j].label, prompt.id, oi, oj))) continue;
 
-            for (const judge of judgeModels) {
+            for (const judge of effectiveJudges) {
               const key = judgmentKey(
                 "initial", models[i].label, models[j].label,
                 prompt.id, judge.label, oi, oj,
               );
               if (completedWork.judgments.has(key)) continue;
 
+              const judgeWeight = jw.get(judge.label) ?? 1.0;
               candidates.push({
                 type: "initial_judgment",
                 modelA: models[i].label,
@@ -343,7 +377,7 @@ export function identifyNeeds(
                 outputIdxB: oj,
                 promptId: prompt.id,
                 judgeModel: judge,
-                score: gain / (1 + Math.max(oi, oj)),
+                score: gain * judgeWeight / (1 + Math.max(oi, oj)),
               });
             }
           }
@@ -378,21 +412,23 @@ export function identifyNeeds(
               || completedWork.missingJudgments.has(judgmentGroupKey(writer.label, models[j].label, prompt.id, oi, 0));
             if (sideAMissing && sideBMissing) continue;
 
-            for (const judge of judgeModels) {
+            for (const judge of effectiveJudges) {
               // Emit needs for whichever side is incomplete
               const keyA = judgmentKey("improvement", writer.label, models[i].label, prompt.id, judge.label, oi);
               const keyB = judgmentKey("improvement", writer.label, models[j].label, prompt.id, judge.label, oi);
               if (completedWork.judgments.has(keyA) && completedWork.judgments.has(keyB)) continue;
 
+              const judgeWeight = jw.get(judge.label) ?? 1.0;
               if (!sideAMissing && !completedWork.judgments.has(keyA)) {
                 candidates.push({
                   type: "improvement_judgment",
                   writer: writer.label,
                   outputIdx: oi,
                   feedbackModel: models[i].label,
+                  againstFeedbackModel: models[j].label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain / (1 + oi),
+                  score: gain * judgeWeight / (1 + oi),
                 });
               }
               if (!sideBMissing && !completedWork.judgments.has(keyB)) {
@@ -401,9 +437,10 @@ export function identifyNeeds(
                   writer: writer.label,
                   outputIdx: oi,
                   feedbackModel: models[j].label,
+                  againstFeedbackModel: models[i].label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain / (1 + oi),
+                  score: gain * judgeWeight / (1 + oi),
                 });
               }
             }
@@ -433,13 +470,14 @@ export function identifyNeeds(
                 || isCascadeBroken(completedWork, models[j].label, fbModel.label, prompt.id, oj)
                 || completedWork.missingJudgments.has(judgmentGroupKey(models[i].label, models[j].label, `${prompt.id}:${fbModel.label}`, oi, oj))) continue;
 
-              for (const judge of judgeModels) {
+              for (const judge of effectiveJudges) {
                 const key = judgmentKey(
                   "revised", models[i].label, models[j].label,
                   `${prompt.id}:${fbModel.label}`, judge.label, oi, oj,
                 );
                 if (completedWork.judgments.has(key)) continue;
 
+                const judgeWeight = jw.get(judge.label) ?? 1.0;
                 candidates.push({
                   type: "revised_judgment",
                   modelA: models[i].label,
@@ -449,7 +487,7 @@ export function identifyNeeds(
                   feedbackModel: fbModel.label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain / (1 + Math.max(oi, oj)),
+                  score: gain * judgeWeight / (1 + Math.max(oi, oj)),
                 });
               }
             }
@@ -459,28 +497,106 @@ export function identifyNeeds(
     }
   }
 
-  // Sort by score descending
-  candidates.sort((a, b) => b.score - a.score);
+  // ── Dimension-proportional batch selection ─────────
+  // Split candidates by dimension, allocate batch slots proportionally
+  // to cascade weights, then select top candidates per dimension with
+  // per-pair diversification. This guarantees every unconverged dimension
+  // gets batch representation regardless of relative score magnitudes.
+  const initialCandidates: Need[] = [];
+  const improvementCandidates: Need[] = [];
+  const revisedCandidates: Need[] = [];
 
-  // Select top batch, diversifying across model pairs and prompts
+  for (const c of candidates) {
+    if (c.type === "initial_judgment") initialCandidates.push(c);
+    else if (c.type === "improvement_judgment") improvementCandidates.push(c);
+    else revisedCandidates.push(c);
+  }
+
+  // Allocate slots proportionally to cascade weights, with a minimum
+  // guarantee so no dimension starves.
+  const groups = [
+    { candidates: initialCandidates, weight: convergence.writingWeight },
+    { candidates: improvementCandidates, weight: convergence.feedbackWeight },
+    { candidates: revisedCandidates, weight: convergence.revisedWeight },
+  ];
+  for (const g of groups) g.candidates.sort((a, b) => b.score - a.score);
+  const activeGroups = groups.filter((g) => g.candidates.length > 0);
+  const totalWeight = activeGroups.reduce((s, g) => s + g.weight, 0);
+  const minSlots = Math.min(Math.max(judgeModels.length, 2), batchSize);
+
+  // First pass: proportional allocation capped by available candidates
+  // and the total batch size.
+  const allocations = groups.map((g) => {
+    if (g.candidates.length === 0) return 0;
+    const proportional = Math.max(
+      minSlots,
+      Math.round(batchSize * g.weight / totalWeight),
+    );
+    return Math.min(proportional, g.candidates.length);
+  });
+
+  // Trim if total exceeds batchSize (can happen when minSlots pushes
+  // small groups above their proportional share).
+  let total = allocations.reduce((s, a) => s + a, 0);
+  if (total > batchSize) {
+    // Trim proportionally from the largest groups first
+    const sortedIdx = allocations
+      .map((a, i) => ({ a, i }))
+      .sort((x, y) => y.a - x.a);
+    for (const { i } of sortedIdx) {
+      if (total <= batchSize) break;
+      const trim = Math.min(allocations[i] - minSlots, total - batchSize);
+      if (trim > 0) {
+        allocations[i] -= trim;
+        total -= trim;
+      }
+    }
+  }
+
+  // Second pass: redistribute surplus to groups that can use more
+  let surplus = batchSize - allocations.reduce((s, a) => s + a, 0);
+  if (surplus > 0) {
+    for (let gi = 0; gi < groups.length && surplus > 0; gi++) {
+      const extra = Math.min(surplus, groups[gi].candidates.length - allocations[gi]);
+      if (extra > 0) {
+        allocations[gi] += extra;
+        surplus -= extra;
+      }
+    }
+  }
+
+  // Select from each group with per-pair diversification.
+  // Diversification keys are based on the *player pair* in each dimension:
+  //   - Initial: sorted writer pair (modelA, modelB)
+  //   - Improvement: sorted feedback model pair (feedbackModel, againstFeedbackModel)
+  //   - Revised: sorted writer pair (modelA, modelB)
+  // maxPerPair is computed per-group so small allocations still cover
+  // multiple player pairs instead of concentrating on one.
   const selected: Need[] = [];
-  const pairCount = new Map<string, number>();
-  const maxPerPair = Math.max(2, Math.ceil(batchSize / models.length));
+  for (let gi = 0; gi < groups.length; gi++) {
+    // Compute per-group maxPerPair based on unique player pairs
+    const pairKeys = new Set<string>();
+    for (const c of groups[gi].candidates) {
+      pairKeys.add(playerPairKey(c));
+    }
+    const groupMaxPerPair = Math.max(
+      2,
+      Math.ceil(allocations[gi] / Math.max(1, pairKeys.size)),
+    );
 
-  for (const candidate of candidates) {
-    if (selected.length >= batchSize) break;
+    const pairCount = new Map<string, number>();
+    let groupSelected = 0;
+    for (const candidate of groups[gi].candidates) {
+      if (groupSelected >= allocations[gi]) break;
 
-    const pairKey = candidate.type === "improvement_judgment"
-      ? `imp:${candidate.writer}:${candidate.feedbackModel}`
-      : candidate.type === "initial_judgment"
-      ? `init:${[candidate.modelA, candidate.modelB].sort().join(":")}`
-      : `rev:${[candidate.modelA, candidate.modelB].sort().join(":")}:${candidate.feedbackModel}`;
+      const pk = playerPairKey(candidate);
+      const count = pairCount.get(pk) ?? 0;
+      if (count >= groupMaxPerPair) continue;
 
-    const count = pairCount.get(pairKey) ?? 0;
-    if (count >= maxPerPair) continue;
-
-    selected.push(candidate);
-    pairCount.set(pairKey, count + 1);
+      selected.push(candidate);
+      pairCount.set(pk, count + 1);
+      groupSelected++;
+    }
   }
 
   return { needs: selected, ratingMap };
@@ -494,11 +610,12 @@ export function isConverged(
   revisedRatings: WhrRating[],
   feedbackRatings: WhrRating[],
   convergence: ConvergenceConfig,
+  modelCount: number,
 ): boolean {
   return (
-    dimensionConverged(writingRatings, convergence) &&
-    dimensionConverged(revisedRatings, convergence) &&
-    dimensionConverged(feedbackRatings, convergence)
+    dimensionConverged(writingRatings, convergence, modelCount) &&
+    dimensionConverged(revisedRatings, convergence, modelCount) &&
+    dimensionConverged(feedbackRatings, convergence, modelCount)
   );
 }
 
@@ -512,8 +629,12 @@ export function isConverged(
 function dimensionConverged(
   ratings: WhrRating[],
   convergence: ConvergenceConfig,
+  modelCount: number,
 ): boolean {
   if (ratings.length === 0) return false;
+  // All configured models must have ratings — a model with zero games
+  // is absent from WHR output and must not be silently "converged".
+  if (ratings.length < modelCount) return false;
   for (const r of ratings) {
     if (r.matchCount < convergence.minPairsPerModel) return false;
     if (!ciMeetsThreshold(r, convergence) && hasAnyOverlap(r, ratings)) {

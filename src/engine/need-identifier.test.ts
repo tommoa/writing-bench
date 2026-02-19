@@ -611,7 +611,7 @@ describe("isConverged", () => {
       makeWhrRating("modelA", 1550, 30, 10),
       makeWhrRating("modelB", 1450, 25, 10),
     ];
-    expect(isConverged(tight, tight, tight, DEFAULT_CONVERGENCE)).toBe(true);
+    expect(isConverged(tight, tight, tight, DEFAULT_CONVERGENCE, 2)).toBe(true);
   });
 
   it("returns false when any dimension has wide CI", () => {
@@ -623,9 +623,9 @@ describe("isConverged", () => {
       makeWhrRating("modelA", 1550, 200, 10),
       makeWhrRating("modelB", 1450, 25, 10),
     ];
-    expect(isConverged(wide, tight, tight, DEFAULT_CONVERGENCE)).toBe(false);
-    expect(isConverged(tight, wide, tight, DEFAULT_CONVERGENCE)).toBe(false);
-    expect(isConverged(tight, tight, wide, DEFAULT_CONVERGENCE)).toBe(false);
+    expect(isConverged(wide, tight, tight, DEFAULT_CONVERGENCE, 2)).toBe(false);
+    expect(isConverged(tight, wide, tight, DEFAULT_CONVERGENCE, 2)).toBe(false);
+    expect(isConverged(tight, tight, wide, DEFAULT_CONVERGENCE, 2)).toBe(false);
   });
 
   it("returns false when models have too few games", () => {
@@ -633,11 +633,11 @@ describe("isConverged", () => {
       makeWhrRating("modelA", 1550, 30, 1), // below minPairsPerModel (2)
       makeWhrRating("modelB", 1450, 25, 10),
     ];
-    expect(isConverged(fewGames, fewGames, fewGames, DEFAULT_CONVERGENCE)).toBe(false);
+    expect(isConverged(fewGames, fewGames, fewGames, DEFAULT_CONVERGENCE, 2)).toBe(false);
   });
 
   it("returns false for empty ratings", () => {
-    expect(isConverged([], [], [], DEFAULT_CONVERGENCE)).toBe(false);
+    expect(isConverged([], [], [], DEFAULT_CONVERGENCE, 0)).toBe(false);
   });
 
   it("converges when CIs are wide but non-overlapping", () => {
@@ -647,7 +647,7 @@ describe("isConverged", () => {
     ];
     // |1800-1200| = 600 > 150+150 = 300 → no overlap
     // Both have wide CIs (150 > 100) but models are distinguishable
-    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(true);
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE, 2)).toBe(true);
   });
 
   it("does not converge when CIs are wide and overlapping", () => {
@@ -656,7 +656,7 @@ describe("isConverged", () => {
       makeWhrRating("modelB", 1450, 150, 10),
     ];
     // |1550-1450| = 100 < 150+150 = 300 → overlap
-    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(false);
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE, 2)).toBe(false);
   });
 
   it("does not converge when minPairsPerModel is not met even without overlap", () => {
@@ -664,7 +664,7 @@ describe("isConverged", () => {
       makeWhrRating("modelA", 1800, 150, 1),
       makeWhrRating("modelB", 1200, 150, 10),
     ];
-    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(false);
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE, 2)).toBe(false);
   });
 
   it("converges with single model after minimum pairs", () => {
@@ -672,7 +672,7 @@ describe("isConverged", () => {
       makeWhrRating("modelA", 1500, 200, 5),
     ];
     // Single model, no overlap possible → converged
-    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(true);
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE, 1)).toBe(true);
   });
 
   it("converges when one model has tight CI and another has wide but non-overlapping", () => {
@@ -681,7 +681,18 @@ describe("isConverged", () => {
       makeWhrRating("modelB", 1200, 150, 10),
     ];
     // |1800-1200| = 600 > 30+150 = 180 → no overlap
-    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE)).toBe(true);
+    expect(isConverged(ratings, ratings, ratings, DEFAULT_CONVERGENCE, 2)).toBe(true);
+  });
+
+  it("returns false when ratings are missing a configured model", () => {
+    const tight = [
+      makeWhrRating("modelA", 1550, 30, 10),
+      makeWhrRating("modelB", 1450, 25, 10),
+    ];
+    // 3 models configured but only 2 have ratings → not converged
+    expect(isConverged(tight, tight, tight, DEFAULT_CONVERGENCE, 3)).toBe(false);
+    // 2 models configured and 2 have ratings → converged
+    expect(isConverged(tight, tight, tight, DEFAULT_CONVERGENCE, 2)).toBe(true);
   });
 });
 
@@ -969,11 +980,12 @@ function makeInitialNeed(modelA: string, modelB: string): Need {
   };
 }
 
-function makeImprovementNeed(writer: string, feedbackModel: string): Need {
+function makeImprovementNeed(writer: string, feedbackModel: string, againstFeedbackModel = "otherFb"): Need {
   return {
     type: "improvement_judgment",
     writer,
     feedbackModel,
+    againstFeedbackModel,
     outputIdx: 0,
     promptId: "p1",
     judgeModel: makeModel("judge"),
@@ -1059,3 +1071,275 @@ function convergedRatings(n: number): WhrRating[] {
     makeWhrRating(`model${String.fromCharCode(65 + i)}`, 1500 + i * 200, 30, 10)
   );
 }
+
+// ── Batch Dimension Coverage Tests ──────────────────
+
+describe("batch dimension coverage", () => {
+  it("includes improvement needs even when initial needs score higher", () => {
+    // Simulate --skip-seeding: all three dimensions have empty ratings.
+    // With feedbackWeight=0.25, improvement needs score 4x lower than
+    // initial needs. With enough models/judges, the batch must still
+    // include improvement needs or the feedback dimension can never converge.
+    const emptyRatings: WhrRating[] = [];
+    const models = Array.from({ length: 6 }, (_, i) =>
+      makeModel(`model${String.fromCharCode(65 + i)}`),
+    );
+    const judges = Array.from({ length: 4 }, (_, i) =>
+      makeModel(`judge${i}`),
+    );
+    const prompts = [makePrompt("p1"), makePrompt("p2")];
+
+    // Batch size 60: smaller than total initial needs (C(6,2)*4*2 = 120).
+    const needs = identifyNeeds(
+      emptyRatings, emptyRatings, emptyRatings,
+      workWith(), models, judges, prompts,
+      DEFAULT_CONVERGENCE, 60, 1,
+    );
+
+    const hasImprovement = needs.some((n) => n.type === "improvement_judgment");
+    const hasInitial = needs.some((n) => n.type === "initial_judgment");
+
+    expect(hasInitial).toBe(true);
+    expect(hasImprovement).toBe(true);
+  });
+
+  it("includes revised needs even when initial needs score higher", () => {
+    const emptyRatings: WhrRating[] = [];
+    const models = Array.from({ length: 6 }, (_, i) =>
+      makeModel(`model${String.fromCharCode(65 + i)}`),
+    );
+    const judges = [makeModel("judge0")];
+    const prompts = [makePrompt("p1"), makePrompt("p2")];
+
+    const needs = identifyNeeds(
+      emptyRatings, emptyRatings, emptyRatings,
+      workWith(), models, judges, prompts,
+      DEFAULT_CONVERGENCE, 30, 1,
+    );
+
+    const hasRevised = needs.some((n) => n.type === "revised_judgment");
+    expect(hasRevised).toBe(true);
+  });
+
+  it("includes all three dimensions when ratings are empty", () => {
+    const emptyRatings: WhrRating[] = [];
+    const models = threeModels();
+    const judges = oneJudge();
+    const prompts = onePrompt();
+
+    const needs = identifyNeeds(
+      emptyRatings, emptyRatings, emptyRatings,
+      workWith(), models, judges, prompts,
+      DEFAULT_CONVERGENCE, 1000, 1,
+    );
+
+    const types = new Set(needs.map((n) => n.type));
+    expect(types.has("initial_judgment")).toBe(true);
+    expect(types.has("improvement_judgment")).toBe(true);
+    expect(types.has("revised_judgment")).toBe(true);
+  });
+
+  it("allocates slots proportionally to cascade weights", () => {
+    const emptyRatings: WhrRating[] = [];
+    // Use enough models/judges/prompts so each dimension has plenty of
+    // candidates — more than its proportional share of the batch.
+    const models = Array.from({ length: 6 }, (_, i) =>
+      makeModel(`model${String.fromCharCode(65 + i)}`),
+    );
+    const judges = Array.from({ length: 5 }, (_, i) =>
+      makeModel(`judge${i}`),
+    );
+    const prompts = [makePrompt("p1"), makePrompt("p2"), makePrompt("p3")];
+
+    const needs = identifyNeeds(
+      emptyRatings, emptyRatings, emptyRatings,
+      workWith(), models, judges, prompts,
+      DEFAULT_CONVERGENCE, 200, 1,
+    );
+
+    const initialCount = needs.filter((n) => n.type === "initial_judgment").length;
+    const improvementCount = needs.filter((n) => n.type === "improvement_judgment").length;
+    const revisedCount = needs.filter((n) => n.type === "revised_judgment").length;
+
+    // Writing weight 1.0, feedback 0.25, revised 0.4 → total 1.65
+    // All three dimensions must be present
+    expect(initialCount).toBeGreaterThan(0);
+    expect(improvementCount).toBeGreaterThan(0);
+    expect(revisedCount).toBeGreaterThan(0);
+    // Writing (1.0) should get more slots than feedback (0.25)
+    expect(initialCount).toBeGreaterThan(improvementCount);
+    // Writing (1.0) should get more slots than revised (0.4)
+    expect(initialCount).toBeGreaterThan(revisedCount);
+  });
+
+  it("covers multiple feedback model pairs in improvement needs", () => {
+    // With 5 models, there are C(5,2)=10 feedback model pairs.
+    // The improvement batch should cover multiple pairs, not just the first.
+    const emptyRatings: WhrRating[] = [];
+    const models = Array.from({ length: 5 }, (_, i) =>
+      makeModel(`model${String.fromCharCode(65 + i)}`),
+    );
+    const judges = [makeModel("judge0")];
+    const prompts = [makePrompt("p1"), makePrompt("p2")];
+
+    const needs = identifyNeeds(
+      emptyRatings, emptyRatings, emptyRatings,
+      workWith(), models, judges, prompts,
+      DEFAULT_CONVERGENCE, 50, 1,
+    );
+
+    // Collect unique feedback models from improvement needs
+    const improvementNeeds = needs.filter(
+      (n) => n.type === "improvement_judgment",
+    ) as Array<Extract<Need, { type: "improvement_judgment" }>>;
+    const feedbackModels = new Set<string>();
+    for (const n of improvementNeeds) {
+      feedbackModels.add(n.feedbackModel);
+    }
+    // Must cover more than 2 feedback models
+    expect(feedbackModels.size).toBeGreaterThan(2);
+  });
+
+  it("covers multiple writer pairs in revised needs", () => {
+    // With 5 models, there are C(5,2)=10 writer pairs.
+    // The revised batch should cover multiple pairs, not just the first.
+    const emptyRatings: WhrRating[] = [];
+    const models = Array.from({ length: 5 }, (_, i) =>
+      makeModel(`model${String.fromCharCode(65 + i)}`),
+    );
+    const judges = [makeModel("judge0")];
+    const prompts = [makePrompt("p1"), makePrompt("p2")];
+
+    const needs = identifyNeeds(
+      emptyRatings, emptyRatings, emptyRatings,
+      workWith(), models, judges, prompts,
+      DEFAULT_CONVERGENCE, 50, 1,
+    );
+
+    // Collect unique writer pairs from revised needs
+    const revisedNeeds = needs.filter(
+      (n) => n.type === "revised_judgment",
+    ) as Array<Extract<Need, { type: "revised_judgment" }>>;
+    const writerPairs = new Set<string>();
+    for (const n of revisedNeeds) {
+      writerPairs.add([n.modelA, n.modelB].sort().join(":"));
+    }
+    // Must cover more than 1 writer pair
+    expect(writerPairs.size).toBeGreaterThan(1);
+  });
+});
+
+// ── Judge Quality Integration Tests ─────────────────
+
+import type { JudgeQualityData } from "./judge-quality.js";
+
+describe("identifyNeeds with judge quality", () => {
+  it("excludes pruned judges from candidates", () => {
+    const unconverged = [
+      makeWhrRating("modelA", 1500, Infinity, 0),
+      makeWhrRating("modelB", 1500, Infinity, 0),
+    ];
+    const models = twoModels();
+    const judges = [makeModel("goodJudge"), makeModel("badJudge")];
+    const jq: JudgeQualityData = {
+      ratings: [],
+      weights: new Map([
+        ["goodJudge", 1.0],
+        ["badJudge", DEFAULT_CONVERGENCE.judgePruneThreshold - 0.01],
+      ]),
+      active: true,
+      instanceCount: 10,
+    };
+
+    const needs = identifyNeeds(
+      unconverged, unconverged, unconverged,
+      workWith(), models, judges, onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1, jq,
+    );
+
+    // Only goodJudge should produce needs
+    const judgeLabels = new Set(needs.map((n) => n.judgeModel.label));
+    expect(judgeLabels.has("goodJudge")).toBe(true);
+    expect(judgeLabels.has("badJudge")).toBe(false);
+  });
+
+  it("scales scores by judge weight", () => {
+    const unconverged = [
+      makeWhrRating("modelA", 1500, Infinity, 0),
+      makeWhrRating("modelB", 1500, Infinity, 0),
+    ];
+    const models = twoModels();
+    const judges = [makeModel("heavyJudge"), makeModel("lightJudge")];
+    const jq: JudgeQualityData = {
+      ratings: [],
+      weights: new Map([
+        ["heavyJudge", 1.0],
+        ["lightJudge", 0.6],
+      ]),
+      active: true,
+      instanceCount: 10,
+    };
+
+    const needs = identifyNeeds(
+      unconverged, unconverged, unconverged,
+      workWith(), models, judges, onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1, jq,
+    );
+
+    const heavyNeed = needs.find((n) => n.judgeModel.label === "heavyJudge");
+    const lightNeed = needs.find((n) => n.judgeModel.label === "lightJudge");
+    expect(heavyNeed).toBeDefined();
+    expect(lightNeed).toBeDefined();
+    expect(heavyNeed!.score).toBeGreaterThan(lightNeed!.score);
+  });
+
+  it("generates needs for all judges during bootstrap", () => {
+    const unconverged = [
+      makeWhrRating("modelA", 1500, Infinity, 0),
+      makeWhrRating("modelB", 1500, Infinity, 0),
+    ];
+    const models = twoModels();
+    const judges = [makeModel("judge1"), makeModel("judge2")];
+    const jq: JudgeQualityData = {
+      ratings: [],
+      weights: new Map([["judge1", 1.0], ["judge2", 1.0]]),
+      active: false,
+      instanceCount: 2,
+    };
+
+    const needs = identifyNeeds(
+      unconverged, unconverged, unconverged,
+      workWith(), models, judges, onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1, jq,
+    );
+
+    const judgeLabels = new Set(needs.map((n) => n.judgeModel.label));
+    expect(judgeLabels.has("judge1")).toBe(true);
+    expect(judgeLabels.has("judge2")).toBe(true);
+  });
+
+  it("never prunes the last judge", () => {
+    const unconverged = [
+      makeWhrRating("modelA", 1500, Infinity, 0),
+      makeWhrRating("modelB", 1500, Infinity, 0),
+    ];
+    const models = twoModels();
+    const judges = [makeModel("onlyJudge")];
+    const jq: JudgeQualityData = {
+      ratings: [],
+      weights: new Map([["onlyJudge", 0.01]]), // very low weight
+      active: true,
+      instanceCount: 10,
+    };
+
+    const needs = identifyNeeds(
+      unconverged, unconverged, unconverged,
+      workWith(), models, judges, onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1, jq,
+    );
+
+    // Single judge should NOT be pruned even though weight is below threshold
+    expect(needs.length).toBeGreaterThan(0);
+    expect(needs[0].judgeModel.label).toBe("onlyJudge");
+  });
+});

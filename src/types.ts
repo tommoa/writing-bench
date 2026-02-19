@@ -103,6 +103,12 @@ export interface ConvergenceConfig {
   feedbackWeight: number;
   /** Cascade cost multiplier for revised judgments. Default: 0.4. */
   revisedWeight: number;
+  /** Enable judge quality estimation and weighted ratings. Default: true. */
+  judgeQuality: boolean;
+  /** Exponential decay rate for judge weights. Higher = sharper differentiation. Half-life = ln(2)/k Elo points. Default: 0.03. */
+  judgeDecay: number;
+  /** Judge prune threshold. Judges with weight below this are excluded from need generation. Default: 0.5. */
+  judgePruneThreshold: number;
 }
 
 export const DEFAULT_CONVERGENCE: ConvergenceConfig = {
@@ -112,6 +118,16 @@ export const DEFAULT_CONVERGENCE: ConvergenceConfig = {
   writingWeight: 1.0,
   feedbackWeight: 0.25,
   revisedWeight: 0.4,
+  judgeQuality: true,
+  judgeDecay: 0.03,
+  judgePruneThreshold: 0.5,
+};
+
+/** Sensitivity presets for judge quality weighting and pruning. */
+export const JUDGE_PRESETS: Record<"low" | "medium" | "high", { judgeDecay: number; judgePruneThreshold: number }> = {
+  low:    { judgeDecay: 0.007, judgePruneThreshold: 0.3 },
+  medium: { judgeDecay: 0.015, judgePruneThreshold: 0.5 },
+  high:   { judgeDecay: DEFAULT_CONVERGENCE.judgeDecay, judgePruneThreshold: DEFAULT_CONVERGENCE.judgePruneThreshold },
 };
 
 // ── Run Data ────────────────────────────────────────
@@ -353,7 +369,13 @@ export interface BenchmarkProgress {
     initial: EloRating[];
     revised: EloRating[];
     feedback: EloRating[];
+    /** Judge reliability ratings (only present when judge quality is active). */
+    judgeQuality?: EloRating[];
   };
+  /** Judge label -> normalized weight (only present when judge quality is active). */
+  judgeWeights?: Record<string, number>;
+  /** Runtime judge prune threshold for UI display. */
+  judgePruneThreshold?: number;
   totalCost: number;
   totalCostUncached: number;
   costByModel: Record<string, number>;

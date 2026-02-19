@@ -21,6 +21,8 @@ import {
   improvementJudgmentsToGames,
 } from "./whr.js";
 import type { WhrRating, WhrResult } from "./whr.js";
+import { computeJudgeQuality } from "./judge-quality.js";
+import type { JudgeQualityData } from "./judge-quality.js";
 import {
   SampleCache,
   type CachedWrite,
@@ -120,6 +122,16 @@ export class BenchmarkRunner {
   private writingWhr: WhrResult = { ratings: [], converged: true, iterations: 0 };
   private revisedWhr: WhrResult = { ratings: [], converged: true, iterations: 0 };
   private feedbackWhr: WhrResult = { ratings: [], converged: true, iterations: 0 };
+
+  // Judge quality state
+  private judgeQuality: JudgeQualityData = {
+    ratings: [], weights: new Map(), active: false, instanceCount: 0,
+  };
+
+  /** Judge weights when active, undefined during bootstrap. */
+  private get activeJudgeWeights(): Map<string, number> | undefined {
+    return this.judgeQuality.active ? this.judgeQuality.weights : undefined;
+  }
 
   // Progress tracking
   private opsDone = 0;
@@ -280,7 +292,12 @@ export class BenchmarkRunner {
           initial: this.writingWhr.ratings,
           revised: this.revisedWhr.ratings,
           feedback: this.feedbackWhr.ratings,
+          judgeQuality: this.judgeQuality.active ? this.judgeQuality.ratings : undefined,
         },
+        judgeWeights: this.judgeQuality.active
+          ? Object.fromEntries(this.judgeQuality.weights)
+          : undefined,
+        judgePruneThreshold: this.config.convergence.judgePruneThreshold,
         totalCost: this.totalCost,
         totalCostUncached: this.totalCostUncached,
         costByModel: { ...this.costByModel },
@@ -323,30 +340,39 @@ export class BenchmarkRunner {
    * are non-overlapping, weighted equally across dimensions.
    */
   private computeOverlapProgress(): number {
-    const dims = [this.writingWhr.ratings, this.revisedWhr.ratings, this.feedbackWhr.ratings];
     const numModels = this.config.models.length;
-    // Expected pairs per dimension if all models have data
-    const expectedPairs = numModels >= 2 ? (numModels * (numModels - 1)) / 2 : 0;
-    let totalPairs = 0;
+    // Total pairs across 3 dimensions; missing models contribute unresolved pairs.
+    const totalPairs = numModels >= 2 ? 3 * (numModels * (numModels - 1)) / 2 : 0;
+    if (totalPairs === 0) return 0;
+
     let resolvedPairs = 0;
-    for (const ratings of dims) {
-      if (ratings.length < 2) {
-        // Dimension hasn't populated yet — count expected pairs as unresolved
-        // so progress doesn't spike to 100% before all dimensions have data.
-        totalPairs += expectedPairs;
-        continue;
-      }
+    for (const ratings of [this.writingWhr.ratings, this.revisedWhr.ratings, this.feedbackWhr.ratings]) {
       for (let i = 0; i < ratings.length; i++) {
         for (let j = i + 1; j < ratings.length; j++) {
-          totalPairs++;
           if (!hasOverlap(ratings[i], ratings[j])) resolvedPairs++;
         }
       }
     }
-    return totalPairs > 0 ? resolvedPairs / totalPairs : 0;
+    return resolvedPairs / totalPairs;
   }
 
   // ── WHR Recomputation ─────────────────────────────
+
+  /**
+   * Recompute judge quality from all accumulated judgments.
+   * Expensive (pools + groups all judgments, runs WHR on judge games).
+   * Only called at round boundaries, not on throttled mid-batch updates.
+   */
+  private recomputeJudgeQuality(): void {
+    if (!this.config.convergence.judgeQuality) return;
+    const allJudgments = [
+      ...this.initialJudgments,
+      ...this.revisedJudgments,
+      ...this.improvementJudgments,
+    ];
+    const judgeLabels = this.judgeModels.map((m) => m.label);
+    this.judgeQuality = computeJudgeQuality(allJudgments, judgeLabels, this.config.convergence.judgeDecay);
+  }
 
   // TODO: Maintain these maps incrementally (append in ensureSample/
   // ensureRevision) instead of rebuilding from full arrays each round.
@@ -363,16 +389,12 @@ export class BenchmarkRunner {
         .map((s) => [s.id, s.feedbackModel!])
     );
 
-    const writingGames = judgmentsToGames(this.initialJudgments, sampleToModel);
-    this.writingWhr = computeWhr(writingGames);
-
-    const revisedGames = judgmentsToGames(this.revisedJudgments, revisedSampleToModel);
-    this.revisedWhr = computeWhr(revisedGames);
-
-    const feedbackGames = improvementJudgmentsToGames(
-      this.improvementJudgments, sampleToFeedbackModel,
-    );
-    this.feedbackWhr = computeWhr(feedbackGames);
+    // Pass judge weights when active — the unified functions default to
+    // unweighted (weight=1.0) when no judgeWeights map is provided.
+    const jw = this.activeJudgeWeights;
+    this.writingWhr = computeWhr(judgmentsToGames(this.initialJudgments, sampleToModel, jw));
+    this.revisedWhr = computeWhr(judgmentsToGames(this.revisedJudgments, revisedSampleToModel, jw));
+    this.feedbackWhr = computeWhr(improvementJudgmentsToGames(this.improvementJudgments, sampleToFeedbackModel, jw));
     this.lastRatingRecompute = Date.now();
 
     // Update cached progress values so emitProgress doesn't recompute them
@@ -1096,6 +1118,7 @@ export class BenchmarkRunner {
     // Skipped with --skip-seeding; the adaptive loop discovers cache lazily.
     if (!this.config.skipSeeding) {
       await this.seedFromCache();
+      this.recomputeJudgeQuality();
       this.recomputeRatings();
     }
 
@@ -1117,6 +1140,7 @@ export class BenchmarkRunner {
           this.revisedWhr.ratings,
           this.feedbackWhr.ratings,
           convergence,
+          this.config.models.length,
         )) {
           break;
         }
@@ -1138,6 +1162,7 @@ export class BenchmarkRunner {
           convergence,
           batchSize,
           effectiveOutputs,
+          this.judgeQuality,
         );
 
         if (needs.length === 0) break; // exhausted all possible work
@@ -1177,6 +1202,7 @@ export class BenchmarkRunner {
         // Cache-miss-only rounds are free — just pruning the candidate space.
         if (this.opsDone > opsBefore) {
           this.judgingRound++;
+          this.recomputeJudgeQuality();
           this.recomputeRatings();
           this.emitProgress(`Round ${this.judgingRound} complete`);
         }
@@ -1199,24 +1225,25 @@ export class BenchmarkRunner {
     const sampleToModel = new Map(
       this.initialSamples.map((s) => [s.id, s.model]),
     );
-    const initialElo: EloRating[] = whrRatings(
-      judgmentsToGames(this.initialJudgments, sampleToModel),
-    );
-
     const revisedSampleToModel = new Map(
       this.revisedSamples.map((s) => [s.id, s.model]),
     );
-    const revisedElo: EloRating[] = whrRatings(
-      judgmentsToGames(this.revisedJudgments, revisedSampleToModel),
-    );
-
     const sampleToFeedbackModel = new Map(
       this.revisedSamples
         .filter((s) => s.feedbackModel)
         .map((s) => [s.id, s.feedbackModel!]),
     );
+
+    // Use judge weights for final ratings (consistent with adaptive loop)
+    const jw = this.activeJudgeWeights;
+    const initialElo: EloRating[] = whrRatings(
+      judgmentsToGames(this.initialJudgments, sampleToModel, jw),
+    );
+    const revisedElo: EloRating[] = whrRatings(
+      judgmentsToGames(this.revisedJudgments, revisedSampleToModel, jw),
+    );
     const feedbackElo: EloRating[] = whrRatings(
-      improvementJudgmentsToGames(this.improvementJudgments, sampleToFeedbackModel),
+      improvementJudgmentsToGames(this.improvementJudgments, sampleToFeedbackModel, jw),
     );
 
     // Per-tag ELO (also via WHR for consistent CIs)
@@ -1230,12 +1257,12 @@ export class BenchmarkRunner {
     for (const tag of allTags) {
       initialByTag[tag] = whrRatings(judgmentsToGames(
         this.initialJudgments.filter((j) => promptToTags.get(j.promptId)?.includes(tag)),
-        sampleToModel,
+        sampleToModel, jw,
       ));
 
       revisedByTag[tag] = whrRatings(judgmentsToGames(
         this.revisedJudgments.filter((j) => promptToTags.get(j.promptId)?.includes(tag)),
-        revisedSampleToModel,
+        revisedSampleToModel, jw,
       ));
     }
 

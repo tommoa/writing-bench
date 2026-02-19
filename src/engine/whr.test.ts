@@ -872,6 +872,153 @@ describe("gamesToRecords and mergeRecords", () => {
   });
 });
 
+describe("weighted games", () => {
+  it("produces same ratings as unweighted when all weights are 1.0", () => {
+    const unweighted: WhrGame[] = [
+      makeGame("modelA", "modelB", "white"),
+      makeGame("modelA", "modelB", "black"),
+      makeGame("modelB", "modelC", "white"),
+    ];
+    const weighted: WhrGame[] = unweighted.map((g) => ({ ...g, weight: 1.0 }));
+
+    const resultU = computeWhr(unweighted);
+    const resultW = computeWhr(weighted);
+
+    for (const model of ["modelA", "modelB", "modelC"]) {
+      const ru = resultU.ratings.find((r) => r.model === model)!;
+      const rw = resultW.ratings.find((r) => r.model === model)!;
+      expect(rw.rating).toBe(ru.rating);
+      expect(rw.ci95).toBe(ru.ci95);
+    }
+  });
+
+  it("higher weight gives more influence", () => {
+    // 1 game A beats B with weight 5, 1 game B beats A with weight 1
+    // A should be rated higher because the heavy-weight win dominates
+    const games: WhrGame[] = [
+      { playerWhite: "modelA", playerBlack: "modelB", result: 1.0, weight: 5.0 },
+      { playerWhite: "modelB", playerBlack: "modelA", result: 1.0, weight: 1.0 },
+    ];
+
+    const result = computeWhr(games);
+    const a = result.ratings.find((r) => r.model === "modelA")!;
+    const b = result.ratings.find((r) => r.model === "modelB")!;
+    expect(a.rating).toBeGreaterThan(b.rating);
+  });
+
+  it("fractional weights work correctly", () => {
+    // 10 games at weight 0.5 should produce similar ratings to 5 games at weight 1.0
+    const halfWeight: WhrGame[] = [];
+    for (let i = 0; i < 10; i++) {
+      halfWeight.push({ playerWhite: "modelA", playerBlack: "modelB", result: 1.0, weight: 0.5 });
+    }
+
+    const fullWeight: WhrGame[] = [];
+    for (let i = 0; i < 5; i++) {
+      fullWeight.push(makeGame("modelA", "modelB", "white"));
+    }
+
+    const resultHalf = computeWhr(halfWeight);
+    const resultFull = computeWhr(fullWeight);
+
+    const halfA = resultHalf.ratings.find((r) => r.model === "modelA")!;
+    const fullA = resultFull.ratings.find((r) => r.model === "modelA")!;
+
+    // Ratings should be very close (both represent 5 effective wins)
+    expect(Math.abs(halfA.rating - fullA.rating)).toBeLessThan(2);
+  });
+
+  it("weighted games produce narrower CIs when weights are higher", () => {
+    // Same game count, but double weight = effectively double games
+    const normalGames: WhrGame[] = [
+      makeGame("modelA", "modelB", "white"),
+      makeGame("modelA", "modelB", "black"),
+      makeGame("modelA", "modelB", "white"),
+      makeGame("modelA", "modelB", "black"),
+    ];
+
+    const doubleWeight: WhrGame[] = normalGames.map((g) => ({ ...g, weight: 2.0 }));
+
+    const normalResult = computeWhr(normalGames);
+    const doubleResult = computeWhr(doubleWeight);
+
+    const normalCi = maxCiHalfWidth(normalResult);
+    const doubleCi = maxCiHalfWidth(doubleResult);
+
+    // Double weight should produce narrower CIs
+    expect(doubleCi).toBeLessThan(normalCi);
+  });
+
+  it("default weight is 1.0 when weight field is omitted", () => {
+    const withoutWeight: WhrGame[] = [makeGame("modelA", "modelB", "white")];
+    const withWeight: WhrGame[] = [{ ...makeGame("modelA", "modelB", "white"), weight: 1.0 }];
+
+    const r1 = computeWhr(withoutWeight);
+    const r2 = computeWhr(withWeight);
+
+    const a1 = r1.ratings.find((r) => r.model === "modelA")!;
+    const a2 = r2.ratings.find((r) => r.model === "modelA")!;
+    expect(a1.rating).toBe(a2.rating);
+  });
+});
+
+describe("judgmentsToGames with judge weights", () => {
+  it("applies judge weights correctly", () => {
+    const sampleToModel = new Map([["s1", "modelA"], ["s2", "modelB"]]);
+    const judgeWeights = new Map([["judge1", 2.0], ["judge2", 0.5]]);
+    const judgments = [
+      { sampleA: "s1", sampleB: "s2", winner: "A" as const, judgeModel: "judge1" },
+      { sampleA: "s1", sampleB: "s2", winner: "B" as const, judgeModel: "judge2" },
+    ];
+
+    const games = judgmentsToGames(judgments, sampleToModel, judgeWeights);
+    expect(games).toHaveLength(2);
+    expect(games[0].weight).toBe(2.0);
+    expect(games[1].weight).toBe(0.5);
+  });
+
+  it("defaults to weight 1.0 for unknown judge", () => {
+    const sampleToModel = new Map([["s1", "modelA"], ["s2", "modelB"]]);
+    const judgeWeights = new Map<string, number>();
+    const judgments = [
+      { sampleA: "s1", sampleB: "s2", winner: "A" as const, judgeModel: "unknownJudge" },
+    ];
+
+    const games = judgmentsToGames(judgments, sampleToModel, judgeWeights);
+    expect(games).toHaveLength(1);
+    expect(games[0].weight).toBe(1.0);
+  });
+
+  it("skips self-comparisons with weights", () => {
+    const sampleToModel = new Map([["s1", "modelA"], ["s2", "modelA"]]);
+    const judgeWeights = new Map([["judge1", 1.5]]);
+    const judgments = [
+      { sampleA: "s1", sampleB: "s2", winner: "A" as const, judgeModel: "judge1" },
+    ];
+
+    const games = judgmentsToGames(judgments, sampleToModel, judgeWeights);
+    expect(games).toHaveLength(0);
+  });
+});
+
+describe("improvementJudgmentsToGames with judge weights", () => {
+  it("applies judge weights to improvement games", () => {
+    const sampleToFeedbackModel = new Map([["rev1", "feedbackA"], ["rev2", "feedbackB"]]);
+    const judgeWeights = new Map([["judge1", 1.8]]);
+    const judgments = [
+      { sampleA: "orig1", sampleB: "rev1", winner: "B" as const, promptId: "p1", judgeModel: "judge1" },
+      { sampleA: "orig1", sampleB: "rev2", winner: "A" as const, promptId: "p1", judgeModel: "judge1" },
+    ];
+
+    const games = improvementJudgmentsToGames(judgments, sampleToFeedbackModel, judgeWeights);
+    expect(games).toHaveLength(1);
+    expect(games[0].weight).toBe(1.8);
+    // feedbackA improved (B won), feedbackB didn't -> feedbackA wins
+    expect(games[0].playerWhite).toBe("feedbackA");
+    expect(games[0].result).toBe(1.0);
+  });
+});
+
 // ── Helpers ─────────────────────────────────────────
 
 function makeJudgment(
