@@ -9,6 +9,8 @@ interface JudgmentLabels {
   labelA: string;
   labelB: string;
   winnerLabel: string;
+  outputIdxA: number | null;
+  outputIdxB: number | null;
 }
 
 export function buildJudgmentLabel(
@@ -17,6 +19,10 @@ export function buildJudgmentLabel(
 ): JudgmentLabels {
   const sA = sampleMap.get(j.sampleA);
   const sB = sampleMap.get(j.sampleB);
+  const outputIdxA = sA?.outputIndex ?? null;
+  const outputIdxB = sB?.outputIndex ?? null;
+  const defaultWinnerLabel =
+    j.winner === "tie" ? "Tie" : (j.winner === "A" ? sA?.model : sB?.model) ?? "?";
 
   if (j.stage === "improvement") {
     // One sample is initial, one is revised (same writer)
@@ -37,8 +43,8 @@ export function buildJudgmentLabel(
     }
 
     return aIsOriginal
-      ? { labelA: origLabel, labelB: revLabel, winnerLabel }
-      : { labelA: revLabel, labelB: origLabel, winnerLabel };
+      ? { labelA: origLabel, labelB: revLabel, winnerLabel, outputIdxA, outputIdxB }
+      : { labelA: revLabel, labelB: origLabel, winnerLabel, outputIdxA: outputIdxB, outputIdxB: outputIdxA };
   }
 
   if (j.stage === "revised") {
@@ -47,12 +53,9 @@ export function buildJudgmentLabel(
     return {
       labelA: `${sA?.model ?? "?"}${fbA}`,
       labelB: `${sB?.model ?? "?"}${fbB}`,
-      winnerLabel:
-        j.winner === "tie"
-          ? "Tie"
-          : j.winner === "A"
-            ? sA?.model ?? "?"
-            : sB?.model ?? "?",
+      winnerLabel: defaultWinnerLabel,
+      outputIdxA,
+      outputIdxB,
     };
   }
 
@@ -60,12 +63,9 @@ export function buildJudgmentLabel(
   return {
     labelA: sA?.model ?? "?",
     labelB: sB?.model ?? "?",
-    winnerLabel:
-      j.winner === "tie"
-        ? "Tie"
-        : j.winner === "A"
-          ? sA?.model ?? "?"
-          : sB?.model ?? "?",
+    winnerLabel: defaultWinnerLabel,
+    outputIdxA,
+    outputIdxB,
   };
 }
 
@@ -164,6 +164,32 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
   // Track indexed pairs: [manifestIndex, judgment]
   // so we can look up reasoning by position later
   const indexed: Array<[number, JudgmentMeta]> = judgments.map((j, i) => [i, j]);
+
+  const multiOutput = manifest.config.outputsPerModel > 1;
+
+  function buildMatchupLink(
+    sampleId: string,
+    label: string,
+    side: "side-a" | "side-b",
+    outputIdx: number | null,
+  ): HTMLElement {
+    const idxEl = multiOutput && outputIdx != null
+      ? el("span", { className: "judgment-output-idx" }, ` #${outputIdx + 1}`)
+      : null;
+    return el(
+      "a",
+      {
+        href: "#",
+        className: `judgment-sample-link ${side}`,
+        onClick: (e: Event) => {
+          e.preventDefault();
+          scrollToSample(sampleId, manifest);
+        },
+      },
+      el("span", { className: "judgment-model-name" }, label),
+      idxEl,
+    );
+  }
 
   const rerender = (): void => {
     let filtered = indexed;
@@ -344,37 +370,17 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
 
     for (const [manifestIdx, j] of pageItems) {
       const prompt = allPrompts.find((p) => p.id === j.promptId);
-      const { labelA, labelB, winnerLabel } = buildJudgmentLabel(j, sampleMap);
+      const { labelA, labelB, winnerLabel, outputIdxA, outputIdxB } =
+        buildJudgmentLabel(j, sampleMap);
       const winnerClass =
         j.winner === "A" ? "a" : j.winner === "B" ? "b" : "tie";
 
-      const linkA = el(
-        "a",
-        {
-          href: "#",
-          className: "judgment-sample-link",
-          onClick: (e: Event) => {
-            e.preventDefault();
-            scrollToSample(j.sampleA, manifest);
-          },
-        },
-        labelA,
-      );
+      const linkA = buildMatchupLink(j.sampleA, labelA, "side-a", outputIdxA);
+      const linkB = buildMatchupLink(j.sampleB, labelB, "side-b", outputIdxB);
 
-      const linkB = el(
-        "a",
-        {
-          href: "#",
-          className: "judgment-sample-link",
-          onClick: (e: Event) => {
-            e.preventDefault();
-            scrollToSample(j.sampleB, manifest);
-          },
-        },
-        labelB,
-      );
-
-      const judgEl = el("div", { className: "judgment" });
+      const winnerBorder =
+        j.winner === "A" ? "winner-a" : j.winner === "B" ? "winner-b" : "";
+      const judgEl = el("div", { className: `judgment ${winnerBorder}`.trim() });
 
       // Line 1: stage, prompt, judge
       judgEl.appendChild(
