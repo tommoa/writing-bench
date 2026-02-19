@@ -32,6 +32,7 @@ import {
 import {
   identifyNeeds,
   isConverged,
+  isModelSettled,
   judgmentKey,
   sampleKey,
   feedbackKey,
@@ -107,6 +108,13 @@ export class BenchmarkRunner {
   private feedbackStore = new Map<string, Feedback>();     // "sourceModel:targetSampleId" → feedback
   private revisionStore = new Map<string, WritingSample>(); // "writer:originalSampleId:feedbackId" → revision
   private completedWork: CompletedWork = emptyCompletedWork();
+
+  // Judgment array dedup — prevents double-adding the same judgment
+  // (e.g. from opportunistic cache probing after the batch already fulfilled it).
+  // Separate from completedWork.judgments: that set uses need-identifier key
+  // format (model labels + prompt + output index) while this uses judgment-level
+  // keys (judge model + sample IDs), checked at push time vs. need-generation time.
+  private addedJudgmentKeys = new Set<string>();
 
   // Inflight dedup — coalesce concurrent requests for the same artifact
   private inflightSamples = new Map<string, Promise<WritingSample | null>>();
@@ -189,19 +197,37 @@ export class BenchmarkRunner {
 
   /**
    * Compute per-model output caps for breadth-first enforcement.
-   * For each model, cap = min(outputsPerModel, minOutputCountAcrossPrompts + 1).
+   * For each model, cap = min(outputsPerModel, minOutputCountAcrossPrompts + growth).
    * This ensures a model writes all prompts at depth N before any at N+1.
-   * Uses the incrementally-maintained sampleCounts map (O(M×P) scan, no inner loop).
+   * Growth (+1) is only allowed when the model's writing position is unsettled —
+   * its CI overlaps a neighbor or hasn't met the convergence threshold. Settled
+   * models stay at their current cached depth: capFor() controls the output-index
+   * range at every cascade level, so this gates the single growth driver.
    */
   private computeModelOutputCaps(): Map<string, number> {
     const caps = new Map<string, number>();
+    const convergence = this.config.convergence;
     for (const model of this.config.models) {
       let minCount = Infinity;
       for (const prompt of this.config.prompts) {
         const count = this.sampleCounts.get(`${model.label}:${prompt.id}`) ?? 0;
         if (count < minCount) minCount = count;
       }
-      caps.set(model.label, Math.min(this.config.outputsPerModel, minCount + 1));
+
+      // A model is settled when it has enough games AND its CI doesn't
+      // overlap any neighbor (or meets the CI threshold in threshold mode).
+      const r = this.writingWhr.ratings.find((r) => r.model === model.label);
+      const settled = r && isModelSettled(r, this.writingWhr.ratings, convergence);
+
+      // Floor at 1: with --skip-seeding, sampleCounts is lazily populated
+      // so minCount can be 0 even after the model has been used at some
+      // prompts.  Without the floor, settled + minCount=0 → cap=0, which
+      // blocks ALL dimensions (capFor returns 0 → the output-index loop
+      // never runs) — stalling feedback/revised convergence.
+      caps.set(model.label, Math.max(1, Math.min(
+        this.config.outputsPerModel,
+        minCount + (settled ? 0 : 1),
+      )));
     }
     return caps;
   }
@@ -634,6 +660,9 @@ export class BenchmarkRunner {
           this.cacheStats.feedback.savedCost += cached.cost.total;
           this.allFeedback.push(feedback);
           this.feedbackStore.set(storeKey, feedback);
+          this.completedWork.existingFeedback.add(
+            feedbackKey(sourceModel.label, targetSample.model, prompt.id, targetSample.outputIndex),
+          );
           this.opsDone++;
           this.emit({ type: "feedbackComplete", data: feedback });
           return feedback;
@@ -670,6 +699,9 @@ export class BenchmarkRunner {
         this.cacheStats.feedback.fresh++;
         this.allFeedback.push(feedback);
         this.feedbackStore.set(storeKey, feedback);
+        this.completedWork.existingFeedback.add(
+          feedbackKey(sourceModel.label, targetSample.model, prompt.id, targetSample.outputIndex),
+        );
         this.opsDone++;
         this.emit({ type: "feedbackComplete", data: feedback });
         return feedback;
@@ -722,6 +754,9 @@ export class BenchmarkRunner {
           this.cacheStats.revisions.savedCost += cached.cost.total;
           this.revisedSamples.push(revised);
           this.revisionStore.set(storeKey, revised);
+          this.completedWork.existingRevisions.add(
+            revisionKey(writerCfg.label, feedback.sourceModel, prompt.id, original.outputIndex),
+          );
           this.opsDone++;
           this.emit({ type: "sampleComplete", data: revised });
           return revised;
@@ -759,6 +794,9 @@ export class BenchmarkRunner {
         this.cacheStats.revisions.fresh++;
         this.revisedSamples.push(revised);
         this.revisionStore.set(storeKey, revised);
+        this.completedWork.existingRevisions.add(
+          revisionKey(writerCfg.label, feedback.sourceModel, prompt.id, original.outputIndex),
+        );
         this.opsDone++;
         this.emit({ type: "sampleComplete", data: revised });
         return revised;
@@ -858,9 +896,111 @@ export class BenchmarkRunner {
   }
 
   private addJudgment(judgment: PairwiseJudgment): void {
+    const dk = `${judgment.judgeModel}:${judgment.stage}:${judgment.sampleA}:${judgment.sampleB}`;
+    if (this.addedJudgmentKeys.has(dk)) return;
+    this.addedJudgmentKeys.add(dk);
     if (judgment.stage === "initial") this.initialJudgments.push(judgment);
     else if (judgment.stage === "revised") this.revisedJudgments.push(judgment);
     else if (judgment.stage === "improvement") this.improvementJudgments.push(judgment);
+  }
+
+  // ── Judgment Cache Discovery ─────────────────────────
+
+  /**
+   * Probe the judgment cache for ALL judges × ALL sample pairs.
+   * Uses initialSamples and revisedSamples arrays (populated by
+   * ensureSample/ensureRevision in both seeding and adaptive paths).
+   * Each cache hit increments opsDone via ensureJudgment.
+   * completedWork.judgments.has(jkey) skips already-known judgments.
+   */
+  private async seedJudgmentsFromArrays(): Promise<void> {
+    const tasks: Promise<unknown>[] = [];
+
+    // Initial judgments
+    for (const prompt of this.config.prompts) {
+      const promptSamples = this.initialSamples.filter((s) => s.promptId === prompt.id);
+      for (let i = 0; i < promptSamples.length; i++) {
+        for (let j = i + 1; j < promptSamples.length; j++) {
+          if (promptSamples[i].model === promptSamples[j].model) continue;
+          for (const judge of this.judgeModels) {
+            const jkey = judgmentKey("initial",
+              promptSamples[i].model, promptSamples[j].model,
+              prompt.id, judge.label,
+              promptSamples[i].outputIndex, promptSamples[j].outputIndex);
+            if (this.completedWork.judgments.has(jkey)) continue;
+
+            tasks.push(
+              this.ensureJudgment(
+                judge, prompt, promptSamples[i], promptSamples[j], "initial", true,
+              ).then((result) => {
+                if (result) this.completedWork.judgments.add(jkey);
+              }),
+            );
+          }
+        }
+      }
+    }
+
+    // Improvement judgments (revision vs original)
+    const samplesById = new Map(this.initialSamples.map((s) => [s.id, s]));
+    for (const revised of [...this.revisedSamples]) {
+      if (!revised.originalSampleId) continue;
+      const original = samplesById.get(revised.originalSampleId);
+      if (!original) continue;
+      const prompt = this.promptMap.get(revised.promptId)!;
+
+      for (const judge of this.judgeModels) {
+        const jkey = judgmentKey("improvement",
+          revised.model, revised.feedbackModel ?? "",
+          prompt.id, judge.label, original.outputIndex);
+        if (this.completedWork.judgments.has(jkey)) continue;
+
+        tasks.push(
+          this.ensureJudgment(
+            judge, prompt, original, revised, "improvement", true,
+          ).then((result) => {
+            if (result) this.completedWork.judgments.add(jkey);
+          }),
+        );
+      }
+    }
+
+    // Revised judgments (within feedback-source groups)
+    for (const prompt of this.config.prompts) {
+      const promptRevisions = this.revisedSamples.filter((s) => s.promptId === prompt.id);
+      const byFeedback = new Map<string, WritingSample[]>();
+      for (const rev of promptRevisions) {
+        const key = rev.feedbackModel ?? "";
+        const group = byFeedback.get(key) ?? [];
+        group.push(rev);
+        byFeedback.set(key, group);
+      }
+
+      for (const [, group] of byFeedback) {
+        for (let i = 0; i < group.length; i++) {
+          for (let j = i + 1; j < group.length; j++) {
+            if (group[i].model === group[j].model) continue;
+            for (const judge of this.judgeModels) {
+              const jkey = judgmentKey("revised",
+                group[i].model, group[j].model,
+                `${prompt.id}:${group[i].feedbackModel}`, judge.label,
+                group[i].outputIndex, group[j].outputIndex);
+              if (this.completedWork.judgments.has(jkey)) continue;
+
+              tasks.push(
+                this.ensureJudgment(
+                  judge, prompt, group[i], group[j], "revised", true,
+                ).then((result) => {
+                  if (result) this.completedWork.judgments.add(jkey);
+                }),
+              );
+            }
+          }
+        }
+      }
+    }
+
+    if (tasks.length > 0) await Promise.allSettled(tasks);
   }
 
   // ── Phase 1: Seed from Cache ──────────────────────
@@ -930,94 +1070,8 @@ export class BenchmarkRunner {
       }
       await Promise.allSettled(layer3Tasks);
 
-      // Layer 4: Load all cached judgments (all three judgment types in parallel)
-      const layer4Tasks: Promise<unknown>[] = [];
-
-      // Initial judgments
-      for (const prompt of prompts) {
-        const promptSamples = this.initialSamples.filter((s) => s.promptId === prompt.id);
-        for (let i = 0; i < promptSamples.length; i++) {
-          for (let j = i + 1; j < promptSamples.length; j++) {
-            if (promptSamples[i].model === promptSamples[j].model) continue;
-            for (const judge of this.judgeModels) {
-              const jkey = judgmentKey("initial",
-                promptSamples[i].model, promptSamples[j].model,
-                prompt.id, judge.label,
-                promptSamples[i].outputIndex, promptSamples[j].outputIndex);
-              if (this.completedWork.judgments.has(jkey)) continue;
-
-              layer4Tasks.push(
-                this.ensureJudgment(
-                  judge, prompt, promptSamples[i], promptSamples[j], "initial", true,
-                ).then((result) => {
-                  if (result) this.completedWork.judgments.add(jkey);
-                }),
-              );
-            }
-          }
-        }
-      }
-
-      // Improvement judgments (revision vs original)
-      const samplesById = new Map(this.initialSamples.map((s) => [s.id, s]));
-      for (const revised of [...this.revisedSamples]) {
-        if (!revised.originalSampleId) continue;
-        const original = samplesById.get(revised.originalSampleId);
-        if (!original) continue;
-        const prompt = this.promptMap.get(revised.promptId)!;
-
-        for (const judge of this.judgeModels) {
-          const jkey = judgmentKey("improvement",
-            revised.model, revised.feedbackModel ?? "",
-            prompt.id, judge.label, original.outputIndex);
-          if (this.completedWork.judgments.has(jkey)) continue;
-
-          layer4Tasks.push(
-            this.ensureJudgment(
-              judge, prompt, original, revised, "improvement", true,
-            ).then((result) => {
-              if (result) this.completedWork.judgments.add(jkey);
-            }),
-          );
-        }
-      }
-
-      // Revised judgments (within feedback-source groups)
-      for (const prompt of prompts) {
-        const promptRevisions = this.revisedSamples.filter((s) => s.promptId === prompt.id);
-        const byFeedback = new Map<string, WritingSample[]>();
-        for (const rev of promptRevisions) {
-          const key = rev.feedbackModel ?? "";
-          const group = byFeedback.get(key) ?? [];
-          group.push(rev);
-          byFeedback.set(key, group);
-        }
-
-        for (const [, group] of byFeedback) {
-          for (let i = 0; i < group.length; i++) {
-            for (let j = i + 1; j < group.length; j++) {
-              if (group[i].model === group[j].model) continue;
-              for (const judge of this.judgeModels) {
-                const jkey = judgmentKey("revised",
-                  group[i].model, group[j].model,
-                  `${prompt.id}:${group[i].feedbackModel}`, judge.label,
-                  group[i].outputIndex, group[j].outputIndex);
-                if (this.completedWork.judgments.has(jkey)) continue;
-
-                layer4Tasks.push(
-                  this.ensureJudgment(
-                    judge, prompt, group[i], group[j], "revised", true,
-                  ).then((result) => {
-                    if (result) this.completedWork.judgments.add(jkey);
-                  }),
-                );
-              }
-            }
-          }
-        }
-      }
-
-      await Promise.allSettled(layer4Tasks);
+      // Layer 4: Load all cached judgments
+      await this.seedJudgmentsFromArrays();
     } catch {
       // Cache read failure — continue with whatever was loaded
     }
@@ -1049,7 +1103,10 @@ export class BenchmarkRunner {
    * identically, so they are selected together unless the per-pair cap
    * truncates them — which is unlikely given the generous cap formula.
    */
-  private async fulfillNeed(need: Need, tripleResults: Map<string, boolean>): Promise<void> {
+  private async fulfillNeed(
+    need: Need,
+    tripleResults: Map<string, boolean>,
+  ): Promise<void> {
     this.currentNeedDescription = formatNeedDescription(need, this.currentRatingMap);
     const prompt = this.promptMap.get(need.promptId)!;
     const cacheOnly = this.config.cacheOnly;
@@ -1287,15 +1344,26 @@ export class BenchmarkRunner {
           if (!hadHit) this.completedWork.missingJudgments.add(key);
         }
 
+        // Discover cached judgments for ALL pairs in the stores — not
+        // just pairs from this batch. On the first run after stores are
+        // populated, this finds the bulk of cached judgments. On
+        // subsequent runs, completedWork.judgments.has() skips known
+        // judgments, so only new pairs from deeper depths are probed.
+        const opsBeforeProbe = this.opsDone;
+        await this.seedJudgmentsFromArrays();
+
         const completedAfter = completedWorkSize(this.completedWork);
 
         // Only count productive rounds (with actual ops) toward maxRounds.
         // Cache-miss-only rounds are free — just pruning the candidate space.
+        // Include ops from both batch fulfillment and opportunistic discovery.
         if (this.opsDone > opsBefore) {
           this.judgingRound++;
           this.recomputeJudgeQuality();
           this.recomputeRatings();
-          this.emitProgress(`Round ${this.judgingRound} complete`);
+          const probed = this.opsDone - opsBeforeProbe;
+          const suffix = probed > 0 ? ` (${probed} discovered from cache)` : "";
+          this.emitProgress(`Round ${this.judgingRound} complete${suffix}`);
         }
 
         // Stall: no new ops AND no new discoveries (missing artifact sets

@@ -7,6 +7,9 @@ import {
   emptyCompletedWork,
   formatNeedDescription,
   formatBatchSummary,
+  uncachedSteps,
+  feedbackKey,
+  revisionKey,
 } from "./need-identifier.js";
 import type { Need, CompletedWork } from "./need-identifier.js";
 import type { WhrRating } from "./whr.js";
@@ -153,14 +156,29 @@ describe("identifyNeeds", () => {
       makeWhrRating("modelA", 1500, 200, 3),
       makeWhrRating("modelB", 1500, 200, 3),
     ];
-    // With high revised weight, revised needs should score closer to initial
+    // With high revised weight, revised needs should score closer to initial.
+    // Provide fully-cached cascade so the cost divisor is 1 (isolating weight scaling).
     const highRevisedConfig: ConvergenceConfig = {
       ...DEFAULT_CONVERGENCE,
       revisedWeight: 0.9,
     };
+    const cachedWork = workWith({
+      existingFeedback: new Set([
+        feedbackKey("modelA", "modelA", "p1", 0),
+        feedbackKey("modelA", "modelB", "p1", 0),
+        feedbackKey("modelB", "modelA", "p1", 0),
+        feedbackKey("modelB", "modelB", "p1", 0),
+      ]),
+      existingRevisions: new Set([
+        revisionKey("modelA", "modelA", "p1", 0),
+        revisionKey("modelA", "modelB", "p1", 0),
+        revisionKey("modelB", "modelA", "p1", 0),
+        revisionKey("modelB", "modelB", "p1", 0),
+      ]),
+    });
     const needs = identifyNeeds(
       wideRatings, wideRatings, wideRatings,
-      workWith(), twoModels(), oneJudge(), onePrompt(),
+      cachedWork, twoModels(), oneJudge(), onePrompt(),
       highRevisedConfig, 20, 1,
     );
     const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
@@ -168,8 +186,8 @@ describe("identifyNeeds", () => {
 
     expect(initialNeeds.length).toBeGreaterThan(0);
     expect(revisedNeeds.length).toBeGreaterThan(0);
-    // With revisedWeight=0.9 (close to initial's writingWeight 1.0),
-    // revised scores should be much closer to initial than with default 0.4
+    // With revisedWeight=0.9 (close to initial's writingWeight 1.0) and
+    // cost=1 (fully cached), revised scores should be close to initial.
     const ratio = revisedNeeds[0].score / initialNeeds[0].score;
     expect(ratio).toBeGreaterThan(0.5);
   });
@@ -1387,5 +1405,244 @@ describe("identifyNeeds with judge quality", () => {
     // Single judge should NOT be pruned even though weight is below threshold
     expect(needs.length).toBeGreaterThan(0);
     expect(needs[0].judgeModel.label).toBe("onlyJudge");
+  });
+});
+
+// ── uncachedSteps Tests ─────────────────────────────
+
+describe("uncachedSteps", () => {
+  it("returns 2 when neither feedback nor revision is cached", () => {
+    const work = workWith();
+    expect(uncachedSteps(work, "writer", "fbModel", "p1", 0)).toBe(2);
+  });
+
+  it("returns 1 when only feedback is cached", () => {
+    const work = workWith({
+      existingFeedback: new Set([feedbackKey("fbModel", "writer", "p1", 0)]),
+    });
+    expect(uncachedSteps(work, "writer", "fbModel", "p1", 0)).toBe(1);
+  });
+
+  it("returns 1 when only revision is cached", () => {
+    const work = workWith({
+      existingRevisions: new Set([revisionKey("writer", "fbModel", "p1", 0)]),
+    });
+    expect(uncachedSteps(work, "writer", "fbModel", "p1", 0)).toBe(1);
+  });
+
+  it("returns 0 when both feedback and revision are cached", () => {
+    const work = workWith({
+      existingFeedback: new Set([feedbackKey("fbModel", "writer", "p1", 0)]),
+      existingRevisions: new Set([revisionKey("writer", "fbModel", "p1", 0)]),
+    });
+    expect(uncachedSteps(work, "writer", "fbModel", "p1", 0)).toBe(0);
+  });
+
+  it("does not match different output indices", () => {
+    const work = workWith({
+      existingFeedback: new Set([feedbackKey("fbModel", "writer", "p1", 0)]),
+      existingRevisions: new Set([revisionKey("writer", "fbModel", "p1", 0)]),
+    });
+    // Asking about outputIdx=1, not 0
+    expect(uncachedSteps(work, "writer", "fbModel", "p1", 1)).toBe(2);
+  });
+
+  it("does not match different prompt ids", () => {
+    const work = workWith({
+      existingFeedback: new Set([feedbackKey("fbModel", "writer", "p1", 0)]),
+      existingRevisions: new Set([revisionKey("writer", "fbModel", "p1", 0)]),
+    });
+    expect(uncachedSteps(work, "writer", "fbModel", "p2", 0)).toBe(2);
+  });
+});
+
+// ── Cost-Aware Scoring Tests ────────────────────────
+
+describe("cost-aware scoring", () => {
+  it("improvement needs score higher when cascade is cached", () => {
+    // Two feedback models competing. For one side, both feedback and
+    // revision are cached. For the other, neither is cached.
+    // The cached side should score higher (lower cost divisor).
+    const fbRatings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const models = twoModels();
+    const writer = makeModel("writer");
+    const allModels = [writer, ...models];
+
+    // Cache feedback and revision for modelA on writer, but not modelB
+    const work = workWith({
+      existingFeedback: new Set([feedbackKey("modelA", "writer", "p1", 0)]),
+      existingRevisions: new Set([revisionKey("writer", "modelA", "p1", 0)]),
+    });
+
+    const needs = identifyNeeds(
+      convergedRatings(3), convergedRatings(3), fbRatings,
+      work, allModels, oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+
+    // Find improvement needs for the same writer/prompt
+    const impNeeds = needs.filter(
+      (n): n is Extract<Need, { type: "improvement_judgment" }> =>
+        n.type === "improvement_judgment" && n.writer === "writer",
+    );
+
+    const cachedSide = impNeeds.find((n) => n.feedbackModel === "modelA");
+    const uncachedSide = impNeeds.find((n) => n.feedbackModel === "modelB");
+
+    expect(cachedSide).toBeDefined();
+    expect(uncachedSide).toBeDefined();
+    // Cached side: cost divisor = 1+0 = 1. Uncached side: cost divisor = 1+2 = 3.
+    // score = gain/cost, so cached score is 3x higher.
+    expect(cachedSide!.score).toBeGreaterThan(uncachedSide!.score);
+  });
+
+  it("improvement needs with partial cache score between full-cache and no-cache", () => {
+    const fbRatings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const writer = makeModel("writer");
+    const allModels = [writer, ...twoModels()];
+
+    // modelA has feedback cached but not revision (partial)
+    // modelB has nothing cached
+    const work = workWith({
+      existingFeedback: new Set([feedbackKey("modelA", "writer", "p1", 0)]),
+    });
+
+    const needs = identifyNeeds(
+      convergedRatings(3), convergedRatings(3), fbRatings,
+      work, allModels, oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+
+    const impNeeds = needs.filter(
+      (n): n is Extract<Need, { type: "improvement_judgment" }> =>
+        n.type === "improvement_judgment" && n.writer === "writer",
+    );
+
+    const partialSide = impNeeds.find((n) => n.feedbackModel === "modelA");
+    const uncachedSide = impNeeds.find((n) => n.feedbackModel === "modelB");
+
+    expect(partialSide).toBeDefined();
+    expect(uncachedSide).toBeDefined();
+    // Partial: cost = 1+1 = 2. Uncached: cost = 1+2 = 3.
+    // Partial should score higher than uncached.
+    expect(partialSide!.score).toBeGreaterThan(uncachedSide!.score);
+  });
+
+  it("revised needs score higher when both sides' cascades are cached", () => {
+    // With 2 models (modelA, modelB), the revised pair is (modelA, modelB).
+    // fbModel iterates over both: modelA and modelB.
+    // Cache cascade for fbModel=modelA, leave fbModel=modelB uncached.
+    // Compare scores within the same identifyNeeds call.
+    const revRatings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+
+    const work = workWith({
+      existingFeedback: new Set([
+        feedbackKey("modelA", "modelA", "p1", 0),
+        feedbackKey("modelA", "modelB", "p1", 0),
+      ]),
+      existingRevisions: new Set([
+        revisionKey("modelA", "modelA", "p1", 0),
+        revisionKey("modelB", "modelA", "p1", 0),
+      ]),
+    });
+
+    const needs = identifyNeeds(
+      convergedRatings(2), revRatings, convergedRatings(2),
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+
+    const revisedNeeds = needs.filter(
+      (n): n is Extract<Need, { type: "revised_judgment" }> =>
+        n.type === "revised_judgment",
+    );
+
+    const cachedFb = revisedNeeds.find((n) => n.feedbackModel === "modelA");
+    const uncachedFb = revisedNeeds.find((n) => n.feedbackModel === "modelB");
+
+    expect(cachedFb).toBeDefined();
+    expect(uncachedFb).toBeDefined();
+    // Cached: cost = 1+0+0 = 1. Uncached: cost = 1+2+2 = 5.
+    // Same pair and gain, so score ratio = 5.
+    expect(cachedFb!.score).toBeGreaterThan(uncachedFb!.score);
+    const ratio = cachedFb!.score / uncachedFb!.score;
+    expect(ratio).toBeCloseTo(5, 0);
+  });
+
+  it("initial judgments are unaffected by cascade cost (no intermediates)", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+
+    // Even with cached feedback/revision, initial judgment scores should
+    // be the same since they don't go through the cascade.
+    const withCache = workWith({
+      existingFeedback: new Set([feedbackKey("modelA", "modelB", "p1", 0)]),
+      existingRevisions: new Set([revisionKey("modelB", "modelA", "p1", 0)]),
+    });
+
+    const needsWithCache = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      withCache, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    const needsWithout = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+
+    const initialWithCache = needsWithCache.filter((n) => n.type === "initial_judgment");
+    const initialWithout = needsWithout.filter((n) => n.type === "initial_judgment");
+
+    expect(initialWithCache.length).toBe(initialWithout.length);
+    expect(initialWithCache[0].score).toBe(initialWithout[0].score);
+  });
+
+  it("improvement cost uses 1 for broken sides (not uncachedSteps)", () => {
+    // When one side is broken (missingSample/Feedback/Revision), the code
+    // sets cost=1 for that side. The other side still gets its real cost.
+    // Focus on the feedback pair (modelA vs modelB): side A is broken,
+    // side B is fully cached. Only the modelB side should generate needs.
+    const fbRatings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+
+    // Side A is broken (missing feedback from modelA on modelA's own writing)
+    // Side B is fully cached
+    const work = workWith({
+      missingFeedback: new Set([feedbackKey("modelA", "modelA", "p1", 0)]),
+      existingFeedback: new Set([feedbackKey("modelB", "modelA", "p1", 0)]),
+      existingRevisions: new Set([revisionKey("modelA", "modelB", "p1", 0)]),
+    });
+
+    const needs = identifyNeeds(
+      convergedRatings(2), convergedRatings(2), fbRatings,
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+
+    // For the (modelA vs modelB) feedback pair with writer=modelA:
+    // - feedbackModel=modelA side is broken (missing feedback)
+    // - feedbackModel=modelB side should still have needs
+    const impNeedsWriterA = needs.filter(
+      (n): n is Extract<Need, { type: "improvement_judgment" }> =>
+        n.type === "improvement_judgment" && n.writer === "modelA",
+    );
+    const brokenSide = impNeedsWriterA.filter((n) => n.feedbackModel === "modelA");
+    const goodSide = impNeedsWriterA.filter((n) => n.feedbackModel === "modelB");
+    expect(brokenSide).toHaveLength(0);
+    expect(goodSide.length).toBeGreaterThan(0);
   });
 });

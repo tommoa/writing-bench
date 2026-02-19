@@ -53,6 +53,10 @@ export interface CompletedWork {
   missingRevisions: Set<string>;
   /** Missing judgments: "modelA:modelB:promptId:idxA:idxB" (models sorted). All judges missed. */
   missingJudgments: Set<string>;
+  /** Existing feedback artifacts (feedbackKey format). Used for cascade cost estimation. */
+  existingFeedback: Set<string>;
+  /** Existing revision artifacts (revisionKey format). Used for cascade cost estimation. */
+  existingRevisions: Set<string>;
 }
 
 /** Create an empty CompletedWork with all sets initialized. */
@@ -63,6 +67,8 @@ export function emptyCompletedWork(): CompletedWork {
     missingFeedback: new Set(),
     missingRevisions: new Set(),
     missingJudgments: new Set(),
+    existingFeedback: new Set(),
+    existingRevisions: new Set(),
   };
 }
 
@@ -102,6 +108,20 @@ export function formatConvergenceDescription(ciThreshold: number): string {
  */
 function ciMeetsThreshold(r: WhrRating, convergence: ConvergenceConfig): boolean {
   return convergence.ciThreshold > 0 && r.ci95 <= convergence.ciThreshold;
+}
+
+/**
+ * Check whether a single model's rating is settled within a dimension.
+ * Settled means: enough games AND (CI below threshold OR no overlap with neighbors).
+ * Used by both dimensionConverged (for all models) and output cap gating (per model).
+ */
+export function isModelSettled(
+  r: WhrRating,
+  allRatings: WhrRating[],
+  convergence: ConvergenceConfig,
+): boolean {
+  return r.matchCount >= convergence.minPairsPerModel
+    && (ciMeetsThreshold(r, convergence) || !hasAnyOverlap(r, allRatings));
 }
 
 // ── Formatting ──────────────────────────────────────
@@ -196,7 +216,26 @@ function isCascadeBroken(
     || work.missingRevisions.has(revisionKey(model, fbModel, promptId, outputIdx));
 }
 
-/** Sum of all completed/missing entries for stall detection. */
+/**
+ * Count uncached cascade steps (feedback + revision) for a single
+ * (writer, fbModel, prompt, outputIdx) tuple. Each uncached level is
+ * one additional API call on top of the judgment itself.
+ */
+export function uncachedSteps(
+  work: CompletedWork,
+  writer: string,
+  fbModel: string,
+  promptId: string,
+  outputIdx: number,
+): number {
+  return (work.existingFeedback.has(feedbackKey(fbModel, writer, promptId, outputIdx)) ? 0 : 1)
+    + (work.existingRevisions.has(revisionKey(writer, fbModel, promptId, outputIdx)) ? 0 : 1);
+}
+
+/** Sum of all completed/missing entries for stall detection.
+ *  Excludes existingFeedback/existingRevisions — those track cached
+ *  artifacts for cost estimation, not work-unit progress. Stall
+ *  detection uses opsDone as the primary progress signal. */
 export function completedWorkSize(work: CompletedWork): number {
   return work.judgments.size
     + work.missingSamples.size
@@ -417,6 +456,13 @@ export function identifyNeeds(
               || completedWork.missingJudgments.has(judgmentGroupKey(writer.label, models[j].label, prompt.id, oi, 0));
             if (sideAMissing && sideBMissing) continue;
 
+            // Cascade cost: 1 (judgment) + uncached intermediate steps.
+            // Only computed for non-missing sides (missing sides emit no needs).
+            const costA = sideAMissing ? 0
+              : 1 + uncachedSteps(completedWork, writer.label, models[i].label, prompt.id, oi);
+            const costB = sideBMissing ? 0
+              : 1 + uncachedSteps(completedWork, writer.label, models[j].label, prompt.id, oi);
+
             for (const judge of effectiveJudges) {
               // Emit needs for whichever side is incomplete
               const keyA = judgmentKey("improvement", writer.label, models[i].label, prompt.id, judge.label, oi);
@@ -433,7 +479,7 @@ export function identifyNeeds(
                   againstFeedbackModel: models[j].label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain * judgeWeight / (1 + oi),
+                  score: gain * judgeWeight / (1 + oi) / costA,
                 });
               }
               if (!sideBMissing && !completedWork.judgments.has(keyB)) {
@@ -445,7 +491,7 @@ export function identifyNeeds(
                   againstFeedbackModel: models[i].label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain * judgeWeight / (1 + oi),
+                  score: gain * judgeWeight / (1 + oi) / costB,
                 });
               }
             }
@@ -475,6 +521,11 @@ export function identifyNeeds(
                 || isCascadeBroken(completedWork, models[j].label, fbModel.label, prompt.id, oj)
                 || completedWork.missingJudgments.has(judgmentGroupKey(models[i].label, models[j].label, `${prompt.id}:${fbModel.label}`, oi, oj))) continue;
 
+              // Cascade cost: 1 (judgment) + uncached steps for both sides.
+              const revisedCost = 1
+                + uncachedSteps(completedWork, models[i].label, fbModel.label, prompt.id, oi)
+                + uncachedSteps(completedWork, models[j].label, fbModel.label, prompt.id, oj);
+
               for (const judge of effectiveJudges) {
                 const key = judgmentKey(
                   "revised", models[i].label, models[j].label,
@@ -492,7 +543,7 @@ export function identifyNeeds(
                   feedbackModel: fbModel.label,
                   promptId: prompt.id,
                   judgeModel: judge,
-                  score: gain * judgeWeight / (1 + Math.max(oi, oj)),
+                  score: gain * judgeWeight / (1 + Math.max(oi, oj)) / revisedCost,
                 });
               }
             }
@@ -641,10 +692,7 @@ function dimensionConverged(
   // is absent from WHR output and must not be silently "converged".
   if (ratings.length < modelCount) return false;
   for (const r of ratings) {
-    if (r.matchCount < convergence.minPairsPerModel) return false;
-    if (!ciMeetsThreshold(r, convergence) && hasAnyOverlap(r, ratings)) {
-      return false;
-    }
+    if (!isModelSettled(r, ratings, convergence)) return false;
   }
   return true;
 }
