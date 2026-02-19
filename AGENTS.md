@@ -215,7 +215,7 @@ feedback quality (improvement judgments).
 
 Both per-run and cumulative ratings use WHR (Bayesian BT with CIs).
 Per-run ratings drive the adaptive loop's convergence criterion;
-`--confidence N` sets the CI threshold (default 100 Elo points).
+`--confidence N` sets the CI threshold (default 0 = overlap-based convergence).
 Cumulative ratings (`elo-store.ts`) merge pairwise records across
 runs and recompute WHR from scratch.
 

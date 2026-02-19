@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import type { BenchmarkStage, CacheSavings } from "../types.js";
+import { formatConvergenceTarget } from "../engine/need-identifier.js";
 
 const STAGE_LABELS: Record<BenchmarkStage, string> = {
   initialWriting: "Writing",
@@ -144,7 +145,7 @@ export function StatusBar({
             {`Round ${judgingRound}`}
             {batchSummary ? ` | ${batchSummary}` : ""}
             {maxCi != null ? ` | CI \u00b1${maxCi}` : ""}
-            {ciThreshold != null ? ` \u2192 target \u00b1${ciThreshold}` : ""}
+            {ciThreshold != null ? ` \u2192 target ${formatConvergenceTarget(ciThreshold)}` : ""}
           </Text>
         </Box>
       )}

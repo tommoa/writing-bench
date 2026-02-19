@@ -39,7 +39,7 @@ export type Need =
 
 /** Configuration for adaptive convergence. */
 export interface ConvergenceConfig {
-  /** 95% CI half-width threshold in Elo points. Default: 100. */
+  /** 95% CI half-width threshold in Elo points. 0 = overlap-based convergence. Default: 0. */
   ciThreshold: number;
   /** Maximum number of adaptive rounds. Default: 50. */
   maxRounds: number;
@@ -48,7 +48,7 @@ export interface ConvergenceConfig {
 }
 
 export const DEFAULT_CONVERGENCE: ConvergenceConfig = {
-  ciThreshold: 100,
+  ciThreshold: 0,
   maxRounds: 50,
   minPairsPerModel: 2,
 };
@@ -93,6 +93,29 @@ export function buildRatingMap(
   return map;
 }
 
+// ── Convergence Helpers ─────────────────────────────
+
+/** Format a convergence target for display: "±N" or "no overlap". */
+export function formatConvergenceTarget(ciThreshold: number): string {
+  return ciThreshold > 0 ? `±${ciThreshold}` : "no overlap";
+}
+
+/** Format a full convergence goal description for dry-run / log output. */
+export function formatConvergenceDescription(ciThreshold: number): string {
+  return ciThreshold > 0
+    ? `all 95% CI half-widths are within ${formatConvergenceTarget(ciThreshold)} Elo points`
+    : `no model's CI overlaps any other model's CI`;
+}
+
+/**
+ * Check whether a model's CI is below the convergence threshold.
+ * Always false in overlap-based mode (ciThreshold = 0), where
+ * convergence is decided solely by overlap checks.
+ */
+function ciMeetsThreshold(r: WhrRating, convergence: ConvergenceConfig): boolean {
+  return convergence.ciThreshold > 0 && r.ci95 <= convergence.ciThreshold;
+}
+
 // ── Formatting ──────────────────────────────────────
 
 /** Look up a model's CI half-width from a dimension:label keyed map. */
@@ -102,7 +125,8 @@ function lookupCi(
   model: string,
 ): string {
   const r = map.get(`${dimension}:${model}`);
-  if (!r || !Number.isFinite(r.ci95)) return "±∞";
+  if (!r) return "new";
+  if (!Number.isFinite(r.ci95)) return "±∞";
   return `±${Math.round(r.ci95)}`;
 }
 
@@ -219,26 +243,19 @@ function informationGain(ratingA: WhrRating, ratingB: WhrRating): number {
 
 /**
  * Check whether a model pair is already resolved and needs no further
- * comparisons. A pair is resolved if both models have individually
- * converged (tight CIs with enough games) or their CIs don't overlap
- * (models are already distinguishable).
+ * comparisons. A pair is resolved when both models have enough games
+ * AND either their CIs don't overlap (distinguishable) or both CIs
+ * are individually below the CI threshold.
  */
 function pairResolved(
   a: WhrRating,
   b: WhrRating,
   convergence: ConvergenceConfig,
 ): boolean {
-  const bothConverged = a.ci95 <= convergence.ciThreshold
-    && b.ci95 <= convergence.ciThreshold;
-  if (!bothConverged) return false;
-
-  // Both CIs are tight. Skip if either both models have enough matches
-  // (fully resolved) or the pair doesn't overlap (clearly separated).
-  // Non-overlapping pairs still need converged CIs — WHR uses all games,
-  // so even resolved-pair data helps narrow an unconverged model's CI.
-  const bothHaveEnoughMatches = a.matchCount >= convergence.minPairsPerModel
-    && b.matchCount >= convergence.minPairsPerModel;
-  return bothHaveEnoughMatches || !hasOverlap(a, b);
+  if (a.matchCount < convergence.minPairsPerModel
+    || b.matchCount < convergence.minPairsPerModel) return false;
+  return !hasOverlap(a, b)
+    || (ciMeetsThreshold(a, convergence) && ciMeetsThreshold(b, convergence));
 }
 
 /**
@@ -515,7 +532,7 @@ function dimensionConverged(
   if (ratings.length === 0) return false;
   for (const r of ratings) {
     if (r.matchCount < convergence.minPairsPerModel) return false;
-    if (r.ci95 > convergence.ciThreshold && hasAnyOverlap(r, ratings)) {
+    if (!ciMeetsThreshold(r, convergence) && hasAnyOverlap(r, ratings)) {
       return false;
     }
   }

@@ -574,8 +574,7 @@ describe("information gain scoring", () => {
       workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 1, 1,
     );
-    // Both CIs are below threshold (40 < 50) and both have enough games
-    // so no needs should be generated
+    // |800| > 80 → no overlap, both have enough matches → resolved
     expect(needs).toHaveLength(0);
   });
 });
@@ -675,21 +674,21 @@ describe("identifyNeeds with overlap", () => {
     expect(needs).toHaveLength(0);
   });
 
-  it("keeps non-overlapping pairs when one model has wide CI", () => {
-    // Non-overlapping, but modelA's CI (150) is above the convergence threshold
-    // (100). WHR benefits from all games, so we still generate candidates to
-    // help narrow modelA's CI even though the pair outcome is already clear.
+  it("resolves non-overlapping pairs even when one model has wide CI", () => {
+    // Non-overlapping pairs are always resolved regardless of CI width —
+    // models are distinguishable. WHR is global, so data from other pairs
+    // still helps narrow the wide-CI model.
     const ratings = [
       makeWhrRating("modelA", 1800, 150, 5),
       makeWhrRating("modelB", 1200, 50, 5),
     ];
-    // |1800-1200| = 600 > 200 → no overlap, but modelA CI (150) > threshold (100)
+    // |1800-1200| = 600 > 200 → no overlap → resolved
     const needs = identifyNeeds(
       ratings, convergedRatings(2), convergedRatings(2),
       workWith(), twoModels(), oneJudge(), onePrompt(),
       DEFAULT_CONVERGENCE, 10, 1,
     );
-    expect(needs.length).toBeGreaterThan(0);
+    expect(needs).toHaveLength(0);
   });
 
   it("generates needs for overlapping pairs", () => {
@@ -705,17 +704,16 @@ describe("identifyNeeds with overlap", () => {
     expect(needs.length).toBeGreaterThan(0);
   });
 
-  it("only generates needs for overlapping pairs in 3-model converged scenario", () => {
-    // All three models have CIs below threshold (100) and few matches
-    // (matchCount 1 < minPairsPerModel 2), so bothTight is false but
-    // bothConverged is true. Non-overlapping pairs are skipped.
+  it("only generates needs for overlapping pairs in 3-model scenario", () => {
+    // All three models have enough matches (5 >= minPairsPerModel 2).
+    // Non-overlapping pairs are resolved; only overlapping pairs generate needs.
     const ratings = [
-      makeWhrRating("modelA", 1800, 50, 1),
-      makeWhrRating("modelB", 1500, 50, 1),
-      makeWhrRating("modelC", 1480, 50, 1),
+      makeWhrRating("modelA", 1800, 50, 5),
+      makeWhrRating("modelB", 1500, 50, 5),
+      makeWhrRating("modelC", 1480, 50, 5),
     ];
-    // A-B: |300| > 100 → no overlap, both converged → skip
-    // A-C: |320| > 100 → no overlap, both converged → skip
+    // A-B: |300| > 100 → no overlap → resolved
+    // A-C: |320| > 100 → no overlap → resolved
     // B-C: |20| < 100 → overlap!
     const needs = identifyNeeds(
       ratings, convergedRatings(3), convergedRatings(3),
@@ -731,17 +729,18 @@ describe("identifyNeeds with overlap", () => {
     }
   });
 
-  it("generates needs for non-overlapping pairs when one model is unconverged", () => {
-    // modelB has wide CI (150 > threshold 100), so even non-overlapping pairs
-    // involving modelB generate candidates — WHR uses all games to narrow CIs.
+  it("only generates needs for overlapping pairs regardless of CI width", () => {
+    // In overlap mode (ciThreshold=0), non-overlapping pairs are always
+    // resolved, even if one model has wide CI. Only overlapping pairs
+    // generate needs.
     const ratings = [
       makeWhrRating("modelA", 1800, 50, 10),
       makeWhrRating("modelB", 1500, 150, 5),
       makeWhrRating("modelC", 1480, 50, 5),
     ];
-    // A-B: no overlap, but modelB unconverged → generates needs
-    // A-C: no overlap, both converged → skip
-    // B-C: overlap → generates needs
+    // A-B: |300| > 200 → no overlap → resolved
+    // A-C: |320| > 100 → no overlap → resolved
+    // B-C: |20| < 200 → overlap → generates needs
     const needs = identifyNeeds(
       ratings, convergedRatings(3), convergedRatings(3),
       workWith(), threeModels(), oneJudge(), onePrompt(),
@@ -751,9 +750,9 @@ describe("identifyNeeds with overlap", () => {
     const pairs = new Set(initialNeeds.map((n) =>
       n.type === "initial_judgment" ? [n.modelA, n.modelB].sort().join(":") : "",
     ));
-    expect(pairs.has("modelA:modelB")).toBe(true);  // non-overlapping but modelB unconverged
-    expect(pairs.has("modelB:modelC")).toBe(true);  // overlapping
-    expect(pairs.has("modelA:modelC")).toBe(false);  // non-overlapping, both converged
+    expect(pairs.has("modelA:modelB")).toBe(false);  // non-overlapping → resolved
+    expect(pairs.has("modelB:modelC")).toBe(true);   // overlapping → needs
+    expect(pairs.has("modelA:modelC")).toBe(false);   // non-overlapping → resolved
   });
 
   it("generates needs for Infinity CI models (always overlap)", () => {
@@ -767,6 +766,52 @@ describe("identifyNeeds with overlap", () => {
       DEFAULT_CONVERGENCE, 10, 1,
     );
     expect(needs.length).toBeGreaterThan(0);
+  });
+
+  it("resolves overlapping pairs when both CIs are below threshold (threshold mode)", () => {
+    const thresholdConfig: ConvergenceConfig = { ...DEFAULT_CONVERGENCE, ciThreshold: 100 };
+    const ratings = [
+      makeWhrRating("modelA", 1520, 50, 10),
+      makeWhrRating("modelB", 1480, 50, 10),
+    ];
+    // |40| < 100 → overlap, but both CIs (50) ≤ threshold (100) → resolved
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
+      thresholdConfig, 10, 1,
+    );
+    expect(needs).toHaveLength(0);
+  });
+
+  it("does not resolve overlapping pairs in overlap mode (ciThreshold=0)", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1520, 50, 10),
+      makeWhrRating("modelB", 1480, 50, 10),
+    ];
+    // |40| < 100 → overlap. ciThreshold=0 → can't resolve by threshold
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    expect(needs.length).toBeGreaterThan(0);
+  });
+
+  it("resolves non-overlapping wide-CI pairs with threshold mode", () => {
+    // In threshold mode (ciThreshold > 0), non-overlapping pairs are
+    // still resolved even when one model has CI above threshold.
+    const thresholdConfig: ConvergenceConfig = { ...DEFAULT_CONVERGENCE, ciThreshold: 100 };
+    const ratings = [
+      makeWhrRating("modelA", 1800, 150, 5),
+      makeWhrRating("modelB", 1200, 50, 5),
+    ];
+    // |600| > 200 → no overlap → resolved regardless of CI width
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
+      thresholdConfig, 10, 1,
+    );
+    expect(needs).toHaveLength(0);
   });
 });
 
@@ -853,12 +898,12 @@ describe("formatNeedDescription", () => {
     );
   });
 
-  it("shows ±∞ for models without ratings", () => {
+  it("shows 'new' for models without ratings", () => {
     const need = makeInitialNeed("claude", "gpt-4o");
     const map = new Map<string, WhrRating>();
     // No ratings in the map at all
     expect(formatNeedDescription(need, map)).toBe(
-      "writing: claude vs gpt-4o (±∞ / ±∞)",
+      "writing: claude vs gpt-4o (new / new)",
     );
   });
 
@@ -983,7 +1028,8 @@ function workWith(overrides: Partial<CompletedWork> = {}): CompletedWork {
 }
 
 function convergedRatings(n: number): WhrRating[] {
+  // Space models 200 apart so CIs (±30) never overlap: gap ≥ 200 > 60
   return Array.from({ length: n }, (_, i) =>
-    makeWhrRating(`model${String.fromCharCode(65 + i)}`, 1500, 30, 10)
+    makeWhrRating(`model${String.fromCharCode(65 + i)}`, 1500 + i * 200, 30, 10)
   );
 }

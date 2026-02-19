@@ -20,7 +20,7 @@ Before making any API calls, the runner exhaustively scans the disk cache and lo
 
 ### Phase 2: Adaptive Pull Loop
 
-The system iterates: compute Whole History Rating with confidence intervals → identify the model pair and judgment type whose data would most reduce uncertainty → generate only that work → repeat until all CIs are below a configurable threshold (default $\pm 100$ Elo points).
+The system iterates: compute Whole History Rating with confidence intervals → identify the model pair and judgment type whose data would most reduce uncertainty → generate only that work → repeat until convergence. By default, convergence requires that no model's CI overlaps any other model's CI across all three rating dimensions. Use `--confidence N` to instead converge when all CIs are below $\pm N$ Elo points.
 
 When a judgment is needed, the system cascades through dependencies automatically. For example, requesting an improvement judgment triggers writing the initial sample, generating feedback, and producing the revision if any of those are missing. This ensure-cascade pattern means the system only creates artifacts that are actually needed to reduce rating uncertainty.
 
@@ -106,4 +106,4 @@ Both the leaderboard on the dashboard page (cumulative ratings) and individual r
 - **W / L / T** are raw win, loss, and tie counts from all pairwise matches the model participated in.
 - **Matches** is the total number of pairwise comparisons involving the model (W + L + T). More matches produce more reliable ratings.
 
-> The adaptive runner stops collecting judgments once all model CIs are below the configured threshold (default $\pm 100$ Elo points). Use --confidence to adjust this target.
+> The adaptive runner stops collecting judgments once all models are distinguishable (no CI overlaps). Use `--confidence N` to instead stop when all CIs are below $\pm N$ Elo points.

@@ -16,6 +16,7 @@ import {
   computeWhr,
   whrRatings,
   maxCiHalfWidth,
+  hasOverlap,
   judgmentsToGames,
   improvementJudgmentsToGames,
 } from "./whr.js";
@@ -37,6 +38,7 @@ import {
   formatNeedDescription,
   formatBatchSummary,
   DEFAULT_CONVERGENCE,
+  formatConvergenceTarget,
 } from "./need-identifier.js";
 import type { Need, CompletedWork } from "./need-identifier.js";
 import {
@@ -126,6 +128,10 @@ export class BenchmarkRunner {
   private lastRatingRecompute = 0;
   private maxOutputCount = 0;
   private inflight: Record<string, number> = {};
+  // Cached progress values — recomputed in recomputeRatings() instead
+  // of on every emitProgress call (avoids O(n²) per progress update).
+  private cachedMaxCi = 0;
+  private cachedOverlapProgress = 0;
 
   // Need context for UI
   private currentNeedDescription?: string;
@@ -255,14 +261,8 @@ export class BenchmarkRunner {
     return result;
   }
 
-  // TODO(performance): Cache maxCi as a field in recomputeRatings()
-  // instead of recomputing on every progress update.
   private emitProgress(currentOp: string): void {
-    const maxCi = Math.max(
-      maxCiHalfWidth(this.writingWhr),
-      maxCiHalfWidth(this.revisedWhr),
-      maxCiHalfWidth(this.feedbackWhr),
-    );
+    const maxCi = this.cachedMaxCi;
     const ciThreshold = this.config.ciThreshold ?? DEFAULT_CONVERGENCE.ciThreshold;
 
     const activeStages = (Object.entries(this.inflight)
@@ -274,9 +274,7 @@ export class BenchmarkRunner {
       data: {
         stage: activeStages[0] ?? "initialWriting",
         activeStages,
-        stageProgress: maxCi < Infinity && ciThreshold > 0
-          ? Math.min(1, 1 - (maxCi - ciThreshold) / (maxCi + ciThreshold))
-          : 0,
+        stageProgress: this.computeStageProgress(maxCi, ciThreshold),
         stageDone: this.opsDone,
         currentOp,
         elo: {
@@ -304,6 +302,49 @@ export class BenchmarkRunner {
         batchSummary: this.currentBatchSummary,
       },
     });
+  }
+
+  /**
+   * Compute stage progress as a 0-1 fraction for the current convergence mode.
+   * In CI-threshold mode: ratio of how close maxCi is to the threshold.
+   * In overlap mode: fraction of resolved (non-overlapping) pairs.
+   */
+  private computeStageProgress(maxCi: number, ciThreshold: number): number {
+    if (ciThreshold > 0) {
+      return maxCi < Infinity
+        ? Math.min(1, 1 - (maxCi - ciThreshold) / (maxCi + ciThreshold))
+        : 0;
+    }
+    return this.cachedOverlapProgress;
+  }
+
+  /**
+   * Compute convergence progress for overlap-based mode (ciThreshold = 0).
+   * Returns the fraction of model pairs (across all 3 dimensions) that
+   * are non-overlapping, weighted equally across dimensions.
+   */
+  private computeOverlapProgress(): number {
+    const dims = [this.writingWhr.ratings, this.revisedWhr.ratings, this.feedbackWhr.ratings];
+    const numModels = this.config.models.length;
+    // Expected pairs per dimension if all models have data
+    const expectedPairs = numModels >= 2 ? (numModels * (numModels - 1)) / 2 : 0;
+    let totalPairs = 0;
+    let resolvedPairs = 0;
+    for (const ratings of dims) {
+      if (ratings.length < 2) {
+        // Dimension hasn't populated yet — count expected pairs as unresolved
+        // so progress doesn't spike to 100% before all dimensions have data.
+        totalPairs += expectedPairs;
+        continue;
+      }
+      for (let i = 0; i < ratings.length; i++) {
+        for (let j = i + 1; j < ratings.length; j++) {
+          totalPairs++;
+          if (!hasOverlap(ratings[i], ratings[j])) resolvedPairs++;
+        }
+      }
+    }
+    return totalPairs > 0 ? resolvedPairs / totalPairs : 0;
   }
 
   // ── WHR Recomputation ─────────────────────────────
@@ -334,6 +375,15 @@ export class BenchmarkRunner {
     );
     this.feedbackWhr = computeWhr(feedbackGames);
     this.lastRatingRecompute = Date.now();
+
+    // Update cached progress values so emitProgress doesn't recompute them
+    this.cachedMaxCi = Math.max(
+      maxCiHalfWidth(this.writingWhr),
+      maxCiHalfWidth(this.revisedWhr),
+      maxCiHalfWidth(this.feedbackWhr),
+    );
+    const ciThreshold = this.config.ciThreshold ?? DEFAULT_CONVERGENCE.ciThreshold;
+    this.cachedOverlapProgress = ciThreshold === 0 ? this.computeOverlapProgress() : 0;
   }
 
   /** Throttled recompute: at most once per 100ms, only during the adaptive loop. */
@@ -1100,13 +1150,8 @@ export class BenchmarkRunner {
         this.currentRatingMap = ratingMap;
         this.currentBatchSummary = formatBatchSummary(needs);
 
-        const maxCi = Math.max(
-          maxCiHalfWidth(this.writingWhr),
-          maxCiHalfWidth(this.revisedWhr),
-          maxCiHalfWidth(this.feedbackWhr),
-        );
         this.emitProgress(
-          `Adaptive round ${this.judgingRound + 1}: max CI ±${maxCi === Infinity ? "∞" : maxCi} → target ±${convergence.ciThreshold}`,
+          `Adaptive round ${this.judgingRound + 1}: max CI ±${this.cachedMaxCi === Infinity ? "∞" : this.cachedMaxCi} → target ${formatConvergenceTarget(convergence.ciThreshold)}`,
         );
 
         // Fulfill needs in parallel — errors are recorded, not propagated.

@@ -100,8 +100,8 @@ export interface RunConfig {
   cacheOnly: boolean; // Only use cached data, no API calls in ensure methods
   skipSeeding: boolean; // Skip Phase 1 cache scan; adaptive loop discovers cache lazily
   timestamp: string;
-  /** 95% CI half-width threshold (Elo points). Adaptive loop stops when
-   *  all model CIs are below this. Default: 100. */
+  /** 95% CI half-width threshold (Elo points). 0 = overlap-based
+   *  convergence (stop when no CIs overlap). Default: 0. */
   ciThreshold?: number;
   /** Maximum number of productive adaptive rounds. Default: 50. */
   maxRounds?: number;

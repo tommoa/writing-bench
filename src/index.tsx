@@ -17,6 +17,7 @@ import { parseModelSpec } from "./providers/registry.js";
 import { checkProviderEnv } from "./providers/models.js";
 import { App } from "./ui/App.js";
 import type { BenchmarkEvent, EloRating, PromptConfig, TaskError } from "./types.js";
+import { formatConvergenceTarget, formatConvergenceDescription } from "./engine/need-identifier.js";
 
 /** Convert a CLI model spec ("provider:model") to a cache-safe key. */
 function specToKey(spec: string): string {
@@ -110,13 +111,11 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     if (args.cacheOnly) {
       console.log(`  Mode: cache-only (no API calls)`);
     } else {
-      console.log(`  Convergence target: ±${ciThreshold} Elo points`);
+      console.log(`  Convergence target: ${formatConvergenceTarget(ciThreshold)}`);
       console.log(
         `\n  The adaptive loop will generate outputs and judgments as needed`
       );
-      console.log(
-        `  until all 95% CI half-widths are below ±${ciThreshold} Elo points.`
-      );
+      console.log(`  until ${formatConvergenceDescription(ciThreshold)}.`);
     }
     return;
   }

@@ -462,6 +462,25 @@ describe("estimateRemainingJudgments", () => {
     const withUndef = estimateRemainingJudgments(200, 10, 50, undefined);
     expect(without).toBe(withUndef);
   });
+
+  it("returns null when ciThreshold is 0 and no overlap threshold", () => {
+    // In overlap mode (ciThreshold=0), if overlapFreeThreshold returns null
+    // (can't separate), the estimate is impossible
+    expect(estimateRemainingJudgments(200, 10, 0)).toBeNull();
+    expect(estimateRemainingJudgments(200, 10, 0, null)).toBeNull();
+  });
+
+  it("uses overlap threshold when ciThreshold is 0", () => {
+    // In overlap mode, overlapFreeThreshold provides the effective target
+    const est = estimateRemainingJudgments(200, 10, 0, 80);
+    expect(est).not.toBeNull();
+    expect(est!).toBeGreaterThan(0);
+  });
+
+  it("returns 0 when ciThreshold is 0 and already below overlap threshold", () => {
+    // ci95=50 is below nonOverlapThreshold=80 → already converged
+    expect(estimateRemainingJudgments(50, 10, 0, 80)).toBe(0);
+  });
 });
 
 describe("overlapFreeThreshold", () => {
@@ -476,11 +495,12 @@ describe("overlapFreeThreshold", () => {
     expect(overlapFreeThreshold(a, [a, b])).toBe(Infinity);
   });
 
-  it("returns null when an overlapping neighbor is too close to separate", () => {
+  it("uses gap/2 when neighbor CI is wider than the gap", () => {
     const a = makeRating("A", 1050, 200);
     const b = makeRating("B", 1000, 150);
-    // gap=50, threshold = 50 - 150 = -100 → can't separate
-    expect(overlapFreeThreshold(a, [a, b])).toBeNull();
+    // gap=50, gap - ci_B = 50 - 150 = -100, gap/2 = 25
+    // max(-100, 25) = 25 → assumes both models shrink to split the gap
+    expect(overlapFreeThreshold(a, [a, b])).toBe(25);
   });
 
   it("returns correct threshold for overlapping models", () => {
@@ -495,21 +515,21 @@ describe("overlapFreeThreshold", () => {
     const a = makeRating("A", 1300, 180);
     const b = makeRating("B", 1100, 100);
     const c = makeRating("C", 1150, 120);
-    // A-B: gap=200, threshold=200-100=100
-    // A-C: gap=150, threshold=150-120=30
-    // Tightest is 30
+    // A-B: gap=200, max(200-100, 100) = 100
+    // A-C: gap=150, max(150-120, 75) = 75
+    // Tightest is 75
     const result = overlapFreeThreshold(a, [a, b, c]);
-    expect(result).toBe(30);
+    expect(result).toBe(75);
   });
 
   it("skips models that are already non-overlapping", () => {
     const a = makeRating("A", 1500, 100);
     const b = makeRating("B", 1350, 80);
     const c = makeRating("C", 800, 50);
-    // A-B: gap=150, ci=100+80=180, overlaps → threshold=150-80=70
+    // A-B: gap=150, ci=100+80=180, overlaps → max(150-80, 75) = 75
     // A-C: gap=700, ci=100+50=150, no overlap → skipped
     const result = overlapFreeThreshold(a, [a, b, c]);
-    expect(result).toBe(70);
+    expect(result).toBe(75);
   });
 
   it("returns Infinity for single model", () => {
@@ -517,17 +537,24 @@ describe("overlapFreeThreshold", () => {
     expect(overlapFreeThreshold(a, [a])).toBe(Infinity);
   });
 
-  it("returns null when gap equals neighbor ci exactly", () => {
+  it("uses gap/2 when gap equals neighbor ci exactly", () => {
     const a = makeRating("A", 1200, 100);
     const b = makeRating("B", 1100, 100);
-    // gap=100, threshold = 100 - 100 = 0 → not positive → null
-    expect(overlapFreeThreshold(a, [a, b])).toBeNull();
+    // gap=100, gap - ci_B = 0, gap/2 = 50 → max(0, 50) = 50
+    expect(overlapFreeThreshold(a, [a, b])).toBe(50);
   });
 
   it("returns null when neighbor has Infinity ci", () => {
     const a = makeRating("A", 1500, 100);
     const b = makeRating("B", 1200, Infinity);
-    // Infinity CI always overlaps, and gap - Infinity = -Infinity → null
+    // Infinity CI always overlaps, can't estimate against no-data model
+    expect(overlapFreeThreshold(a, [a, b])).toBeNull();
+  });
+
+  it("returns null when models have identical ratings", () => {
+    const a = makeRating("A", 1500, 100);
+    const b = makeRating("B", 1500, 100);
+    // gap=0, gap/2=0 → can't separate
     expect(overlapFreeThreshold(a, [a, b])).toBeNull();
   });
 });

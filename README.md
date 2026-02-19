@@ -66,7 +66,7 @@ bun run start run -m provider:model [-m ...] [options]
 | `--dry-run` | | | Preview without API calls |
 | `--no-reasoning` | | | Skip reasoning in judgments |
 | `--no-cache` | | | Skip reading cache (still writes) |
-| `--confidence` | | `100` | Stop when 95% CI half-width < N Elo points |
+| `--confidence` | | `0` | CI threshold (0 = stop when no CIs overlap, N > 0 = stop when CIs < ±N) |
 
 ### `results` -- Show previous results
 
@@ -112,8 +112,8 @@ intervals to decide what work to do next:
    judgment type whose data would most reduce rating uncertainty.
 4. **Cascade dependencies** -- If a judgment needs a missing sample,
    feedback, or revision, those are generated automatically.
-5. **Repeat** -- Returns to step 2 until all 95% CI half-widths are
-   below the `--confidence` threshold (default ±100 Elo points).
+5. **Repeat** -- Returns to step 2 until no model's CI overlaps any
+   other (default), or until CIs fall below `--confidence N` if set.
 
 Three rating dimensions must all converge: writing quality (initial
 judgments), revised writing quality (revised judgments), and feedback

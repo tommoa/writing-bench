@@ -539,11 +539,14 @@ export function maxCiHalfWidth(result: WhrResult): number {
 /**
  * Compute the CI half-width at which a model becomes non-overlapping
  * with all other models. This is the tightest constraint across all
- * currently-overlapping neighbors: min(|gap| - neighbor_ci95).
+ * currently-overlapping neighbors.
+ *
+ * For each neighbor, the threshold is max(gap - neighbor_ci95, gap / 2).
+ * The gap / 2 fallback assumes both models' CIs will shrink at roughly
+ * the same rate (splitting the gap evenly).
  *
  * Returns Infinity if already non-overlapping with all models.
- * Returns null if any overlapping neighbor is too close to separate
- * by shrinking this model's CI alone (gap <= neighbor's CI).
+ * Returns null if a neighbor has infinite CI or gap ≈ 0 (identical ratings).
  */
 export function overlapFreeThreshold(
   model: WhrRating,
@@ -553,9 +556,14 @@ export function overlapFreeThreshold(
   for (const other of allRatings) {
     if (other.model === model.model) continue;
     if (!hasOverlap(model, other)) continue;
+    // Can't estimate against a model with no data
+    if (!isFinite(other.ci95)) return null;
     const gap = Math.abs(model.rating - other.rating);
-    const threshold = gap - other.ci95;
-    if (threshold <= 0) return null;
+    // Best case: neighbor's CI is already tight enough that shrinking
+    // ours alone separates (gap - other.ci95). Otherwise, assume both
+    // models' CIs will shrink and split the gap evenly (gap / 2).
+    const threshold = Math.max(gap - other.ci95, gap / 2);
+    if (threshold <= 0) return null;  // gap ≈ 0 → can't separate
     if (threshold < minThreshold) minThreshold = threshold;
   }
   return minThreshold;
@@ -590,6 +598,9 @@ export function estimateRemainingJudgments(
       ? nonOverlapThreshold
       : ciThreshold;
 
+  // No feasible target (e.g. ciThreshold=0 and overlap can't be resolved
+  // by shrinking this model's CI alone) → can't estimate
+  if (effectiveThreshold <= 0) return null;
   // Already converged via whichever path is easier
   if (ci95 <= effectiveThreshold) return 0;
   // No games → can't derive per-game precision empirically

@@ -48,7 +48,7 @@ export function EloTable({
 
   // Check if CI data is present (WhrRating extends EloRating with ci95)
   const hasCi = ratings.some((r) => "ci95" in r && typeof (r as any).ci95 === "number");
-  const showEst = hasCi && ciThreshold != null && ciThreshold > 0;
+  const showEst = hasCi && ciThreshold != null;
 
   // Column widths
   const rankW = 4;
@@ -148,9 +148,10 @@ export function EloTable({
                 }
               >
                 {"  "}
+                {/* Cap at 9999 — larger estimates are unreliable and overflow the column */}
                 {(estRemaining === 0
                   ? "\u2713"
-                  : estRemaining != null
+                  : estRemaining != null && estRemaining <= 9999
                     ? String(estRemaining)
                     : "?"
                 ).padStart(estW)}

@@ -247,9 +247,9 @@ export async function parseArgs(): Promise<Command> {
             })
             .option("confidence", {
               type: "number",
-              default: 100,
+              default: 0,
               describe:
-                "Stop when 95% CI half-width is below this Elo points (default: 100)",
+                "CI convergence threshold in Elo points (0 = stop when no CIs overlap, N > 0 = stop when all CIs < \u00b1N)",
             })
             .option("max-rounds", {
               type: "number",
