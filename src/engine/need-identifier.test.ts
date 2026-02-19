@@ -7,11 +7,11 @@ import {
   emptyCompletedWork,
   formatNeedDescription,
   formatBatchSummary,
-  DEFAULT_CONVERGENCE,
 } from "./need-identifier.js";
-import type { Need, CompletedWork, ConvergenceConfig } from "./need-identifier.js";
+import type { Need, CompletedWork } from "./need-identifier.js";
 import type { WhrRating } from "./whr.js";
-import type { ModelConfig, PromptConfig } from "../types.js";
+import type { ModelConfig, PromptConfig, ConvergenceConfig } from "../types.js";
+import { DEFAULT_CONVERGENCE } from "../types.js";
 
 /** Wrapper that returns just the needs array for test convenience. */
 function identifyNeeds(
@@ -146,6 +146,32 @@ describe("identifyNeeds", () => {
     if (initialNeeds.length > 0 && improvementNeeds.length > 0) {
       expect(initialNeeds[0].score).toBeGreaterThan(improvementNeeds[0].score);
     }
+  });
+
+  it("uses custom cascade weights from convergence config", () => {
+    const wideRatings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    // With high revised weight, revised needs should score closer to initial
+    const highRevisedConfig: ConvergenceConfig = {
+      ...DEFAULT_CONVERGENCE,
+      revisedWeight: 0.9,
+    };
+    const needs = identifyNeeds(
+      wideRatings, wideRatings, wideRatings,
+      workWith(), twoModels(), oneJudge(), onePrompt(),
+      highRevisedConfig, 20, 1,
+    );
+    const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
+    const revisedNeeds = needs.filter((n) => n.type === "revised_judgment");
+
+    expect(initialNeeds.length).toBeGreaterThan(0);
+    expect(revisedNeeds.length).toBeGreaterThan(0);
+    // With revisedWeight=0.9 (close to initial's writingWeight 1.0),
+    // revised scores should be much closer to initial than with default 0.4
+    const ratio = revisedNeeds[0].score / initialNeeds[0].score;
+    expect(ratio).toBeGreaterThan(0.5);
   });
 
   it("excludes already-completed work", () => {

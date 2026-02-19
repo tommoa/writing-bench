@@ -2,6 +2,7 @@ import { existsSync } from "fs";
 import { readFile, writeFile, mkdir, readdir } from "fs/promises";
 import { join } from "path";
 import type { RunResult } from "../types.js";
+import { DEFAULT_CONVERGENCE } from "../types.js";
 
 const DATA_DIR = join(process.cwd(), "data", "runs");
 
@@ -37,8 +38,20 @@ export async function loadRun(runId: string): Promise<RunResult> {
   }
 
   const raw = await readFile(path, "utf-8");
-  return JSON.parse(raw, (_key, value) =>
+  const result = JSON.parse(raw, (_key, value) =>
     value === "__Infinity__" ? Infinity : value) as RunResult;
+
+  // Migrate old RunConfig shape: flat ciThreshold/maxRounds → convergence object
+  if (!result.config.convergence) {
+    const legacy = result.config as unknown as Record<string, unknown>;
+    result.config.convergence = {
+      ...DEFAULT_CONVERGENCE,
+      ...(legacy.ciThreshold != null && { ciThreshold: legacy.ciThreshold as number }),
+      ...(legacy.maxRounds != null && { maxRounds: legacy.maxRounds as number }),
+    };
+  }
+
+  return result;
 }
 
 /**

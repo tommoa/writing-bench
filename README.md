@@ -67,6 +67,9 @@ bun run start run -m provider:model [-m ...] [options]
 | `--no-reasoning` | | | Skip reasoning in judgments |
 | `--no-cache` | | | Skip reading cache (still writes) |
 | `--confidence` | | `0` | CI threshold (0 = stop when no CIs overlap, N > 0 = stop when CIs < ±N) |
+| `--writing-weight` | | `1.0` | Priority weight for writing judgments |
+| `--feedback-weight` | | `0.25` | Priority weight for feedback judgments |
+| `--revised-weight` | | `0.4` | Priority weight for revised judgments |
 
 ### `results` -- Show previous results
 

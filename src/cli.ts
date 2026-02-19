@@ -1,6 +1,7 @@
 import yargs from "yargs";
 import type { Argv, ArgumentsCamelCase } from "yargs";
 import { hideBin } from "yargs/helpers";
+import { DEFAULT_CONVERGENCE } from "./types.js";
 
 export interface RunArgs {
   models?: string[];
@@ -15,6 +16,9 @@ export interface RunArgs {
   noCache: boolean;
   confidence: number;
   maxRounds: number;
+  writingWeight: number;
+  feedbackWeight: number;
+  revisedWeight: number;
   cacheOnly: boolean;
   skipSeeding: boolean;
 }
@@ -247,15 +251,33 @@ export async function parseArgs(): Promise<Command> {
             })
             .option("confidence", {
               type: "number",
-              default: 0,
+              default: DEFAULT_CONVERGENCE.ciThreshold,
               describe:
                 "CI convergence threshold in Elo points (0 = stop when no CIs overlap, N > 0 = stop when all CIs < \u00b1N)",
             })
             .option("max-rounds", {
               type: "number",
-              default: 50,
+              default: DEFAULT_CONVERGENCE.maxRounds,
               describe:
-                "Maximum number of productive adaptive rounds (default: 50)",
+                "Maximum number of productive adaptive rounds",
+            })
+            .option("writing-weight", {
+              type: "number",
+              default: DEFAULT_CONVERGENCE.writingWeight,
+              describe:
+                "Priority weight for writing judgments",
+            })
+            .option("feedback-weight", {
+              type: "number",
+              default: DEFAULT_CONVERGENCE.feedbackWeight,
+              describe:
+                "Priority weight for feedback judgments",
+            })
+            .option("revised-weight", {
+              type: "number",
+              default: DEFAULT_CONVERGENCE.revisedWeight,
+              describe:
+                "Priority weight for revised judgments",
             })
             .option("cache-only", {
               type: "boolean",
@@ -276,6 +298,9 @@ export async function parseArgs(): Promise<Command> {
               if (argv.cacheOnly && !argv.cache) {
                 throw new Error("--cache-only and --no-cache are mutually exclusive");
               }
+              if ((argv.writingWeight as number) < 0) throw new Error("--writing-weight must be non-negative");
+              if ((argv.feedbackWeight as number) < 0) throw new Error("--feedback-weight must be non-negative");
+              if ((argv.revisedWeight as number) < 0) throw new Error("--revised-weight must be non-negative");
               return true;
             }),
         (argv) => {
@@ -294,6 +319,9 @@ export async function parseArgs(): Promise<Command> {
               noCache: !argv.cache,
               confidence: argv.confidence,
               maxRounds: argv.maxRounds,
+              writingWeight: argv.writingWeight,
+              feedbackWeight: argv.feedbackWeight,
+              revisedWeight: argv.revisedWeight,
               cacheOnly: argv.cacheOnly,
               skipSeeding: argv.skipSeeding,
             },

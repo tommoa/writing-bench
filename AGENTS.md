@@ -203,10 +203,11 @@ feedback quality (improvement judgments).
   ~1.96·√(1/(n·τ))·174 Elo regardless of game count.
 - **Need identifier (`need-identifier.ts`)** -- Scores candidate judgments
   by information gain: `(σ²_A + σ²_B) × p × (1−p) / (1 + maxOutputIndex)`,
-  with cascade cost discounts for improvement (0.25) and revised (0.2)
-  judgments. The depth penalty `1/(1+N)` ensures breadth-first exploration
-  — all prompts are covered at a given output index before advancing to
-  the next.
+  with configurable priority weights for writing (`--writing-weight`,
+  default 1.0), improvement (`--feedback-weight`, default 0.25), and
+  revised (`--revised-weight`, default 0.4) judgments. The depth penalty `1/(1+N)` ensures
+  breadth-first exploration — all prompts are covered at a given output
+  index before advancing to the next.
 - **Ensure-cascade** -- `fulfillNeed()` calls `ensureJudgment()` which
   calls `ensureSample()`/`ensureFeedback()`/`ensureRevision()` as needed.
   Each returns cached data if available or generates fresh.

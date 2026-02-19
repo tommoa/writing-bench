@@ -37,7 +37,6 @@ import {
   emptyCompletedWork,
   formatNeedDescription,
   formatBatchSummary,
-  DEFAULT_CONVERGENCE,
   formatConvergenceTarget,
 } from "./need-identifier.js";
 import type { Need, CompletedWork } from "./need-identifier.js";
@@ -263,7 +262,7 @@ export class BenchmarkRunner {
 
   private emitProgress(currentOp: string): void {
     const maxCi = this.cachedMaxCi;
-    const ciThreshold = this.config.ciThreshold ?? DEFAULT_CONVERGENCE.ciThreshold;
+    const ciThreshold = this.config.convergence.ciThreshold;
 
     const activeStages = (Object.entries(this.inflight)
       .filter(([, count]) => count > 0)
@@ -382,7 +381,7 @@ export class BenchmarkRunner {
       maxCiHalfWidth(this.revisedWhr),
       maxCiHalfWidth(this.feedbackWhr),
     );
-    const ciThreshold = this.config.ciThreshold ?? DEFAULT_CONVERGENCE.ciThreshold;
+    const ciThreshold = this.config.convergence.ciThreshold;
     this.cachedOverlapProgress = ciThreshold === 0 ? this.computeOverlapProgress() : 0;
   }
 
@@ -1076,11 +1075,7 @@ export class BenchmarkRunner {
    */
   async run(): Promise<RunResult> {
     const startTime = Date.now();
-    const convergence = {
-      ...DEFAULT_CONVERGENCE,
-      ciThreshold: this.config.ciThreshold ?? DEFAULT_CONVERGENCE.ciThreshold,
-      maxRounds: this.config.maxRounds ?? DEFAULT_CONVERGENCE.maxRounds,
-    };
+    const convergence = this.config.convergence;
 
     // Fetch model metadata for all models (writers + judges, deduplicated)
     const allModelConfigs = new Map<string, { provider: string; model: string; label: string }>();

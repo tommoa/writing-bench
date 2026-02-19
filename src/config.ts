@@ -3,7 +3,8 @@ import { basename } from "path";
 import { parse as parseTOML } from "smol-toml";
 import { z } from "zod";
 import { Glob } from "bun";
-import type { PromptConfig, ModelConfig, RunConfig } from "./types.js";
+import type { PromptConfig, ModelConfig, RunConfig, ConvergenceConfig } from "./types.js";
+import { DEFAULT_CONVERGENCE } from "./types.js";
 import { parseModelSpec } from "./providers/registry.js";
 import { getModelDisplayName, getProviderDisplayName } from "./providers/models.js";
 
@@ -156,8 +157,7 @@ export function createRunConfig(opts: {
   noCache?: boolean;
   cacheOnly?: boolean;
   skipSeeding?: boolean;
-  ciThreshold?: number;
-  maxRounds?: number;
+  convergence?: Partial<ConvergenceConfig>;
 }): RunConfig {
   const now = new Date();
   const id = now.toISOString().replace(/[:.]/g, "-");
@@ -173,7 +173,6 @@ export function createRunConfig(opts: {
     cacheOnly: opts.cacheOnly ?? false,
     skipSeeding: opts.skipSeeding ?? false,
     timestamp: now.toISOString(),
-    ciThreshold: opts.ciThreshold,
-    maxRounds: opts.maxRounds,
+    convergence: { ...DEFAULT_CONVERGENCE, ...opts.convergence },
   };
 }

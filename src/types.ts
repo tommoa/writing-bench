@@ -87,6 +87,33 @@ export interface PromptConfig {
   maxWords?: number;
 }
 
+// ── Convergence ─────────────────────────────────────
+
+/** Configuration for adaptive convergence. */
+export interface ConvergenceConfig {
+  /** 95% CI half-width threshold in Elo points. 0 = overlap-based convergence. Default: 0. */
+  ciThreshold: number;
+  /** Maximum number of adaptive rounds. Default: 50. */
+  maxRounds: number;
+  /** Minimum games per model before checking CI. Default: 2. */
+  minPairsPerModel: number;
+  /** Priority weight for writing (initial) judgments. Default: 1.0. */
+  writingWeight: number;
+  /** Cascade cost multiplier for feedback (improvement) judgments. Default: 0.25. */
+  feedbackWeight: number;
+  /** Cascade cost multiplier for revised judgments. Default: 0.4. */
+  revisedWeight: number;
+}
+
+export const DEFAULT_CONVERGENCE: ConvergenceConfig = {
+  ciThreshold: 0,
+  maxRounds: 50,
+  minPairsPerModel: 2,
+  writingWeight: 1.0,
+  feedbackWeight: 0.25,
+  revisedWeight: 0.4,
+};
+
 // ── Run Data ────────────────────────────────────────
 
 export interface RunConfig {
@@ -100,11 +127,8 @@ export interface RunConfig {
   cacheOnly: boolean; // Only use cached data, no API calls in ensure methods
   skipSeeding: boolean; // Skip Phase 1 cache scan; adaptive loop discovers cache lazily
   timestamp: string;
-  /** 95% CI half-width threshold (Elo points). 0 = overlap-based
-   *  convergence (stop when no CIs overlap). Default: 0. */
-  ciThreshold?: number;
-  /** Maximum number of productive adaptive rounds. Default: 50. */
-  maxRounds?: number;
+  /** Convergence settings (defaults from DEFAULT_CONVERGENCE). */
+  convergence: ConvergenceConfig;
 }
 
 export interface WritingSample {

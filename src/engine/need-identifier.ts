@@ -1,6 +1,6 @@
 import { sigmoid, LOG10E_TIMES_400, hasOverlap, hasAnyOverlap } from "./whr.js";
 import type { WhrRating } from "./whr.js";
-import type { ModelConfig, PromptConfig } from "../types.js";
+import type { ModelConfig, PromptConfig, ConvergenceConfig } from "../types.js";
 
 // ── Types ───────────────────────────────────────────
 
@@ -36,22 +36,6 @@ export type Need =
       judgeModel: ModelConfig;
       score: number;
     };
-
-/** Configuration for adaptive convergence. */
-export interface ConvergenceConfig {
-  /** 95% CI half-width threshold in Elo points. 0 = overlap-based convergence. Default: 0. */
-  ciThreshold: number;
-  /** Maximum number of adaptive rounds. Default: 50. */
-  maxRounds: number;
-  /** Minimum games per model before checking CI. Default: 3. */
-  minPairsPerModel: number;
-}
-
-export const DEFAULT_CONVERGENCE: ConvergenceConfig = {
-  ciThreshold: 0,
-  maxRounds: 50,
-  minPairsPerModel: 2,
-};
 
 /** Tracks which work has already been completed or scheduled. */
 export interface CompletedWork {
@@ -332,7 +316,7 @@ export function identifyNeeds(
 
       if (pairResolved(rA, rB, convergence)) continue;
 
-      const gain = informationGain(rA, rB);
+      const gain = informationGain(rA, rB) * convergence.writingWeight;
 
       for (let oi = 0; oi < outputsPerModel; oi++) {
         for (let oj = 0; oj < outputsPerModel; oj++) {
@@ -378,7 +362,7 @@ export function identifyNeeds(
 
       if (pairResolved(fbA, fbB, convergence)) continue;
 
-      const gain = informationGain(fbA, fbB) * 0.25; // cascade cost discount
+      const gain = informationGain(fbA, fbB) * convergence.feedbackWeight;
 
       // Each improvement comparison needs a writer to apply both feedbacks to
       for (const writer of models) {
@@ -437,7 +421,7 @@ export function identifyNeeds(
 
       if (pairResolved(rA, rB, convergence)) continue;
 
-      const gain = informationGain(rA, rB) * 0.2; // cascade cost discount
+      const gain = informationGain(rA, rB) * convergence.revisedWeight;
 
       for (let oi = 0; oi < outputsPerModel; oi++) {
         for (let oj = 0; oj < outputsPerModel; oj++) {
