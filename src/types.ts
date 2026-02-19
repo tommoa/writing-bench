@@ -189,6 +189,10 @@ export interface PairwiseJudgment {
   winner: "A" | "B" | "tie";
   reasoning: string;
   stage: "initial" | "revised" | "improvement";
+  /** Whether the pair was swapped for position-bias randomization.
+   *  true = judge saw (B,A) but winner/sampleA/sampleB are corrected back.
+   *  undefined for cached judgments where swap info was not persisted. */
+  positionSwapped?: boolean;
   usage: TokenUsage;
   cost: CostBreakdown;
   latencyMs: number;
@@ -402,6 +406,22 @@ export interface BenchmarkProgress {
   needDescription?: string;
   /** Summary of needs in the current adaptive batch. */
   batchSummary?: string;
+  /** Per-judge bias statistics (only present when judge quality is active). */
+  judgeBias?: {
+    selfPreference: Record<string, {
+      selfJudgmentCount: number;
+      selfWinRate: number;
+      expectedWinRate: number;
+      biasDelta: number;
+      sufficient: boolean;
+    }>;
+    positionBias: Record<string, {
+      positionKnownCount: number;
+      positionARate: number;
+      positionBiasDelta: number;
+      sufficient: boolean;
+    }>;
+  };
 }
 
 export type BenchmarkEvent =

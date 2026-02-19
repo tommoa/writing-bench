@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { EloRating, JudgeQualityMode } from "../types.js";
+import type { EloRating, JudgeQualityMode, BenchmarkProgress } from "../types.js";
 import type { WhrRating } from "../engine/whr.js";
 import { DEFAULT_CONVERGENCE } from "../types.js";
 
@@ -9,12 +9,31 @@ interface JudgeQualityTableProps {
   weights?: Record<string, number>;
   pruneThreshold?: number;
   mode?: JudgeQualityMode;
+  judgeBias?: BenchmarkProgress["judgeBias"];
 }
 
-export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode }: JudgeQualityTableProps) {
+/**
+ * Format a bias delta as a signed percentage with color coding.
+ * Distinguishes three states:
+ *   isWriter === false:       → "n/a" (judge is not a writer, self-bias N/A)
+ *   !sufficient:              → "..." (accumulating data)
+ *   sufficient:               → "+12%" (confident, color-coded)
+ */
+function formatBias(delta: number, sufficient: boolean, isWriter: boolean): { text: string; color: string } {
+  if (!isWriter) return { text: "n/a", color: "gray" };
+  if (!sufficient || isNaN(delta)) return { text: "...", color: "gray" };
+  const pct = Math.round(delta * 100);
+  const text = pct >= 0 ? `+${pct}%` : `${pct}%`;
+  const absDelta = Math.abs(delta);
+  const color = absDelta < 0.05 ? "green" : absDelta < 0.15 ? "yellow" : "red";
+  return { text, color };
+}
+
+export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode, judgeBias }: JudgeQualityTableProps) {
   if (ratings.length === 0) return null;
 
   const hasCi = ratings.some((r) => "ci95" in r && typeof (r as any).ci95 === "number");
+  const hasBias = judgeBias != null;
 
   // Column widths
   const rankW = 4;
@@ -23,6 +42,8 @@ export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode }: Ju
   const ciW = 6;
   const wltW = Math.max(7, ...ratings.map((r) => `${r.wins}/${r.losses}/${r.ties}`.length));
   const weightW = 7;
+  const selfW = 7;
+  const posW = 7;
   const statusW = 7;
 
   return (
@@ -38,6 +59,8 @@ export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode }: Ju
           {hasCi ? `  ${"\u00b1CI".padStart(ciW)}` : ""}
           {"  "}{"W/L/T".padStart(wltW)}
           {"  "}{"Weight".padStart(weightW)}
+          {hasBias ? `  ${"Self%".padStart(selfW)}` : ""}
+          {hasBias ? `  ${"Pos%".padStart(posW)}` : ""}
           {"  "}{"Status".padStart(statusW)}
         </Text>
       </Box>
@@ -48,6 +71,7 @@ export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode }: Ju
             + (hasCi ? 2 + ciW : 0)
             + 2 + wltW
             + 2 + weightW
+            + (hasBias ? 2 + selfW + 2 + posW : 0)
             + 2 + statusW
           )}
         </Text>
@@ -59,6 +83,19 @@ export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode }: Ju
         const isPruned = weight < (pruneThreshold ?? DEFAULT_CONVERGENCE.judgePruneThreshold);
         const ratingColor =
           i === 0 ? "green" : i === ratings.length - 1 ? "red" : "white";
+
+        const selfBias = judgeBias?.selfPreference?.[r.model];
+        const posBias = judgeBias?.positionBias?.[r.model];
+        // Self-bias: "n/a" only when the judge has no self-preference data (not a writer)
+        const selfFmt = selfBias
+          ? formatBias(selfBias.biasDelta, selfBias.sufficient, selfBias.selfJudgmentCount > 0)
+          : { text: "n/a", color: "gray" };
+        // Position bias: always "..." (accumulating) rather than "n/a" when the judge
+        // is a writer — count=0 just means no position-known judgments yet (legacy cache)
+        const isWriter = selfBias != null;
+        const posFmt = posBias
+          ? formatBias(posBias.positionBiasDelta, posBias.sufficient, isWriter)
+          : { text: isWriter ? "..." : "n/a", color: "gray" };
 
         return (
           <Box key={r.model}>
@@ -78,6 +115,16 @@ export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode }: Ju
             <Text color="gray">
               {"  "}{`${weight.toFixed(2)}x`.padStart(weightW)}
             </Text>
+            {hasBias && (
+              <Text color={selfFmt.color}>
+                {"  "}{selfFmt.text.padStart(selfW)}
+              </Text>
+            )}
+            {hasBias && (
+              <Text color={posFmt.color}>
+                {"  "}{posFmt.text.padStart(posW)}
+              </Text>
+            )}
             <Text color={isPruned ? "red" : "green"}>
               {"  "}{(isPruned ? "pruned" : "active").padStart(statusW)}
             </Text>

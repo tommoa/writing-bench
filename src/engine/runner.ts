@@ -23,6 +23,8 @@ import {
 import type { WhrRating, WhrResult } from "./whr.js";
 import { computeJudgeQuality, computeEloBasedJudgeQuality } from "./judge-quality.js";
 import type { JudgeQualityData } from "./judge-quality.js";
+import { computeJudgeBias, computeBiasCorrections, composeWeights } from "./judge-bias.js";
+import type { JudgeBiasData } from "./judge-bias.js";
 import {
   SampleCache,
   type CachedWrite,
@@ -59,6 +61,7 @@ import {
   type ModelInfo,
   type ModelSpeed,
   type BenchmarkStage,
+  type BenchmarkProgress,
   type EloRating,
 } from "../types.js";
 
@@ -127,6 +130,10 @@ export class BenchmarkRunner {
   private judgeQuality: JudgeQualityData = {
     ratings: [], weights: new Map(), active: false, instanceCount: 0,
   };
+
+  // Judge bias state
+  private judgeBiasData: JudgeBiasData = { selfPreference: new Map(), positionBias: new Map() };
+  private biasCorrections = new Map<string, number>();
 
   /** Judge weights when active, undefined during bootstrap. */
   private get activeJudgeWeights(): Map<string, number> | undefined {
@@ -339,8 +346,26 @@ export class BenchmarkRunner {
         ciThreshold,
         needDescription: this.currentNeedDescription,
         batchSummary: this.currentBatchSummary,
+        judgeBias: this.serializeJudgeBias(),
       },
     });
+  }
+
+  private serializeJudgeBias(): BenchmarkProgress["judgeBias"] | undefined {
+    if (this.judgeBiasData.selfPreference.size === 0
+      && this.judgeBiasData.positionBias.size === 0) return undefined;
+
+    const selfPreference = Object.fromEntries(
+      [...this.judgeBiasData.selfPreference].map(([judge, { selfWins: _, selfTies: __, ...rest }]) =>
+        [judge, rest] as const),
+    );
+
+    const positionBias = Object.fromEntries(
+      [...this.judgeBiasData.positionBias].map(([judge, { presentedAWins: _, presentedTies: __, ...rest }]) =>
+        [judge, rest] as const),
+    );
+
+    return { selfPreference, positionBias };
   }
 
   /**
@@ -381,6 +406,27 @@ export class BenchmarkRunner {
 
   // ── WHR Recomputation ─────────────────────────────
 
+  /** Concatenation of all judgment arrays (cheap — just spreads references). */
+  private get allJudgments(): PairwiseJudgment[] {
+    return [
+      ...this.initialJudgments,
+      ...this.revisedJudgments,
+      ...this.improvementJudgments,
+    ];
+  }
+
+  /**
+   * Build per-judgment bias-corrected weights when active.
+   * The returned map (if set) already incorporates judge quality weights.
+   * judgmentsToGames gives per-judgment weights priority over per-judge weights,
+   * so both can be passed simultaneously without double-application.
+   */
+  private buildJudgmentWeights(): Map<string, number> | undefined {
+    return this.biasCorrections.size > 0
+      ? composeWeights(this.allJudgments, this.activeJudgeWeights, this.biasCorrections)
+      : undefined;
+  }
+
   /**
    * Recompute judge quality from all accumulated judgments.
    * Expensive (pools + groups all judgments, runs WHR on judge games).
@@ -392,13 +438,10 @@ export class BenchmarkRunner {
     const judgeLabels = this.judgeModels.map((m) => m.label);
     const k = this.config.convergence.judgeDecay;
 
+    const allJ = this.allJudgments;
+
     if (mode === "consensus") {
-      const allJudgments = [
-        ...this.initialJudgments,
-        ...this.revisedJudgments,
-        ...this.improvementJudgments,
-      ];
-      this.judgeQuality = computeJudgeQuality(allJudgments, judgeLabels, k);
+      this.judgeQuality = computeJudgeQuality(allJ, judgeLabels, k);
     } else {
       // ELO-based: use model's rating in the chosen dimension as proxy for judge quality.
       // Uses previous round's ratings (natural fixed-point iteration).
@@ -408,6 +451,14 @@ export class BenchmarkRunner {
         this.revisedWhr.ratings;
       this.judgeQuality = computeEloBasedJudgeQuality(dimensionRatings, judgeLabels, k);
     }
+
+    // Compute judge bias statistics and adaptive corrections
+    const sampleToModel = new Map<string, string>();
+    for (const s of this.initialSamples) sampleToModel.set(s.id, s.model);
+    for (const s of this.revisedSamples) sampleToModel.set(s.id, s.model);
+
+    this.judgeBiasData = computeJudgeBias(allJ, sampleToModel, judgeLabels);
+    this.biasCorrections = computeBiasCorrections(allJ, sampleToModel, this.judgeBiasData);
   }
 
   // TODO: Maintain these maps incrementally (append in ensureSample/
@@ -425,12 +476,12 @@ export class BenchmarkRunner {
         .map((s) => [s.id, s.feedbackModel!])
     );
 
-    // Pass judge weights when active — the unified functions default to
-    // unweighted (weight=1.0) when no judgeWeights map is provided.
     const jw = this.activeJudgeWeights;
-    this.writingWhr = computeWhr(judgmentsToGames(this.initialJudgments, sampleToModel, jw));
-    this.revisedWhr = computeWhr(judgmentsToGames(this.revisedJudgments, revisedSampleToModel, jw));
-    this.feedbackWhr = computeWhr(improvementJudgmentsToGames(this.improvementJudgments, sampleToFeedbackModel, jw));
+    const jmw = this.buildJudgmentWeights();
+
+    this.writingWhr = computeWhr(judgmentsToGames(this.initialJudgments, sampleToModel, jw, jmw));
+    this.revisedWhr = computeWhr(judgmentsToGames(this.revisedJudgments, revisedSampleToModel, jw, jmw));
+    this.feedbackWhr = computeWhr(improvementJudgmentsToGames(this.improvementJudgments, sampleToFeedbackModel, jw, jmw));
     this.lastRatingRecompute = Date.now();
 
     // Update cached progress values so emitProgress doesn't recompute them
@@ -749,6 +800,7 @@ export class BenchmarkRunner {
             winner: cached.winner,
             reasoning: cached.reasoning,
             stage,
+            positionSwapped: cached.positionSwapped,
             usage: cached.usage,
             cost: ZERO_COST,
             latencyMs: 0,
@@ -783,6 +835,7 @@ export class BenchmarkRunner {
               winner: judgment.winner,
               reasoning: judgment.reasoning,
               stage,
+              positionSwapped: judgment.positionSwapped,
               usage: judgment.usage,
               cost: judgment.cost,
               latencyMs: judgment.latencyMs,
@@ -1272,16 +1325,18 @@ export class BenchmarkRunner {
         .map((s) => [s.id, s.feedbackModel!]),
     );
 
-    // Use judge weights for final ratings (consistent with adaptive loop)
+    // Apply bias corrections to final ratings, consistent with the adaptive loop.
     const jw = this.activeJudgeWeights;
+    const jmw = this.buildJudgmentWeights();
+
     const initialElo: EloRating[] = whrRatings(
-      judgmentsToGames(this.initialJudgments, sampleToModel, jw),
+      judgmentsToGames(this.initialJudgments, sampleToModel, jw, jmw),
     );
     const revisedElo: EloRating[] = whrRatings(
-      judgmentsToGames(this.revisedJudgments, revisedSampleToModel, jw),
+      judgmentsToGames(this.revisedJudgments, revisedSampleToModel, jw, jmw),
     );
     const feedbackElo: EloRating[] = whrRatings(
-      improvementJudgmentsToGames(this.improvementJudgments, sampleToFeedbackModel, jw),
+      improvementJudgmentsToGames(this.improvementJudgments, sampleToFeedbackModel, jw, jmw),
     );
 
     // Per-tag ELO (also via WHR for consistent CIs)
@@ -1295,12 +1350,12 @@ export class BenchmarkRunner {
     for (const tag of allTags) {
       initialByTag[tag] = whrRatings(judgmentsToGames(
         this.initialJudgments.filter((j) => promptToTags.get(j.promptId)?.includes(tag)),
-        sampleToModel, jw,
+        sampleToModel, jw, jmw,
       ));
 
       revisedByTag[tag] = whrRatings(judgmentsToGames(
         this.revisedJudgments.filter((j) => promptToTags.get(j.promptId)?.includes(tag)),
-        revisedSampleToModel, jw,
+        revisedSampleToModel, jw, jmw,
       ));
     }
 
@@ -1321,11 +1376,7 @@ export class BenchmarkRunner {
           a.targetSampleId.localeCompare(b.targetSampleId) ||
           a.sourceModel.localeCompare(b.sourceModel),
       ),
-      judgments: [
-        ...this.initialJudgments,
-        ...this.revisedJudgments,
-        ...this.improvementJudgments,
-      ],
+      judgments: this.allJudgments,
       elo: {
         initial: { stage: "initial", ratings: initialElo, byTag: initialByTag },
         revised: { stage: "revised", ratings: revisedElo, feedbackRatings: feedbackElo, byTag: revisedByTag },
@@ -1374,6 +1425,7 @@ export class BenchmarkRunner {
       judgment.sampleA = judgment.sampleB;
       judgment.sampleB = tmpA;
     }
+    judgment.positionSwapped = swapped;
 
     this.totalTokens += judgment.usage.inputTokens + judgment.usage.outputTokens;
     this.trackCost(

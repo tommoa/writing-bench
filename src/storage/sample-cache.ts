@@ -43,6 +43,8 @@ export interface CachedJudgment {
   winner: "A" | "B" | "tie";
   reasoning: string;
   stage: "initial" | "revised" | "improvement";
+  /** Position swap state from the original API call. undefined for legacy cache entries. */
+  positionSwapped?: boolean;
   usage: TokenUsage;
   cost: CostBreakdown;
   latencyMs: number;
@@ -89,6 +91,11 @@ function flipWinner(winner: "A" | "B" | "tie"): "A" | "B" | "tie" {
   if (winner === "A") return "B";
   if (winner === "B") return "A";
   return "tie";
+}
+
+/** Flip a positionSwapped flag, preserving undefined for legacy entries. */
+function flipPositionSwapped(swapped?: boolean): boolean | undefined {
+  return swapped != null ? !swapped : undefined;
 }
 
 // ── Sample Cache ────────────────────────────────────
@@ -288,12 +295,15 @@ export class SampleCache {
       const raw = await readFile(path, "utf-8");
       const entry: CachedJudgment = JSON.parse(raw);
 
-      // Winner is stored relative to sorted order.
-      // If the caller's A sorts first, the winner matches.
-      // Otherwise flip it.
+      // Winner and positionSwapped are stored relative to sorted order.
+      // If the caller's A sorts first, they match. Otherwise flip both.
       const [sortedFirst] = [cacheIdA, cacheIdB].sort();
       if (cacheIdA !== sortedFirst) {
-        return { ...entry, winner: flipWinner(entry.winner) };
+        return {
+          ...entry,
+          winner: flipWinner(entry.winner),
+          positionSwapped: flipPositionSwapped(entry.positionSwapped),
+        };
       }
       return entry;
     } catch {
@@ -316,12 +326,16 @@ export class SampleCache {
     const dir = this.judgmentsDir(judgeProvider, judgeModel);
     await mkdir(dir, { recursive: true });
 
-    // Normalize winner to sorted order
+    // Normalize winner and positionSwapped to sorted order
     const [sortedFirst] = [cacheIdA, cacheIdB].sort();
     const normalized: CachedJudgment =
       cacheIdA === sortedFirst
         ? entry
-        : { ...entry, winner: flipWinner(entry.winner) };
+        : {
+            ...entry,
+            winner: flipWinner(entry.winner),
+            positionSwapped: flipPositionSwapped(entry.positionSwapped),
+          };
 
     const filePath = this.judgmentPath(
       judgeProvider,

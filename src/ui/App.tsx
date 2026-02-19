@@ -184,6 +184,7 @@ export function App({ subscribe, showSpeed }: AppProps) {
           weights={progress.judgeWeights}
           pruneThreshold={progress.judgePruneThreshold}
           mode={progress.judgeQualityMode}
+          judgeBias={progress.judgeBias}
         />
       )}
 

@@ -645,11 +645,16 @@ export function estimateRemainingJudgments(
 /**
  * Convert PairwiseJudgment data into WhrGame format.
  * Caller provides a mapping from sample IDs to model names.
+ *
+ * When `judgmentWeights` is provided, per-judgment weights take precedence
+ * over per-judge weights from `judgeWeights`. This allows bias corrections
+ * to be composed with judge quality weights at the per-judgment level.
  */
 export function judgmentsToGames(
-  judgments: Array<{ sampleA: string; sampleB: string; winner: "A" | "B" | "tie"; judgeModel?: string }>,
+  judgments: Array<{ id?: string; sampleA: string; sampleB: string; winner: "A" | "B" | "tie"; judgeModel?: string }>,
   sampleToModel: Map<string, string>,
   judgeWeights?: Map<string, number>,
+  judgmentWeights?: Map<string, number>,
 ): WhrGame[] {
   const games: WhrGame[] = [];
   for (const j of judgments) {
@@ -657,11 +662,15 @@ export function judgmentsToGames(
     const modelB = sampleToModel.get(j.sampleB);
     if (!modelA || !modelB || modelA === modelB) continue;
 
+    const weight = (j.id && judgmentWeights?.has(j.id))
+      ? judgmentWeights.get(j.id)!
+      : (j.judgeModel ? judgeWeights?.get(j.judgeModel) ?? 1.0 : 1.0);
+
     games.push({
       playerWhite: modelA,
       playerBlack: modelB,
       result: j.winner === "A" ? 1.0 : j.winner === "B" ? 0.0 : 0.5,
-      weight: j.judgeModel ? judgeWeights?.get(j.judgeModel) ?? 1.0 : 1.0,
+      weight,
     });
   }
   return games;
@@ -679,6 +688,7 @@ export function judgmentsToGames(
  */
 export function improvementJudgmentsToGames(
   improvementJudgments: Array<{
+    id?: string;
     sampleA: string;
     sampleB: string;
     winner: "A" | "B" | "tie";
@@ -687,13 +697,14 @@ export function improvementJudgmentsToGames(
   }>,
   sampleToFeedbackModel: Map<string, string>,
   judgeWeights?: Map<string, number>,
+  judgmentWeights?: Map<string, number>,
 ): WhrGame[] {
   const games: WhrGame[] = [];
 
   // Group by (promptId, judgeModel, sampleA) -- sampleA is the original
   // sample ID, ensuring feedback models are only paired when tested on
   // the same base text.
-  type ImpResult = { feedbackModel: string; winner: "A" | "B" | "tie"; judgeModel: string };
+  type ImpResult = { id?: string; feedbackModel: string; winner: "A" | "B" | "tie"; judgeModel: string };
   const groups = new Map<string, ImpResult[]>();
 
   for (const j of improvementJudgments) {
@@ -701,7 +712,7 @@ export function improvementJudgmentsToGames(
     if (!fbModel) continue;
     const groupKey = `${j.promptId}:${j.judgeModel}:${j.sampleA}`;
     const group = groups.get(groupKey) ?? [];
-    group.push({ feedbackModel: fbModel, winner: j.winner, judgeModel: j.judgeModel });
+    group.push({ id: j.id, feedbackModel: fbModel, winner: j.winner, judgeModel: j.judgeModel });
     groups.set(groupKey, group);
   }
 
@@ -715,7 +726,17 @@ export function improvementJudgmentsToGames(
 
         const aImproved = a.winner === "B"; // revision beat original
         const bImproved = b.winner === "B";
-        const weight = judgeWeights?.get(a.judgeModel) ?? 1.0;
+
+        // Per-judgment weight takes precedence; fall back to per-judge weight.
+        // Use geometric mean of both judgments' weights so bias corrections
+        // on either side are reflected in the derived game.
+        const wA = (a.id && judgmentWeights?.has(a.id))
+          ? judgmentWeights.get(a.id)!
+          : (judgeWeights?.get(a.judgeModel) ?? 1.0);
+        const wB = (b.id && judgmentWeights?.has(b.id))
+          ? judgmentWeights.get(b.id)!
+          : (judgeWeights?.get(b.judgeModel) ?? 1.0);
+        const weight = Math.sqrt(wA * wB);
 
         if (aImproved && !bImproved) {
           games.push({ playerWhite: a.feedbackModel, playerBlack: b.feedbackModel, result: 1.0, weight });
