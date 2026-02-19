@@ -137,7 +137,8 @@ export class BenchmarkRunner {
   private opsDone = 0;
   private judgingRound = 0;
   private lastRatingRecompute = 0;
-  private maxOutputCount = 0;
+  /** Per-model-prompt consecutive output count, updated in ensureSample. Key: "model:promptId". */
+  private sampleCounts = new Map<string, number>();
   private inflight: Record<string, number> = {};
   // Cached progress values — recomputed in recomputeRatings() instead
   // of on every emitProgress call (avoids O(n²) per progress update).
@@ -171,10 +172,31 @@ export class BenchmarkRunner {
     this.handlers.push(handler);
   }
 
-  /** Track the highest output count seen (updated incrementally in ensureSample). */
-  private trackOutputCount(outputIndex: number): void {
+  /** Track per-model-prompt output counts (updated incrementally in ensureSample). */
+  private trackOutputCount(model: string, promptId: string, outputIndex: number): void {
+    const key = `${model}:${promptId}`;
     const count = outputIndex + 1;
-    if (count > this.maxOutputCount) this.maxOutputCount = count;
+    const cur = this.sampleCounts.get(key) ?? 0;
+    if (count > cur) this.sampleCounts.set(key, count);
+  }
+
+  /**
+   * Compute per-model output caps for breadth-first enforcement.
+   * For each model, cap = min(outputsPerModel, minOutputCountAcrossPrompts + 1).
+   * This ensures a model writes all prompts at depth N before any at N+1.
+   * Uses the incrementally-maintained sampleCounts map (O(M×P) scan, no inner loop).
+   */
+  private computeModelOutputCaps(): Map<string, number> {
+    const caps = new Map<string, number>();
+    for (const model of this.config.models) {
+      let minCount = Infinity;
+      for (const prompt of this.config.prompts) {
+        const count = this.sampleCounts.get(`${model.label}:${prompt.id}`) ?? 0;
+        if (count < minCount) minCount = count;
+      }
+      caps.set(model.label, Math.min(this.config.outputsPerModel, minCount + 1));
+    }
+    return caps;
   }
 
   private emit(event: BenchmarkEvent): void {
@@ -475,7 +497,7 @@ export class BenchmarkRunner {
           this.cacheStats.writes.savedCost += cs.cost.total;
           this.initialSamples.push(sample);
           this.sampleStore.set(storeKey, sample);
-          this.trackOutputCount(outputIndex);
+          this.trackOutputCount(modelCfg.label, prompt.id, outputIndex);
           this.opsDone++;
           this.emit({ type: "sampleComplete", data: sample });
           return sample;
@@ -503,6 +525,7 @@ export class BenchmarkRunner {
             latencyMs: sample.latencyMs,
             createdAt: new Date().toISOString(),
           },
+          outputIndex,
         );
 
         // Invalidate memoized cache so subsequent lookups see the new entry
@@ -513,7 +536,7 @@ export class BenchmarkRunner {
         this.cacheStats.writes.fresh++;
         this.initialSamples.push(sample);
         this.sampleStore.set(storeKey, sample);
-        this.trackOutputCount(outputIndex);
+        this.trackOutputCount(modelCfg.label, prompt.id, outputIndex);
         this.opsDone++;
         this.emit({ type: "sampleComplete", data: sample });
         return sample;
@@ -1159,11 +1182,11 @@ export class BenchmarkRunner {
           break;
         }
 
-        // Compute effective output count: current max + 1 for growth, capped
-        const effectiveOutputs = Math.min(
-          this.config.outputsPerModel,
-          this.maxOutputCount + 1,
-        );
+        // Per-model output caps enforce breadth-first: each model must
+        // cover all prompts at depth N before advancing to depth N+1.
+        // The caps fully subsume the old global effectiveOutputs logic —
+        // outputsPerModel is passed only as a fallback ceiling.
+        const modelOutputCaps = this.computeModelOutputCaps();
 
         const { needs, ratingMap } = identifyNeeds(
           this.writingWhr.ratings,
@@ -1175,8 +1198,9 @@ export class BenchmarkRunner {
           this.config.prompts,
           convergence,
           batchSize,
-          effectiveOutputs,
+          this.config.outputsPerModel,
           this.judgeQuality,
+          modelOutputCaps,
         );
 
         if (needs.length === 0) break; // exhausted all possible work

@@ -359,6 +359,52 @@ describe("identifyNeeds", () => {
     // All should be initial_judgment type
     expect(needs.every((n) => n.type === "initial_judgment")).toBe(true);
   });
+
+  it("respects per-model output caps for initial judgments", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    // modelA capped at index 0 only, modelB can go to index 1
+    const caps = new Map([["modelA", 1], ["modelB", 2]]);
+    const needs = identifyNeeds(
+      ratings, convergedRatings(2), convergedRatings(2),
+      workWith(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 3, undefined, caps,
+    );
+    const initialNeeds = needs.filter(
+      (n): n is Extract<Need, { type: "initial_judgment" }> => n.type === "initial_judgment",
+    );
+    // Valid combos: (A:0, B:0), (A:0, B:1) = 2 candidates
+    // No (A:1, B:*) candidates should exist
+    for (const n of initialNeeds) {
+      // modelA is always first (i < j), so outputIdxA refers to modelA
+      expect(n.outputIdxA).toBe(0);
+      expect(n.outputIdxB).toBeLessThan(2);
+    }
+    expect(initialNeeds).toHaveLength(2);
+  });
+
+  it("caps apply to improvement judgment writer indices", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    // Both models capped at index 0 only
+    const caps = new Map([["modelA", 1], ["modelB", 1]]);
+    const needs = identifyNeeds(
+      convergedRatings(2), convergedRatings(2), ratings,
+      workWith(), twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 3, undefined, caps,
+    );
+    const impNeeds = needs.filter(
+      (n): n is Extract<Need, { type: "improvement_judgment" }> => n.type === "improvement_judgment",
+    );
+    for (const n of impNeeds) {
+      expect(n.outputIdx).toBe(0);
+    }
+    expect(impNeeds.length).toBeGreaterThan(0);
+  });
 });
 
 describe("missing-artifact pruning", () => {

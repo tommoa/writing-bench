@@ -142,14 +142,13 @@ export class SampleCache {
     provider: string,
     model: string,
     promptText: string,
-    entry: CachedWrite
+    entry: CachedWrite,
+    outputIndex: number,
   ): Promise<void> {
     const dir = this.writesDir(provider, model, hashPromptContent(promptText));
     await mkdir(dir, { recursive: true });
 
-    const files = await readdir(dir);
-    const nextIndex = files.filter((f) => f.endsWith(".json")).length;
-    const filePath = join(dir, `sample_${nextIndex}.json`);
+    const filePath = join(dir, `sample_${outputIndex}.json`);
     const tmpPath = filePath + `.tmp.${randomBytes(4).toString("hex")}`;
 
     await writeFile(tmpPath, JSON.stringify(entry, null, 2));

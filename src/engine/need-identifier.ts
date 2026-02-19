@@ -317,6 +317,7 @@ export function identifyNeeds(
   batchSize: number,
   outputsPerModel: number,
   judgeQuality?: JudgeQualityData,
+  modelOutputCaps?: Map<string, number>,
 ): { needs: Need[]; ratingMap: Map<string, WhrRating> } {
   const candidates: Need[] = [];
   const ratingMap = buildRatingMap(writingRatings, revisedRatings, feedbackRatings);
@@ -341,6 +342,10 @@ export function identifyNeeds(
   // Judge weights: use jq.weights directly (defaults to 1.0 for unknown judges)
   const jw = jq.weights;
 
+  // Per-model output cap: breadth-first enforcement — a model must cover
+  // all prompts at depth N before advancing to N+1.
+  const capFor = (label: string) => modelOutputCaps?.get(label) ?? outputsPerModel;
+
   // ── Initial judgment needs ────────────────────────
   for (let i = 0; i < models.length; i++) {
     for (let j = i + 1; j < models.length; j++) {
@@ -351,8 +356,8 @@ export function identifyNeeds(
 
       const gain = informationGain(rA, rB) * convergence.writingWeight;
 
-      for (let oi = 0; oi < outputsPerModel; oi++) {
-        for (let oj = 0; oj < outputsPerModel; oj++) {
+      for (let oi = 0; oi < capFor(models[i].label); oi++) {
+        for (let oj = 0; oj < capFor(models[j].label); oj++) {
           for (const prompt of prompts) {
             // Prune: skip if either sample is known-missing
             if (completedWork.missingSamples.has(sampleKey(models[i].label, prompt.id, oi))
@@ -400,7 +405,7 @@ export function identifyNeeds(
 
       // Each improvement comparison needs a writer to apply both feedbacks to
       for (const writer of models) {
-        for (let oi = 0; oi < outputsPerModel; oi++) {
+        for (let oi = 0; oi < capFor(writer.label); oi++) {
           for (const prompt of prompts) {
             // Pre-check per-side cascade deps and triple pruning (independent of judge).
             // isCascadeBroken checks sample, feedback, and revision for each side.
@@ -460,8 +465,8 @@ export function identifyNeeds(
 
       const gain = informationGain(rA, rB) * convergence.revisedWeight;
 
-      for (let oi = 0; oi < outputsPerModel; oi++) {
-        for (let oj = 0; oj < outputsPerModel; oj++) {
+      for (let oi = 0; oi < capFor(models[i].label); oi++) {
+        for (let oj = 0; oj < capFor(models[j].label); oj++) {
           for (const fbModel of models) {
             for (const prompt of prompts) {
               // Prune: skip if either side's cascade is broken or the triple is missing.

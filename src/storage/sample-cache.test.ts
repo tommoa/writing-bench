@@ -154,7 +154,7 @@ describe("SampleCache - writes", () => {
 
   it("stores and retrieves a cached write", async () => {
     const entry = makeCachedWrite({ cacheId: "test-write-1" });
-    await cache.addCachedWrite("openai", "gpt-4o", "Write a story.", entry);
+    await cache.addCachedWrite("openai", "gpt-4o", "Write a story.", entry, 0);
 
     const results = await cache.getCachedWrites("openai", "gpt-4o", "Write a story.");
     expect(results).toHaveLength(1);
@@ -165,15 +165,15 @@ describe("SampleCache - writes", () => {
   it("accumulates multiple writes for same model/prompt", async () => {
     await cache.addCachedWrite(
       "openai", "gpt-4o", "Write a story.",
-      makeCachedWrite({ cacheId: "w1", text: "Output 1" })
+      makeCachedWrite({ cacheId: "w1", text: "Output 1" }), 0,
     );
     await cache.addCachedWrite(
       "openai", "gpt-4o", "Write a story.",
-      makeCachedWrite({ cacheId: "w2", text: "Output 2" })
+      makeCachedWrite({ cacheId: "w2", text: "Output 2" }), 1,
     );
     await cache.addCachedWrite(
       "openai", "gpt-4o", "Write a story.",
-      makeCachedWrite({ cacheId: "w3", text: "Output 3" })
+      makeCachedWrite({ cacheId: "w3", text: "Output 3" }), 2,
     );
 
     const results = await cache.getCachedWrites("openai", "gpt-4o", "Write a story.");
@@ -184,11 +184,11 @@ describe("SampleCache - writes", () => {
   it("different prompts have independent caches", async () => {
     await cache.addCachedWrite(
       "openai", "gpt-4o", "Write a story.",
-      makeCachedWrite({ cacheId: "story" })
+      makeCachedWrite({ cacheId: "story" }), 0,
     );
     await cache.addCachedWrite(
       "openai", "gpt-4o", "Write a poem.",
-      makeCachedWrite({ cacheId: "poem" })
+      makeCachedWrite({ cacheId: "poem" }), 0,
     );
 
     const stories = await cache.getCachedWrites("openai", "gpt-4o", "Write a story.");
@@ -202,11 +202,11 @@ describe("SampleCache - writes", () => {
   it("different models have independent caches", async () => {
     await cache.addCachedWrite(
       "openai", "gpt-4o", "Write a story.",
-      makeCachedWrite({ cacheId: "gpt" })
+      makeCachedWrite({ cacheId: "gpt" }), 0,
     );
     await cache.addCachedWrite(
       "anthropic", "claude-sonnet-4-20250514", "Write a story.",
-      makeCachedWrite({ cacheId: "claude" })
+      makeCachedWrite({ cacheId: "claude" }), 0,
     );
 
     const gpt = await cache.getCachedWrites("openai", "gpt-4o", "Write a story.");
@@ -218,7 +218,7 @@ describe("SampleCache - writes", () => {
   it("prompt content change invalidates cache (different hash)", async () => {
     await cache.addCachedWrite(
       "openai", "gpt-4o", "Write a story about cats.",
-      makeCachedWrite({ cacheId: "cats" })
+      makeCachedWrite({ cacheId: "cats" }), 0,
     );
 
     // Same model, but different prompt text
@@ -237,7 +237,7 @@ describe("SampleCache - writes", () => {
   it("persists to disk as JSON files", async () => {
     await cache.addCachedWrite(
       "openai", "gpt-4o", "Test prompt.",
-      makeCachedWrite({ cacheId: "disk-test" })
+      makeCachedWrite({ cacheId: "disk-test" }), 0,
     );
 
     // Create a fresh cache instance pointing at the same dir
@@ -245,6 +245,21 @@ describe("SampleCache - writes", () => {
     const results = await cache2.getCachedWrites("openai", "gpt-4o", "Test prompt.");
     expect(results).toHaveLength(1);
     expect(results[0].cacheId).toBe("disk-test");
+  });
+
+  it("concurrent writes at different indices do not collide", async () => {
+    const entries = Array.from({ length: 5 }, (_, i) =>
+      makeCachedWrite({ cacheId: `w${i}`, text: `Output ${i}` })
+    );
+    // Write all 5 in parallel at explicit indices
+    await Promise.all(
+      entries.map((e, i) =>
+        cache.addCachedWrite("openai", "gpt-4o", "Write a story.", e, i)
+      ),
+    );
+    const results = await cache.getCachedWrites("openai", "gpt-4o", "Write a story.");
+    expect(results).toHaveLength(5);
+    expect(results.map((r) => r.cacheId).sort()).toEqual(["w0", "w1", "w2", "w3", "w4"]);
   });
 });
 
@@ -534,7 +549,7 @@ describe("SampleCache - full provenance chain", () => {
   it("write -> feedback -> revision chain", async () => {
     // 1. Cache a write
     const write = makeCachedWrite({ cacheId: "chain-w1" });
-    await cache.addCachedWrite("openai", "gpt-4o", "Test prompt", write);
+    await cache.addCachedWrite("openai", "gpt-4o", "Test prompt", write, 0);
 
     // 2. Cache feedback on that write
     const feedback = makeCachedFeedback({
@@ -594,7 +609,7 @@ describe("trimModelOutputs", () => {
     for (let i = 0; i < 5; i++) {
       await cache.addCachedWrite(
         WRITER.provider, WRITER.model, PROMPT,
-        makeCachedWrite({ cacheId: `w${i}`, text: `Output ${i}` }),
+        makeCachedWrite({ cacheId: `w${i}`, text: `Output ${i}` }), i,
       );
     }
 
@@ -614,7 +629,7 @@ describe("trimModelOutputs", () => {
     for (let i = 0; i < 3; i++) {
       await cache.addCachedWrite(
         WRITER.provider, WRITER.model, PROMPT,
-        makeCachedWrite({ cacheId: `w${i}` }),
+        makeCachedWrite({ cacheId: `w${i}` }), i,
       );
     }
 
@@ -632,7 +647,7 @@ describe("trimModelOutputs", () => {
     for (let i = 0; i < 3; i++) {
       await cache.addCachedWrite(
         WRITER.provider, WRITER.model, PROMPT,
-        makeCachedWrite({ cacheId: `w${i}` }),
+        makeCachedWrite({ cacheId: `w${i}` }), i,
       );
     }
 
@@ -655,7 +670,7 @@ describe("trimModelOutputs", () => {
     for (let i = 0; i < 4; i++) {
       await cache.addCachedWrite(
         WRITER.provider, WRITER.model, PROMPT,
-        makeCachedWrite({ cacheId: `w${i}` }),
+        makeCachedWrite({ cacheId: `w${i}` }), i,
       );
     }
 
@@ -726,7 +741,7 @@ describe("trimModelOutputs", () => {
     for (let i = 0; i < 4; i++) {
       await cache.addCachedWrite(
         WRITER.provider, WRITER.model, PROMPT,
-        makeCachedWrite({ cacheId: `w1-${i}` }),
+        makeCachedWrite({ cacheId: `w1-${i}` }), i,
       );
     }
 
@@ -735,7 +750,7 @@ describe("trimModelOutputs", () => {
     for (let i = 0; i < 2; i++) {
       await cache.addCachedWrite(
         WRITER2.provider, WRITER2.model, PROMPT,
-        makeCachedWrite({ cacheId: `w2-${i}` }),
+        makeCachedWrite({ cacheId: `w2-${i}` }), i,
       );
     }
 
@@ -788,7 +803,7 @@ describe("trimModelOutputs", () => {
     for (let i = 0; i < 2; i++) {
       await cache.addCachedWrite(
         WRITER.provider, WRITER.model, PROMPT,
-        makeCachedWrite({ cacheId: `w${i}` }),
+        makeCachedWrite({ cacheId: `w${i}` }), i,
       );
     }
 
@@ -825,13 +840,13 @@ describe("trimModelOutputs", () => {
     for (let i = 0; i < 5; i++) {
       await cache.addCachedWrite(
         WRITER.provider, WRITER.model, PROMPT,
-        makeCachedWrite({ cacheId: `s-w${i}` }),
+        makeCachedWrite({ cacheId: `s-w${i}` }), i,
       );
     }
     for (let i = 0; i < 2; i++) {
       await cache.addCachedWrite(
         WRITER.provider, WRITER.model, PROMPT2,
-        makeCachedWrite({ cacheId: `p-w${i}` }),
+        makeCachedWrite({ cacheId: `p-w${i}` }), i,
       );
     }
 
