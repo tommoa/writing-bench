@@ -66,6 +66,11 @@ export interface CacheStatusArgs {
   format: "table" | "json";
 }
 
+export interface CacheCombineArgs {
+  source: string;
+  target: string;
+}
+
 export type Command =
   | { command: "run"; args: RunArgs }
   | { command: "results"; args: ResultsArgs }
@@ -73,6 +78,7 @@ export type Command =
   | { command: "elo"; args: EloArgs }
   | { command: "serve"; args: ServeArgs }
   | { command: "cache-clear"; args: ClearCacheArgs }
+  | { command: "cache-combine"; args: CacheCombineArgs }
   | { command: "cache-status"; args: CacheStatusArgs };
 
 function buildCacheCommand(resolve: (cmd: Command) => void) {
@@ -177,6 +183,33 @@ function buildCacheCommand(resolve: (cmd: Command) => void) {
               model: argv.model,
               judgmentsOnly: argv.judgmentsOnly,
               outputs: argv.outputs,
+            },
+          });
+        }
+      )
+      .command(
+        "combine <source> <target>",
+        "Combine cache from one model into another (e.g. merge free-tier data into canonical model)",
+        <U>(sy: Argv<U>) =>
+          sy
+            .positional("source", {
+              type: "string",
+              demandOption: true,
+              describe:
+                "Source model spec to merge from (e.g. opencode:model-free)",
+            })
+            .positional("target", {
+              type: "string",
+              demandOption: true,
+              describe:
+                "Target model spec to merge into (e.g. opencode:model)",
+            }),
+        (argv: ArgumentsCamelCase<CacheCombineArgs>) => {
+          resolve({
+            command: "cache-combine",
+            args: {
+              source: argv.source,
+              target: argv.target,
             },
           });
         }

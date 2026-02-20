@@ -1,5 +1,5 @@
 import { existsSync } from "fs";
-import { readFile, writeFile, mkdir, readdir, rename, unlink } from "fs/promises";
+import { readFile, writeFile, mkdir, readdir, rename, unlink, rm } from "fs/promises";
 import { join, basename } from "path";
 import { createHash, randomBytes } from "crypto";
 import type { TokenUsage, CostBreakdown } from "../types.js";
@@ -571,4 +571,178 @@ export async function trimModelOutputs(
     revisionsDeleted,
     judgmentsDeleted,
   };
+}
+
+// ── Cache Combining ─────────────────────────────────
+
+export interface CombineResult {
+  writesMoved: number;
+  feedbackMoved: number;
+  feedbackDeduped: number;
+  revisionsMoved: number;
+  revisionsRekeyed: number;
+  judgmentsMoved: number;
+}
+
+/**
+ * Combine cache data from one model key into another.
+ * Writes are renumbered to avoid filename conflicts; feedback, revisions,
+ * and judgments are copied by cacheId/hash (skipping duplicates).
+ * Source directories are removed after the merge.
+ */
+export async function combineModelCaches(
+  cacheDir: string,
+  sourceKey: string,
+  targetKey: string,
+): Promise<CombineResult> {
+  const result: CombineResult = { writesMoved: 0, feedbackMoved: 0, feedbackDeduped: 0, revisionsMoved: 0, revisionsRekeyed: 0, judgmentsMoved: 0 };
+
+  // ── Writes ──────────────────────────────────────────
+  const srcWritesBase = join(cacheDir, "writes", sourceKey);
+  const tgtWritesBase = join(cacheDir, "writes", targetKey);
+
+  const srcPromptHashes = await safeReaddir(srcWritesBase);
+  for (const promptHash of srcPromptHashes) {
+    const srcDir = join(srcWritesBase, promptHash);
+    const tgtDir = join(tgtWritesBase, promptHash);
+    await mkdir(tgtDir, { recursive: true });
+
+    // Collect existing cacheIds in target to skip duplicates
+    const existingFiles = (await safeReaddir(tgtDir)).filter((f) => f.endsWith(".json"));
+    const existingCacheIds = new Set<string>();
+    let nextIdx = 0;
+    for (const f of existingFiles) {
+      const n = parseInt(f.match(/\d+/)?.[0] ?? "0", 10);
+      if (n >= nextIdx) nextIdx = n + 1;
+      const entry = await safeReadJson<{ cacheId: string }>(join(tgtDir, f));
+      if (entry?.cacheId) existingCacheIds.add(entry.cacheId);
+    }
+
+    // Copy source samples with renumbered indices, skipping duplicates
+    const srcFiles = (await safeReaddir(srcDir))
+      .filter((f) => f.endsWith(".json"))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)?.[0] ?? "0", 10);
+        const nb = parseInt(b.match(/\d+/)?.[0] ?? "0", 10);
+        return na - nb;
+      });
+
+    for (const f of srcFiles) {
+      const content = await readFile(join(srcDir, f), "utf-8");
+      const parsed = JSON.parse(content) as { cacheId?: string };
+      if (parsed.cacheId && existingCacheIds.has(parsed.cacheId)) continue;
+      const newPath = join(tgtDir, `sample_${nextIdx}.json`);
+      await writeFile(newPath, content);
+      if (parsed.cacheId) existingCacheIds.add(parsed.cacheId);
+      nextIdx++;
+      result.writesMoved++;
+    }
+  }
+
+  // ── Feedback (with cacheId mapping for deduped entries) ──
+  // When source and target both have feedback for the same writeCacheId
+  // (same filename), we keep the target's copy. But the source's feedback
+  // has a different cacheId that downstream revisions reference. We track
+  // this mapping so we can re-key those revisions.
+  const fbCacheIdMap = new Map<string, string>(); // skippedFbId → keptFbId
+
+  const srcFbBase = join(cacheDir, "feedback", sourceKey);
+  const tgtFbBase = join(cacheDir, "feedback", targetKey);
+  const srcFbFiles = await safeReaddir(srcFbBase);
+
+  if (srcFbFiles.length > 0) {
+    await mkdir(tgtFbBase, { recursive: true });
+
+    for (const f of srcFbFiles) {
+      if (!f.endsWith(".json")) continue;
+      const tgtPath = join(tgtFbBase, f);
+      if (existsSync(tgtPath)) {
+        // Duplicate: both endpoints gave feedback on the same write.
+        // Keep target's copy, but record the cacheId mapping for revisions.
+        const srcEntry = await safeReadJson<{ cacheId: string }>(join(srcFbBase, f));
+        const tgtEntry = await safeReadJson<{ cacheId: string }>(tgtPath);
+        if (srcEntry?.cacheId && tgtEntry?.cacheId && srcEntry.cacheId !== tgtEntry.cacheId) {
+          fbCacheIdMap.set(srcEntry.cacheId, tgtEntry.cacheId);
+        }
+        result.feedbackDeduped++;
+        continue;
+      }
+      const content = await readFile(join(srcFbBase, f), "utf-8");
+      await writeFile(tgtPath, content);
+      result.feedbackMoved++;
+    }
+  }
+
+  // ── Revisions (with re-keying for orphaned entries) ──
+  // Revisions are filed by feedbackCacheId. When feedback was deduped above,
+  // revisions referencing the discarded feedback's cacheId become orphaned.
+  // We must re-key them across ALL writer model directories, not just source/target.
+  const srcRevBase = join(cacheDir, "revisions", sourceKey);
+  const tgtRevBase = join(cacheDir, "revisions", targetKey);
+  const srcRevFiles = await safeReaddir(srcRevBase);
+
+  if (srcRevFiles.length > 0) {
+    await mkdir(tgtRevBase, { recursive: true });
+
+    for (const f of srcRevFiles) {
+      if (!f.endsWith(".json")) continue;
+      const tgtPath = join(tgtRevBase, f);
+      if (existsSync(tgtPath)) continue;
+      const content = await readFile(join(srcRevBase, f), "utf-8");
+      await writeFile(tgtPath, content);
+      result.revisionsMoved++;
+    }
+  }
+
+  if (fbCacheIdMap.size > 0) {
+    const revisionsBase = join(cacheDir, "revisions");
+    const revModelDirs = await safeReaddir(revisionsBase);
+    for (const revModelDir of revModelDirs) {
+      const revDirPath = join(revisionsBase, revModelDir);
+      for (const [skippedId, keptId] of fbCacheIdMap) {
+        const orphanPath = join(revDirPath, `${skippedId}.json`);
+        if (!existsSync(orphanPath)) continue;
+        const keptPath = join(revDirPath, `${keptId}.json`);
+        if (existsSync(keptPath)) {
+          // Both feedbacks had revisions; keep the one matching the kept feedback
+          await unlink(orphanPath);
+        } else {
+          // Re-key: update feedbackCacheId and rename to the kept feedback's cacheId
+          const rev = JSON.parse(await readFile(orphanPath, "utf-8"));
+          rev.feedbackCacheId = keptId;
+          await writeFile(keptPath, JSON.stringify(rev, null, 2));
+          await unlink(orphanPath);
+        }
+        result.revisionsRekeyed++;
+      }
+    }
+  }
+
+  // ── Judgments (flat copy, skip existing) ──
+  const srcJudgBase = join(cacheDir, "judgments", sourceKey);
+  const tgtJudgBase = join(cacheDir, "judgments", targetKey);
+  const srcJudgFiles = await safeReaddir(srcJudgBase);
+
+  if (srcJudgFiles.length > 0) {
+    await mkdir(tgtJudgBase, { recursive: true });
+
+    for (const f of srcJudgFiles) {
+      if (!f.endsWith(".json")) continue;
+      const tgtPath = join(tgtJudgBase, f);
+      if (existsSync(tgtPath)) continue;
+      const content = await readFile(join(srcJudgBase, f), "utf-8");
+      await writeFile(tgtPath, content);
+      result.judgmentsMoved++;
+    }
+  }
+
+  // ── Clean up source directories ─────────────────────
+  for (const category of ["writes", "feedback", "revisions", "judgments"]) {
+    const srcDir = join(cacheDir, category, sourceKey);
+    if (existsSync(srcDir)) {
+      await rm(srcDir, { recursive: true });
+    }
+  }
+
+  return result;
 }

@@ -7,6 +7,7 @@ import {
   hashPromptContent,
   randomSample,
   trimModelOutputs,
+  combineModelCaches,
   judgmentPairHash,
   modelKey,
   type CachedWrite,
@@ -862,5 +863,284 @@ describe("trimModelOutputs", () => {
 
     const remaining2 = await cache.getCachedWrites(WRITER.provider, WRITER.model, PROMPT2);
     expect(remaining2).toHaveLength(2);
+  });
+});
+
+// ── combineModelCaches ─────────────────────────────
+
+describe("combineModelCaches", () => {
+  const COMBINE_CACHE_DIR = join(process.cwd(), "data", "test-combine-cache");
+  const SOURCE_KEY = "opencode_minimax-m2.5-free";
+  const TARGET_KEY = "opencode_minimax-m2.5";
+  const PROMPT_HASH = "abc123deadbeef00";
+
+  beforeEach(async () => {
+    if (existsSync(COMBINE_CACHE_DIR)) {
+      await rm(COMBINE_CACHE_DIR, { recursive: true });
+    }
+  });
+
+  afterEach(async () => {
+    if (existsSync(COMBINE_CACHE_DIR)) {
+      await rm(COMBINE_CACHE_DIR, { recursive: true });
+    }
+  });
+
+  async function writeJsonFile(dir: string, filename: string, data: unknown): Promise<void> {
+    const { mkdir, writeFile } = await import("fs/promises");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, filename), JSON.stringify(data, null, 2));
+  }
+
+  it("merges writes with renumbered indices", async () => {
+    // Target has 2 samples
+    const tgtDir = join(COMBINE_CACHE_DIR, "writes", TARGET_KEY, PROMPT_HASH);
+    await writeJsonFile(tgtDir, "sample_0.json", makeCachedWrite({ cacheId: "tgt-0" }));
+    await writeJsonFile(tgtDir, "sample_1.json", makeCachedWrite({ cacheId: "tgt-1" }));
+
+    // Source has 3 samples
+    const srcDir = join(COMBINE_CACHE_DIR, "writes", SOURCE_KEY, PROMPT_HASH);
+    await writeJsonFile(srcDir, "sample_0.json", makeCachedWrite({ cacheId: "src-0" }));
+    await writeJsonFile(srcDir, "sample_1.json", makeCachedWrite({ cacheId: "src-1" }));
+    await writeJsonFile(srcDir, "sample_2.json", makeCachedWrite({ cacheId: "src-2" }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.writesMoved).toBe(3);
+
+    // Target should have 5 files: sample_0, sample_1 (original), sample_2, sample_3, sample_4 (moved)
+    const files = (await readdir(tgtDir)).filter((f) => f.endsWith(".json")).sort();
+    expect(files).toHaveLength(5);
+
+    // Verify the moved samples have correct cacheIds (preserved from source)
+    const movedSample = JSON.parse(await readFile(join(tgtDir, "sample_2.json"), "utf-8"));
+    expect(movedSample.cacheId).toBe("src-0");
+
+    // Source directory should be removed
+    expect(existsSync(join(COMBINE_CACHE_DIR, "writes", SOURCE_KEY))).toBe(false);
+  });
+
+  it("copies feedback files, skipping existing and tracking deduped count", async () => {
+    const srcFbDir = join(COMBINE_CACHE_DIR, "feedback", SOURCE_KEY);
+    const tgtFbDir = join(COMBINE_CACHE_DIR, "feedback", TARGET_KEY);
+
+    // Source has 2 feedback files
+    await writeJsonFile(srcFbDir, "write-1.json", makeCachedFeedback({ cacheId: "fb-src-1" }));
+    await writeJsonFile(srcFbDir, "write-2.json", makeCachedFeedback({ cacheId: "fb-src-2" }));
+
+    // Target already has one of them
+    await writeJsonFile(tgtFbDir, "write-1.json", makeCachedFeedback({ cacheId: "fb-tgt-1" }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.feedbackMoved).toBe(1); // Only write-2.json moved
+    expect(result.feedbackDeduped).toBe(1); // write-1.json was deduped
+
+    // Target should have 2 files
+    const files = (await readdir(tgtFbDir)).filter((f) => f.endsWith(".json"));
+    expect(files).toHaveLength(2);
+
+    // The existing file should NOT have been overwritten
+    const existing = JSON.parse(await readFile(join(tgtFbDir, "write-1.json"), "utf-8"));
+    expect(existing.cacheId).toBe("fb-tgt-1");
+
+    // Source directory should be removed
+    expect(existsSync(srcFbDir)).toBe(false);
+  });
+
+  it("copies judgments and revisions", async () => {
+    const srcJudgDir = join(COMBINE_CACHE_DIR, "judgments", SOURCE_KEY);
+    const srcRevDir = join(COMBINE_CACHE_DIR, "revisions", SOURCE_KEY);
+
+    await writeJsonFile(srcJudgDir, "hash1.json", { winner: "A" });
+    await writeJsonFile(srcRevDir, "fb-1.json", makeCachedRevision({ cacheId: "rev-src-1" }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.judgmentsMoved).toBe(1);
+    expect(result.revisionsMoved).toBe(1);
+
+    // Target dirs should exist with the files
+    expect(existsSync(join(COMBINE_CACHE_DIR, "judgments", TARGET_KEY, "hash1.json"))).toBe(true);
+    expect(existsSync(join(COMBINE_CACHE_DIR, "revisions", TARGET_KEY, "fb-1.json"))).toBe(true);
+
+    // Source dirs should be removed
+    expect(existsSync(srcJudgDir)).toBe(false);
+    expect(existsSync(srcRevDir)).toBe(false);
+  });
+
+  it("returns zeros when source has no data", async () => {
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.writesMoved).toBe(0);
+    expect(result.feedbackMoved).toBe(0);
+    expect(result.revisionsMoved).toBe(0);
+    expect(result.judgmentsMoved).toBe(0);
+  });
+
+  it("creates target directory when only source exists", async () => {
+    const srcDir = join(COMBINE_CACHE_DIR, "writes", SOURCE_KEY, PROMPT_HASH);
+    await writeJsonFile(srcDir, "sample_0.json", makeCachedWrite({ cacheId: "src-0" }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.writesMoved).toBe(1);
+
+    // Target should have the file
+    const tgtDir = join(COMBINE_CACHE_DIR, "writes", TARGET_KEY, PROMPT_HASH);
+    expect(existsSync(join(tgtDir, "sample_0.json"))).toBe(true);
+  });
+
+  it("skips source writes whose cacheId already exists in target", async () => {
+    const tgtDir = join(COMBINE_CACHE_DIR, "writes", TARGET_KEY, PROMPT_HASH);
+    const srcDir = join(COMBINE_CACHE_DIR, "writes", SOURCE_KEY, PROMPT_HASH);
+
+    // Target has writes A and D
+    await writeJsonFile(tgtDir, "sample_0.json", makeCachedWrite({ cacheId: "shared-A" }));
+    await writeJsonFile(tgtDir, "sample_1.json", makeCachedWrite({ cacheId: "unique-D" }));
+
+    // Source has writes A, B, C -- A overlaps with target
+    await writeJsonFile(srcDir, "sample_0.json", makeCachedWrite({ cacheId: "shared-A" }));
+    await writeJsonFile(srcDir, "sample_1.json", makeCachedWrite({ cacheId: "unique-B" }));
+    await writeJsonFile(srcDir, "sample_2.json", makeCachedWrite({ cacheId: "unique-C" }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    // Only B and C should be moved (A is a duplicate)
+    expect(result.writesMoved).toBe(2);
+
+    // Target should have 4 files total: A, D (original) + B, C (moved)
+    const files = (await readdir(tgtDir)).filter((f) => f.endsWith(".json")).sort();
+    expect(files).toHaveLength(4);
+
+    // Verify no duplicate cacheIds
+    const cacheIds: string[] = [];
+    for (const f of files) {
+      const entry = JSON.parse(await readFile(join(tgtDir, f), "utf-8"));
+      cacheIds.push(entry.cacheId);
+    }
+    expect(new Set(cacheIds).size).toBe(4);
+    expect(cacheIds).toContain("shared-A");
+    expect(cacheIds).toContain("unique-D");
+    expect(cacheIds).toContain("unique-B");
+    expect(cacheIds).toContain("unique-C");
+  });
+
+  it("skips duplicate cacheIds within source files themselves", async () => {
+    const srcDir = join(COMBINE_CACHE_DIR, "writes", SOURCE_KEY, PROMPT_HASH);
+
+    // Source has a duplicate cacheId within itself
+    await writeJsonFile(srcDir, "sample_0.json", makeCachedWrite({ cacheId: "dup-X" }));
+    await writeJsonFile(srcDir, "sample_1.json", makeCachedWrite({ cacheId: "dup-X" }));
+    await writeJsonFile(srcDir, "sample_2.json", makeCachedWrite({ cacheId: "unique-Y" }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    // Only first dup-X and unique-Y should be moved
+    expect(result.writesMoved).toBe(2);
+
+    const tgtDir = join(COMBINE_CACHE_DIR, "writes", TARGET_KEY, PROMPT_HASH);
+    const files = (await readdir(tgtDir)).filter((f) => f.endsWith(".json"));
+    expect(files).toHaveLength(2);
+  });
+
+  it("re-keys orphaned revisions when feedback is deduplicated", async () => {
+    const OTHER_WRITER = "opencode_kimi-k2";
+
+    // Both source and target gave feedback on the same write (write-X)
+    const srcFbDir = join(COMBINE_CACHE_DIR, "feedback", SOURCE_KEY);
+    const tgtFbDir = join(COMBINE_CACHE_DIR, "feedback", TARGET_KEY);
+    await writeJsonFile(srcFbDir, "write-X.json", makeCachedFeedback({ cacheId: "fb-free" }));
+    await writeJsonFile(tgtFbDir, "write-X.json", makeCachedFeedback({ cacheId: "fb-paid" }));
+
+    // Another writer model has a revision keyed by the source feedback's cacheId
+    const otherRevDir = join(COMBINE_CACHE_DIR, "revisions", OTHER_WRITER);
+    await writeJsonFile(otherRevDir, "fb-free.json", makeCachedRevision({
+      cacheId: "rev-1",
+      feedbackCacheId: "fb-free",
+    }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.feedbackDeduped).toBe(1);
+    expect(result.revisionsRekeyed).toBe(1);
+
+    // The orphaned revision should be re-keyed to the kept feedback's cacheId
+    expect(existsSync(join(otherRevDir, "fb-free.json"))).toBe(false);
+    expect(existsSync(join(otherRevDir, "fb-paid.json"))).toBe(true);
+
+    // The revision's feedbackCacheId should be updated
+    const rekeyed = JSON.parse(await readFile(join(otherRevDir, "fb-paid.json"), "utf-8"));
+    expect(rekeyed.feedbackCacheId).toBe("fb-paid");
+    expect(rekeyed.cacheId).toBe("rev-1"); // own cacheId preserved
+  });
+
+  it("deletes orphaned revision when kept feedback already has one", async () => {
+    const OTHER_WRITER = "opencode_kimi-k2";
+
+    // Both endpoints gave feedback on the same write
+    const srcFbDir = join(COMBINE_CACHE_DIR, "feedback", SOURCE_KEY);
+    const tgtFbDir = join(COMBINE_CACHE_DIR, "feedback", TARGET_KEY);
+    await writeJsonFile(srcFbDir, "write-X.json", makeCachedFeedback({ cacheId: "fb-free" }));
+    await writeJsonFile(tgtFbDir, "write-X.json", makeCachedFeedback({ cacheId: "fb-paid" }));
+
+    // Writer has revisions for BOTH feedbacks
+    const otherRevDir = join(COMBINE_CACHE_DIR, "revisions", OTHER_WRITER);
+    await writeJsonFile(otherRevDir, "fb-free.json", makeCachedRevision({
+      cacheId: "rev-from-free",
+      feedbackCacheId: "fb-free",
+    }));
+    await writeJsonFile(otherRevDir, "fb-paid.json", makeCachedRevision({
+      cacheId: "rev-from-paid",
+      feedbackCacheId: "fb-paid",
+    }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.feedbackDeduped).toBe(1);
+    expect(result.revisionsRekeyed).toBe(1);
+
+    // The orphan should be deleted, the kept one preserved
+    expect(existsSync(join(otherRevDir, "fb-free.json"))).toBe(false);
+    expect(existsSync(join(otherRevDir, "fb-paid.json"))).toBe(true);
+
+    const kept = JSON.parse(await readFile(join(otherRevDir, "fb-paid.json"), "utf-8"));
+    expect(kept.cacheId).toBe("rev-from-paid"); // kept revision unchanged
+  });
+
+  it("re-keys revisions across multiple writer models", async () => {
+    const WRITER_A = "opencode_kimi-k2";
+    const WRITER_B = "opencode_gpt-5-nano";
+
+    // Duplicate feedback
+    const srcFbDir = join(COMBINE_CACHE_DIR, "feedback", SOURCE_KEY);
+    const tgtFbDir = join(COMBINE_CACHE_DIR, "feedback", TARGET_KEY);
+    await writeJsonFile(srcFbDir, "write-X.json", makeCachedFeedback({ cacheId: "fb-free" }));
+    await writeJsonFile(tgtFbDir, "write-X.json", makeCachedFeedback({ cacheId: "fb-paid" }));
+
+    // Both writers have revisions referencing the source feedback
+    const revDirA = join(COMBINE_CACHE_DIR, "revisions", WRITER_A);
+    const revDirB = join(COMBINE_CACHE_DIR, "revisions", WRITER_B);
+    await writeJsonFile(revDirA, "fb-free.json", makeCachedRevision({
+      cacheId: "rev-A",
+      feedbackCacheId: "fb-free",
+    }));
+    await writeJsonFile(revDirB, "fb-free.json", makeCachedRevision({
+      cacheId: "rev-B",
+      feedbackCacheId: "fb-free",
+    }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.revisionsRekeyed).toBe(2);
+
+    // Both should be re-keyed
+    const revA = JSON.parse(await readFile(join(revDirA, "fb-paid.json"), "utf-8"));
+    expect(revA.feedbackCacheId).toBe("fb-paid");
+    expect(revA.cacheId).toBe("rev-A");
+
+    const revB = JSON.parse(await readFile(join(revDirB, "fb-paid.json"), "utf-8"));
+    expect(revB.feedbackCacheId).toBe("fb-paid");
+    expect(revB.cacheId).toBe("rev-B");
   });
 });
