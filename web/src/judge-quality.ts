@@ -248,5 +248,7 @@ function renderJudgeQualityTable(entries: JudgeQualityEntry[]): HTMLElement {
   });
 
   table.appendChild(tbody);
-  return table;
+  const wrapper = el("div", { className: "table-scroll" });
+  wrapper.appendChild(table);
+  return wrapper;
 }

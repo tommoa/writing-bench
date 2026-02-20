@@ -313,7 +313,9 @@ export function renderEloTable(
     tbody.appendChild(el("tr", {}, ...cells));
   });
   table.appendChild(tbody);
-  return table;
+  const wrapper = el("div", { className: "table-scroll" });
+  wrapper.appendChild(table);
+  return wrapper;
 }
 
 // ── Cost item ───────────────────────────────────────

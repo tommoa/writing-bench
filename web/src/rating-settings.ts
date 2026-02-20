@@ -41,6 +41,7 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
   if (!config.alternativeRatings) return wrapper;
 
   let customPanel: HTMLElement | null = null;
+  let customPanelCollapsed = false;
 
   // ── Sticky tab bar ──
 
@@ -63,6 +64,12 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
     const btn = el("button", {
       className: mode === state.ratingMode ? "tab active" : "tab",
       onClick: () => {
+        // Re-clicking the active custom tab toggles the panel
+        if (mode === "custom" && getRatingState().ratingMode === "custom" && customPanel) {
+          customPanelCollapsed = !customPanelCollapsed;
+          customPanel.style.display = customPanelCollapsed ? "none" : "";
+          return;
+        }
         setRatingMode(mode);
       },
     }, label);
@@ -283,8 +290,9 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
           customPanel = buildCustomPanel();
           descEl.after(customPanel);
         }
-        customPanel.style.display = "";
+        customPanel.style.display = customPanelCollapsed ? "none" : "";
       } else if (customPanel) {
+        customPanelCollapsed = false;
         customPanel.style.display = "none";
       }
     }

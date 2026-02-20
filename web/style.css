@@ -93,6 +93,7 @@ a:hover {
 /* Navigation */
 .nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 1.5rem;
   margin-bottom: 2rem;
   padding-bottom: 1rem;
@@ -490,6 +491,7 @@ details[open] summary ~ * {
 /* Judgment card layout */
 .judgment-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.5em;
   margin-bottom: 0.3em;
@@ -745,6 +747,7 @@ details[open] summary ~ * {
 /* Section header with inline filter */
 .section-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 1em;
 }
@@ -759,6 +762,8 @@ details[open] summary ~ * {
 select {
   font-family: inherit;
   font-size: inherit;
+  min-width: 0;
+  max-width: 100%;
   padding: 0.35em 1.8em 0.35em 0.6em;
   background: var(--bg);
   color: var(--text);
@@ -806,6 +811,11 @@ select option:hover {
 
 .tabs-dropdown select {
   font-size: 0.95em;
+}
+
+/* Table scroll wrapper */
+.table-scroll {
+  overflow-x: auto;
 }
 
 /* Utility */
@@ -960,6 +970,7 @@ select option:hover {
 
 .custom-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   margin-bottom: 0.4em;
@@ -1032,6 +1043,7 @@ select option:hover {
 /* Quality mode pills */
 .mode-pills {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.35em;
   margin-bottom: 0.3em;
 }
@@ -1113,6 +1125,7 @@ select option:hover {
 /* Bias correction row */
 .bias-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.75em;
   margin-top: 0.6em;
@@ -1157,4 +1170,64 @@ select option:hover {
 /* Pruned judge row */
 tr.judge-row.pruned {
   opacity: 0.5;
+}
+
+/* ── Mobile Responsiveness ───────────────────────────── */
+
+@media (max-width: 640px) {
+  body {
+    padding: 1rem 0.5rem;
+  }
+
+  th,
+  td {
+    padding: 0.3em 0.5em;
+    font-size: 0.85em;
+  }
+
+  .nav-github {
+    margin-left: 0;
+  }
+
+  .tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Scroll shadows: local covers hide the scroll shadows when at the edge */
+    background:
+      linear-gradient(to right, var(--bg) 0.5em, transparent) left / 1.5em 100% no-repeat local,
+      linear-gradient(to left, var(--bg) 0.5em, transparent) right / 1.5em 100% no-repeat local,
+      linear-gradient(to right, var(--border), transparent) left / 1em 100% no-repeat scroll,
+      linear-gradient(to left, var(--border), transparent) right / 1em 100% no-repeat scroll;
+  }
+
+  .tab {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .judgment-body {
+    flex-direction: column;
+    gap: 0.5em;
+  }
+
+  .judgment-body-right {
+    text-align: left;
+  }
+
+  .judgment-matchup {
+    flex-direction: column;
+    gap: 0.25em;
+    align-items: flex-start;
+  }
+
+  .judgment-judge {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .run-list li {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25em;
+  }
 }
