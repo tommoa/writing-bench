@@ -18,7 +18,8 @@ export class Scheduler {
       setTimeout(() => fn().then(resolve, reject), 0);
     });
     this.inflight.add(p);
-    p.finally(() => this.inflight.delete(p));
+    const cleanup = () => { this.inflight.delete(p); };
+    p.then(cleanup, cleanup);
     return p;
   }
 

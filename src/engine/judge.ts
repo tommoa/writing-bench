@@ -1,7 +1,7 @@
 import { generateObject, streamText } from "ai";
 import { z } from "zod";
 import { resolveModel } from "../providers/registry.js";
-import { withRetry, isRetryable, MalformedOutputError } from "./retry.js";
+import { withRetry, isRetryable, isProviderError, MalformedOutputError, safeStreamText } from "./retry.js";
 import { resolveTemperature } from "./model-utils.js";
 import {
   extractUsage,
@@ -171,7 +171,7 @@ export async function judgePair(
     } catch (err) {
       // Transient errors already exhausted retries -- propagate rather than
       // falling through to the streamText path (which would also fail).
-      if (isRetryable(err)) throw err;
+      if (isRetryable(err) || isProviderError(err)) throw err;
 
       // Non-retryable error (schema/format issue) → streamText fallback
       // handled below.
@@ -182,15 +182,14 @@ export async function judgePair(
     // Fallback: streamText + JSON extraction (with retry).
     // Used when generateObject fails or model lacks structured output support.
     await withRetry(async () => {
-      const result = streamText({
+      const { text, result } = await safeStreamText((handler) => streamText({
         model,
         system: systemPrompt,
         prompt: userPrompt,
         temperature: resolveTemperature(judgeConfig.temperature, 0.2, modelInfo),
         maxRetries: 0,
-      });
-
-      const text = await result.text;
+        ...handler,
+      }));
       usage = extractUsage(await result.usage);
       cost = calculateCost(modelInfo, usage);
 
@@ -219,7 +218,7 @@ export async function judgePair(
   const latencyMs = Date.now() - startTime;
 
   if (!winner) {
-    throw new Error(`${judgeConfig.label}: judgment produced no winner`);
+    throw new MalformedOutputError(`${judgeConfig.label}: judgment produced no winner`);
   }
 
   return {
