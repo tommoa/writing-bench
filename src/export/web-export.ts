@@ -1,8 +1,13 @@
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
-import type { RunResult, TokenUsage, ModelInfo } from "../types.js";
+import type { RunResult, TokenUsage, ModelInfo, EloRating, JudgeQualityExport, PairwiseJudgment } from "../types.js";
+import { DEFAULT_CONVERGENCE } from "../types.js";
 import { listRuns, loadRun } from "../storage/run-store.js";
 import { loadCumulativeElo } from "../storage/elo-store.js";
+import { computeJudgeQuality } from "../engine/judge-quality.js";
+import type { JudgeQualityData } from "../engine/judge-quality.js";
+import { computeJudgeBias } from "../engine/judge-bias.js";
+import { judgmentsToGames, improvementJudgmentsToGames, whrRatings } from "../engine/whr.js";
 
 // ── Per-model per-stage aggregation ───────────────────
 
@@ -72,6 +77,130 @@ function sumValues(
   return { byModel, total };
 }
 
+// ── Alternative Ratings Type ─────────────────────────
+
+interface AlternativeRatingsExport {
+  equalWeight: { initial: EloRating[]; revised: EloRating[]; feedback: EloRating[] };
+  noBiasCorrection: { initial: EloRating[]; revised: EloRating[]; feedback: EloRating[] };
+}
+
+// ── Judge Quality + Alternative Ratings ──────────────
+
+/**
+ * Build sample-to-model lookup maps from a run's samples.
+ */
+function buildSampleMaps(samples: RunResult["samples"]): {
+  sampleToModel: Map<string, string>;
+  revisedSampleToModel: Map<string, string>;
+  sampleToFeedbackModel: Map<string, string>;
+} {
+  const sampleToModel = new Map<string, string>();
+  const revisedSampleToModel = new Map<string, string>();
+  const sampleToFeedbackModel = new Map<string, string>();
+
+  for (const s of samples) {
+    if (s.stage === "initial") {
+      sampleToModel.set(s.id, s.model);
+    } else {
+      revisedSampleToModel.set(s.id, s.model);
+      if (s.feedbackModel) {
+        sampleToFeedbackModel.set(s.id, s.feedbackModel);
+      }
+    }
+  }
+
+  return { sampleToModel, revisedSampleToModel, sampleToFeedbackModel };
+}
+
+/**
+ * Compute judge quality data for a set of judgments.
+ * Returns serialized JudgeQualityExport entries ready for JSON.
+ * Accepts optional pre-computed quality to avoid redundant computation.
+ */
+function computeJudgeQualityForExport(
+  judgments: PairwiseJudgment[],
+  sampleToModel: Map<string, string>,
+  pruneThreshold: number,
+  precomputedQuality?: JudgeQualityData,
+): JudgeQualityExport[] {
+  const judgeLabels = [...new Set(judgments.map((j) => j.judgeModel))];
+  if (judgeLabels.length < 2) return [];
+
+  const quality = precomputedQuality ?? computeJudgeQuality(
+    judgments, judgeLabels, DEFAULT_CONVERGENCE.judgeDecay,
+  );
+  if (!quality.active || quality.ratings.length === 0) return [];
+
+  // Compute bias stats (caller passes combined initial + revised sampleToModel)
+  const biasData = computeJudgeBias(judgments, sampleToModel, judgeLabels);
+
+  return quality.ratings.map((r) => {
+    const weight = quality.weights.get(r.model) ?? 1.0;
+    const selfPref = biasData.selfPreference.get(r.model);
+    const posBias = biasData.positionBias.get(r.model);
+
+    return {
+      model: r.model,
+      rating: r.rating,
+      ci95: r.ci95 ?? Infinity,
+      wins: r.wins,
+      losses: r.losses,
+      ties: r.ties,
+      weight,
+      selfBias: selfPref?.sufficient ? selfPref.biasDelta : null,
+      positionBias: posBias?.sufficient ? posBias.positionBiasDelta : null,
+      selfBiasSufficient: selfPref?.sufficient ?? false,
+      positionBiasSufficient: posBias?.sufficient ?? false,
+      status: weight < pruneThreshold ? "pruned" as const : "active" as const,
+    };
+  });
+}
+
+/**
+ * Compute alternative rating sets (equal weight, no bias correction)
+ * for a run's judgments. Returns undefined if there are too few judgments
+ * or too few judges to produce meaningful alternatives.
+ */
+function computeAlternativeRatings(
+  judgments: PairwiseJudgment[],
+  sampleToModel: Map<string, string>,
+  revisedSampleToModel: Map<string, string>,
+  sampleToFeedbackModel: Map<string, string>,
+  precomputedJw?: Map<string, number>,
+): AlternativeRatingsExport | undefined {
+  const judgeLabels = [...new Set(judgments.map((j) => j.judgeModel))];
+  if (judgeLabels.length < 2) return undefined;
+
+  // Use pre-computed judge weights if provided, otherwise compute
+  let jw = precomputedJw;
+  if (!jw) {
+    const k = DEFAULT_CONVERGENCE.judgeDecay;
+    const quality = computeJudgeQuality(judgments, judgeLabels, k);
+    jw = quality.active ? quality.weights : undefined;
+  }
+
+  // Split judgments by stage
+  const initialJudgments = judgments.filter((j) => j.stage === "initial");
+  const revisedJudgments = judgments.filter((j) => j.stage === "revised");
+  const improvementJudgments = judgments.filter((j) => j.stage === "improvement");
+
+  // Equal weight: no judge weights, no bias corrections (all games weight 1.0)
+  const equalWeight = {
+    initial: whrRatings(judgmentsToGames(initialJudgments, sampleToModel)),
+    revised: whrRatings(judgmentsToGames(revisedJudgments, revisedSampleToModel)),
+    feedback: whrRatings(improvementJudgmentsToGames(improvementJudgments, sampleToFeedbackModel)),
+  };
+
+  // No bias correction: use judge quality weights but skip per-judgment bias corrections
+  const noBiasCorrection = {
+    initial: whrRatings(judgmentsToGames(initialJudgments, sampleToModel, jw)),
+    revised: whrRatings(judgmentsToGames(revisedJudgments, revisedSampleToModel, jw)),
+    feedback: whrRatings(improvementJudgmentsToGames(improvementJudgments, sampleToFeedbackModel, jw)),
+  };
+
+  return { equalWeight, noBiasCorrection };
+}
+
 // ── Gzip helper ──────────────────────────────────────
 
 async function writeGzipped(path: string, data: string): Promise<void> {
@@ -126,6 +255,8 @@ interface RunsIndex {
     timestamp: string;
     ratings: Record<string, number>;
   }>;
+  cumulativeJudgeQuality?: JudgeQualityExport[];
+  cumulativeAlternativeRatings?: AlternativeRatingsExport;
 }
 
 // ── Manifest & Content Types ─────────────────────────
@@ -156,6 +287,7 @@ interface JudgmentMeta {
   sampleB: string;
   winner: "A" | "B" | "tie";
   stage: "initial" | "revised" | "improvement";
+  positionSwapped?: boolean;
 }
 
 // ── Export ─────────────────────────────────────────────
@@ -178,6 +310,14 @@ export async function exportForWeb(outDir: string): Promise<number> {
 
   const runIds = await listRuns();
   const indexEntries: RunIndexEntry[] = [];
+
+  // Accumulate data for cumulative computations during the per-run loop
+  // to avoid re-loading all runs a second time.
+  const allJudgments: PairwiseJudgment[] = [];
+  const allSampleToModel = new Map<string, string>();
+  const allRevisedSampleToModel = new Map<string, string>();
+  const allSampleToFeedbackModel = new Map<string, string>();
+  const promptToTags = new Map<string, string[]>();
 
   for (const id of runIds) {
     const run = await loadRun(id);
@@ -225,6 +365,37 @@ export async function exportForWeb(outDir: string): Promise<number> {
       cursor += count;
     }
 
+    // ── Compute judge quality + alternative ratings ──
+
+    const { sampleToModel, revisedSampleToModel, sampleToFeedbackModel } =
+      buildSampleMaps(run.samples);
+
+    // Combined map for bias computation (needs both initial + revised)
+    const combinedSampleToModel = new Map([...sampleToModel, ...revisedSampleToModel]);
+
+    // Compute judge quality once -- reuse for both export and alternative ratings
+    const perRunJudgeLabels = [...new Set(run.judgments.map((j) => j.judgeModel))];
+    const perRunQuality = perRunJudgeLabels.length >= 2
+      ? computeJudgeQuality(run.judgments, perRunJudgeLabels, DEFAULT_CONVERGENCE.judgeDecay)
+      : null;
+    const perRunJw = perRunQuality?.active ? perRunQuality.weights : undefined;
+
+    const judgeQuality = computeJudgeQualityForExport(
+      run.judgments, combinedSampleToModel, DEFAULT_CONVERGENCE.judgePruneThreshold,
+      perRunQuality ?? undefined,
+    );
+
+    const alternativeRatings = computeAlternativeRatings(
+      run.judgments, sampleToModel, revisedSampleToModel, sampleToFeedbackModel, perRunJw,
+    );
+
+    // Accumulate for cumulative computations
+    allJudgments.push(...run.judgments);
+    for (const [k, v] of sampleToModel) allSampleToModel.set(k, v);
+    for (const [k, v] of revisedSampleToModel) allRevisedSampleToModel.set(k, v);
+    for (const [k, v] of sampleToFeedbackModel) allSampleToFeedbackModel.set(k, v);
+    for (const p of run.config.prompts) promptToTags.set(p.id, p.tags);
+
     // ── Write manifest (Tier 1) ──
 
     const manifest = {
@@ -232,6 +403,8 @@ export async function exportForWeb(outDir: string): Promise<number> {
       elo: run.elo,
       meta: enrichedMeta,
       modelInfo: run.modelInfo,
+      judgeQuality: judgeQuality.length > 0 ? judgeQuality : undefined,
+      alternativeRatings,
       samples: run.samples.map((s): SampleMeta => ({
         id: s.id,
         model: s.model,
@@ -256,6 +429,7 @@ export async function exportForWeb(outDir: string): Promise<number> {
         sampleB: j.sampleB,
         winner: j.winner,
         stage: j.stage,
+        positionSwapped: j.positionSwapped,
       })),
       promptJudgmentSlices,
     };
@@ -358,6 +532,80 @@ export async function exportForWeb(outDir: string): Promise<number> {
     };
   }
 
+  // ── Cumulative computations (data already collected in per-run loop) ──
+
+  let cumulativeJudgeQuality: JudgeQualityExport[] | undefined;
+  let cumulativeAlternativeRatings: AlternativeRatingsExport | undefined;
+
+  if (allJudgments.length > 0) {
+    const combinedSampleToModel = new Map([...allSampleToModel, ...allRevisedSampleToModel]);
+
+    // Compute judge quality once -- reuse weights for alternatives + per-tag
+    const judgeLabels = [...new Set(allJudgments.map((j) => j.judgeModel))];
+    const k = DEFAULT_CONVERGENCE.judgeDecay;
+    const quality = judgeLabels.length >= 2
+      ? computeJudgeQuality(allJudgments, judgeLabels, k)
+      : null;
+    const jw = quality?.active ? quality.weights : undefined;
+
+    cumulativeJudgeQuality = computeJudgeQualityForExport(
+      allJudgments, combinedSampleToModel, DEFAULT_CONVERGENCE.judgePruneThreshold,
+      quality ?? undefined,
+    );
+    if (cumulativeJudgeQuality.length === 0) cumulativeJudgeQuality = undefined;
+
+    cumulativeAlternativeRatings = computeAlternativeRatings(
+      allJudgments, allSampleToModel, allRevisedSampleToModel, allSampleToFeedbackModel, jw,
+    );
+
+    // ── Compute per-tag alternative ratings for dashboard ──
+    // Written to a separate file to keep runs.json lean.
+
+    const allTags = [...new Set([...promptToTags.values()].flat())];
+    if (allTags.length > 0 && cumulativeAlternativeRatings) {
+      const tagAlts: {
+        equalWeight: Record<string, { initial: EloRating[]; revised: EloRating[] }>;
+        noBiasCorrection: Record<string, { initial: EloRating[]; revised: EloRating[] }>;
+      } = { equalWeight: {}, noBiasCorrection: {} };
+
+      for (const tag of allTags) {
+        // Filter to judgments whose prompt has this tag, excluding improvement
+        const tagJudgments = allJudgments.filter((j) =>
+          j.stage !== "improvement" && promptToTags.get(j.promptId)?.includes(tag),
+        );
+        if (tagJudgments.length === 0) continue;
+
+        const initialJ = tagJudgments.filter((j) => j.stage === "initial");
+        const revisedJ = tagJudgments.filter((j) => j.stage === "revised");
+
+        // Equal weight: no judge weights
+        tagAlts.equalWeight[tag] = {
+          initial: initialJ.length > 0
+            ? whrRatings(judgmentsToGames(initialJ, allSampleToModel))
+            : [],
+          revised: revisedJ.length > 0
+            ? whrRatings(judgmentsToGames(revisedJ, allRevisedSampleToModel))
+            : [],
+        };
+
+        // No bias correction: quality weights but no per-judgment bias corrections
+        tagAlts.noBiasCorrection[tag] = {
+          initial: initialJ.length > 0
+            ? whrRatings(judgmentsToGames(initialJ, allSampleToModel, jw))
+            : [],
+          revised: revisedJ.length > 0
+            ? whrRatings(judgmentsToGames(revisedJ, allRevisedSampleToModel, jw))
+            : [],
+        };
+      }
+
+      await writeGzipped(
+        join(outDir, "tag-alternatives.json"),
+        JSON.stringify(tagAlts),
+      );
+    }
+  }
+
   const index: RunsIndex = {
     runs: indexEntries,
     cumulativeElo: {
@@ -383,6 +631,8 @@ export async function exportForWeb(outDir: string): Promise<number> {
       timestamp: h.timestamp,
       ratings: h.snapshot,
     })),
+    cumulativeJudgeQuality,
+    cumulativeAlternativeRatings,
   };
 
   await writeGzipped(

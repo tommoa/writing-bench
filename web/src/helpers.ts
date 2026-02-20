@@ -1,4 +1,5 @@
-import type { SampleMeta, SampleContent, FeedbackMeta, FeedbackContent, ModelSpeed } from "./types.js";
+import type { SampleMeta, SampleContent, FeedbackMeta, FeedbackContent, ModelSpeed, JudgmentMeta } from "./types.js";
+import type { PairwiseJudgment } from "../../src/types.js";
 
 // ── DOM helpers ─────────────────────────────────────
 
@@ -112,6 +113,30 @@ export function feedbackMetaEl(meta: FeedbackMeta, content?: FeedbackContent): H
   );
 }
 
+// ── Judge quality formatters ────────────────────────
+
+/** Format a judge weight as "0.45x". */
+export function formatWeight(n: number): string {
+  return `${n.toFixed(2)}x`;
+}
+
+/** Format a bias value as "+12%" / "-3%" / "..." / "--". */
+export function formatBias(n: number | null, sufficient: boolean): string {
+  if (n == null) return "--";
+  if (!sufficient) return "...";
+  const pct = Math.round(n * 100);
+  return pct >= 0 ? `+${pct}%` : `${pct}%`;
+}
+
+/** Return a CSS class for bias severity coloring. */
+export function biasClass(n: number | null, sufficient: boolean): string {
+  if (n == null || !sufficient) return "muted";
+  const abs = Math.abs(n);
+  if (abs < 0.05) return "bias-low";
+  if (abs < 0.15) return "bias-moderate";
+  return "bias-high";
+}
+
 // ── Stage label mapping ─────────────────────────────
 
 export const STAGE_LABELS: Record<string, string> = {
@@ -208,7 +233,12 @@ export function renderEloTable(
     el("th", {}, "Model"),
     el("th", opts.sortableElo ? { className: "sortable" } : {}, "ELO"),
   ];
-  if (hasCi) headerCells.push(el("th", { className: "ci" }, "\u00b1CI"));
+  if (hasCi) {
+    headerCells.push(el("th", {
+      className: "ci ci-toggle",
+      onClick: () => table.classList.toggle("show-ci-range"),
+    }, "\u00b1CI"));
+  }
   headerCells.push(el("th", {}, opts.wlt ? "W/L/T" : "Matches"));
   if (hasCosts) {
     for (const s of visibleStages) {
@@ -241,9 +271,16 @@ export function renderEloTable(
       el("td", { className: cls }, String(r.rating)),
     ];
     if (hasCi) {
-      cells.push(
-        el("td", { className: "ci" }, r.ci95 != null ? `\u00b1${r.ci95}` : "-"),
-      );
+      if (r.ci95 != null) {
+        const lo = Math.round(r.rating - r.ci95);
+        const hi = Math.round(r.rating + r.ci95);
+        cells.push(el("td", { className: "ci" },
+          el("span", { className: "ci-pm" }, `\u00b1${r.ci95}`),
+          el("span", { className: "ci-range" }, `${lo}\u2013${hi}`),
+        ));
+      } else {
+        cells.push(el("td", { className: "ci" }, "-"));
+      }
     }
     cells.push(
       opts.wlt
@@ -280,6 +317,42 @@ export function renderEloTable(
 }
 
 // ── Cost item ───────────────────────────────────────
+
+/** Build sample-to-model lookup maps from manifest sample metadata. */
+export function buildSampleMaps(samples: SampleMeta[]): {
+  sampleToModel: Map<string, string>;
+  revisedSampleToModel: Map<string, string>;
+  sampleToFeedbackModel: Map<string, string>;
+} {
+  const sampleToModel = new Map<string, string>();
+  const revisedSampleToModel = new Map<string, string>();
+  const sampleToFeedbackModel = new Map<string, string>();
+
+  for (const s of samples) {
+    if (s.stage === "initial") {
+      sampleToModel.set(s.id, s.model);
+    } else {
+      revisedSampleToModel.set(s.id, s.model);
+      if (s.feedbackModel) {
+        sampleToFeedbackModel.set(s.id, s.feedbackModel);
+      }
+    }
+  }
+
+  return { sampleToModel, revisedSampleToModel, sampleToFeedbackModel };
+}
+
+/** Convert lean JudgmentMeta[] (from manifest) to PairwiseJudgment[] for engine functions. */
+export function judgmentMetaToPairwise(judgments: JudgmentMeta[]): PairwiseJudgment[] {
+  return judgments.map((j, i) => ({
+    ...j,
+    id: `j-${i}`,
+    reasoning: "",
+    usage: { inputTokens: 0, outputTokens: 0 },
+    cost: { input: 0, output: 0, total: 0, totalUncached: 0 },
+    latencyMs: 0,
+  }));
+}
 
 export function renderCostItem(label: string, value: string): HTMLElement {
   return el(

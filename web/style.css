@@ -14,8 +14,8 @@
   --highlight: #e2be7d;
   --surface: #f0f0f0;
   --border: #e0e0e0;
-  --side-a: #1a7f37;
-  --side-b: #0969da;
+  --side-a: #1da912;
+  --side-b: #118dc3;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -33,8 +33,8 @@
     --highlight: #e2be7d;
     --surface: #2c313a;
     --border: #3e4451;
-    --side-a: #7ee787;
-    --side-b: #79c0ff;
+    --side-a: #98c379;
+    --side-b: #61afef;
   }
 }
 
@@ -161,6 +161,28 @@ tr:hover {
 .ci {
   color: var(--comment);
   font-size: 0.9em;
+}
+
+/* CI click-to-toggle (±CI <-> range) */
+th.ci-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.ci-toggle:hover {
+  color: var(--accent);
+}
+
+.ci-range {
+  display: none;
+}
+
+table.show-ci-range .ci-pm {
+  display: none;
+}
+
+table.show-ci-range .ci-range {
+  display: inline;
 }
 
 .wlt {
@@ -787,4 +809,236 @@ select option:hover {
   color: var(--comment);
   font-style: italic;
   margin: 0.5em 0;
+}
+
+/* Unified rating settings (sticky tab bar) */
+.rating-settings {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding: 0.5em 0;
+  margin: 0.5em 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.rating-settings:empty {
+  display: none;
+}
+
+/* Rating toggle -- managed table container (no toggle bar) */
+.rating-toggle-container {
+  margin: 0.5em 0 1.5em;
+}
+
+/* Custom panel (judge pills, quality mode, decay, bias) */
+.custom-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.75em 1em;
+  margin: 0.5em 0;
+}
+
+.custom-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.4em;
+  margin-top: 0.6em;
+}
+
+.custom-header:first-child {
+  margin-top: 0;
+}
+
+.custom-header .label {
+  color: var(--header);
+  font-weight: 700;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.custom-header .quick-toggle {
+  font-size: 0.8em;
+  color: var(--comment);
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+  padding: 0;
+  transition: color 0.2s;
+}
+
+.custom-header .quick-toggle:hover {
+  color: var(--accent);
+}
+
+.custom-header .separator {
+  color: var(--border);
+  margin: 0 0.3em;
+}
+
+/* Judge pills */
+.judge-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
+  margin-bottom: 0.3em;
+}
+
+.judge-pill {
+  display: inline-block;
+  padding: 0.2em 0.65em;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 0.8em;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color 0.2s, opacity 0.2s;
+}
+
+.judge-pill:hover {
+  border-color: var(--accent);
+}
+
+.judge-pill.excluded {
+  opacity: 0.4;
+  text-decoration: line-through;
+  background: transparent;
+}
+
+/* Quality mode pills */
+.mode-pills {
+  display: flex;
+  gap: 0.35em;
+  margin-bottom: 0.3em;
+}
+
+.mode-pill {
+  display: inline-block;
+  padding: 0.2em 0.65em;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 0.8em;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--comment);
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.mode-pill:hover {
+  border-color: var(--accent);
+}
+
+.mode-pill.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Decay slider row */
+.decay-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  margin: 0.6em 0;
+}
+
+.decay-row .label {
+  color: var(--header);
+  font-weight: 700;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.decay-value {
+  color: var(--comment);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+/* Range input styling */
+.decay-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.decay-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+
+.decay-row input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+
+.decay-row input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+
+/* Bias correction pill */
+.bias-pill {
+  display: inline-block;
+  padding: 0.2em 0.65em;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 0.8em;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--comment);
+  transition: color 0.2s, border-color 0.2s;
+  margin-top: 0.3em;
+}
+
+.bias-pill:hover {
+  border-color: var(--accent);
+}
+
+.bias-pill.active {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+/* Bias severity colors */
+.bias-low {
+  color: var(--green);
+}
+
+.bias-moderate {
+  color: var(--highlight);
+}
+
+.bias-high {
+  color: var(--accent);
+}
+
+/* Pruned judge row */
+tr.judge-row.pruned {
+  opacity: 0.5;
 }

@@ -144,6 +144,38 @@ export interface RunResult {
   modelInfo: Record<string, ModelInfo>;
 }
 
+// ── Judge Quality ───────────────────────────────────
+
+/** Serialized judge quality entry from web export. */
+export interface JudgeQualityEntry {
+  model: string;
+  rating: number;
+  ci95: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  weight: number;
+  selfBias: number | null;
+  positionBias: number | null;
+  selfBiasSufficient: boolean;
+  positionBiasSufficient: boolean;
+  status: "active" | "pruned";
+}
+
+/** Pre-computed alternative rating sets. */
+export interface AlternativeRatings {
+  equalWeight: {
+    initial: EloRating[];
+    revised: EloRating[];
+    feedback: EloRating[];
+  };
+  noBiasCorrection: {
+    initial: EloRating[];
+    revised: EloRating[];
+    feedback: EloRating[];
+  };
+}
+
 // ── Tiered data: Run Manifest (Tier 1) ──────────────
 
 /** Sample structural metadata without text or per-call cost detail. */
@@ -175,6 +207,7 @@ export interface JudgmentMeta {
   sampleB: string;
   winner: "A" | "B" | "tie";
   stage: "initial" | "revised" | "improvement";
+  positionSwapped?: boolean;
 }
 
 /** Lean run data loaded as the first tier (immediate page load). */
@@ -212,6 +245,10 @@ export interface RunManifest {
   judgments: JudgmentMeta[];
   /** Maps each promptId to its contiguous slice in the judgments array. */
   promptJudgmentSlices: Record<string, { start: number; count: number }>;
+  /** Judge quality data (absent for old runs or single-judge runs). */
+  judgeQuality?: JudgeQualityEntry[];
+  /** Pre-computed alternative rating sets (absent for single-judge runs). */
+  alternativeRatings?: AlternativeRatings;
 }
 
 // ── Tiered data: Per-prompt Content (Tier 2) ────────
@@ -237,6 +274,14 @@ export interface PromptContent {
   samples: Record<string, SampleContent>;
   feedback: Record<string, FeedbackContent>;
   reasoning: string[];
+}
+
+// ── Tag Alternatives (lazy-loaded for dashboard) ────
+
+/** Per-tag alternative ratings, loaded from data/tag-alternatives.json. */
+export interface TagAlternatives {
+  equalWeight: Record<string, { initial: EloRating[]; revised: EloRating[] }>;
+  noBiasCorrection: Record<string, { initial: EloRating[]; revised: EloRating[] }>;
 }
 
 // ── Dashboard types ─────────────────────────────────
@@ -285,4 +330,8 @@ export interface RunsIndex {
     timestamp: string;
     ratings: Record<string, number>;
   }>;
+  /** Cumulative judge quality (aggregated across all runs). */
+  cumulativeJudgeQuality?: JudgeQualityEntry[];
+  /** Cumulative alternative rating sets. */
+  cumulativeAlternativeRatings?: AlternativeRatings;
 }

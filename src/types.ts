@@ -321,6 +321,24 @@ export interface RunResult {
   modelInfo: Record<string, ModelInfo>;
 }
 
+// ── Judge Quality Export ────────────────────────────
+
+/** Serialized judge quality entry for web export. */
+export interface JudgeQualityExport {
+  model: string;
+  rating: number;
+  ci95: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  weight: number;
+  selfBias: number | null;
+  positionBias: number | null;
+  selfBiasSufficient: boolean;
+  positionBiasSufficient: boolean;
+  status: "active" | "pruned";
+}
+
 // ── Pairwise Records ────────────────────────────────
 
 /** Accumulated pairwise outcomes between two models. */

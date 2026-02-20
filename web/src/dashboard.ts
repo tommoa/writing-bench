@@ -1,25 +1,68 @@
-import type { RunsIndex, RunIndexEntry } from "./types.js";
+import type { RunsIndex, RunIndexEntry, TagAlternatives } from "./types.js";
 import { el, render, renderEloTable, formatDate } from "./helpers.js";
+import { renderJudgeQualitySection } from "./judge-quality.js";
+import { createRatingToggle } from "./rating-toggle.js";
+import { createRatingSettings } from "./rating-settings.js";
+import { clearRatingSubscribers, fetchTagAlternatives } from "./state.js";
 
 // ── Dashboard ───────────────────────────────────────
 
 export function renderDashboard(index: RunsIndex): void {
+  // Clear stale subscribers from previous page renders
+  clearRatingSubscribers();
+
   const frag = document.createDocumentFragment();
+
+  // Unified rating settings (no custom tab on dashboard -- no manifest)
+  frag.appendChild(createRatingSettings({
+    alternativeRatings: index.cumulativeAlternativeRatings,
+  }));
 
   if (index.cumulativeElo.writing.length > 0) {
     frag.appendChild(el("h2", {}, "Writer ELO"));
-    frag.appendChild(renderEloTable(index.cumulativeElo.writing, {
-      costStages: ["initial", "revised"],
-      sortableElo: true,
-    }));
+    frag.appendChild(createRatingToggle({
+      defaultRatings: index.cumulativeElo.writing,
+      alternativeRatings: index.cumulativeAlternativeRatings,
+      dimension: "initial",
+      eloTableOpts: {
+        costStages: ["initial", "revised"],
+        sortableElo: true,
+      },
+    }).container);
   }
 
   if (index.cumulativeElo.feedback.length > 0) {
     frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
-    frag.appendChild(renderEloTable(index.cumulativeElo.feedback, {
-      costStages: ["feedback"],
-      sortableElo: true,
-    }));
+    frag.appendChild(createRatingToggle({
+      defaultRatings: index.cumulativeElo.feedback,
+      alternativeRatings: index.cumulativeAlternativeRatings,
+      dimension: "feedback",
+      eloTableOpts: {
+        costStages: ["feedback"],
+        sortableElo: true,
+      },
+    }).container);
+  }
+
+  // Cumulative judge quality (collapsed by default, lazy DOM on expand)
+  if (index.cumulativeJudgeQuality && index.cumulativeJudgeQuality.length > 0) {
+    frag.appendChild(el("h2", {}, "Judge Quality"));
+    const jqDetails = el("details");
+    jqDetails.appendChild(el("summary", {}, "Judge Quality"));
+    const jqInner = el("div", { className: "details-content" });
+    jqDetails.appendChild(jqInner);
+
+    let jqLoaded = false;
+    jqDetails.addEventListener("toggle", () => {
+      if (!(jqDetails as HTMLDetailsElement).open || jqLoaded) return;
+      jqLoaded = true;
+      const jqSection = renderJudgeQualitySection(
+        index.cumulativeJudgeQuality!, "Cumulative Judge Quality",
+      );
+      if (jqSection) jqInner.appendChild(jqSection);
+    });
+
+    frag.appendChild(jqDetails);
   }
 
   if (
@@ -32,12 +75,34 @@ export function renderDashboard(index: RunsIndex): void {
     )) {
       const d = el("details");
       d.appendChild(el("summary", {}, cat));
-      d.appendChild(
-        el("div", { className: "details-content" }, renderEloTable(ratings, {
-          costStages: ["initial", "revised"],
-          sortableElo: true,
-        }))
-      );
+      const inner = el("div", { className: "details-content" });
+      d.appendChild(inner);
+
+      let loaded = false;
+      d.addEventListener("toggle", async () => {
+        if (!(d as HTMLDetailsElement).open || loaded) return;
+        loaded = true;
+
+        // Lazy-load per-tag alternatives (cached after first fetch)
+        let tagAlts: TagAlternatives | undefined;
+        try {
+          tagAlts = await fetchTagAlternatives();
+        } catch {
+          // File may not exist for old exports -- degrade to default only
+        }
+
+        inner.appendChild(createRatingToggle({
+          defaultRatings: ratings,
+          dimension: "initial",
+          tagFilter: cat,
+          tagAlternatives: tagAlts,
+          eloTableOpts: {
+            costStages: ["initial", "revised"],
+            sortableElo: true,
+          },
+        }).container);
+      });
+
       frag.appendChild(d);
     }
   }

@@ -1,7 +1,11 @@
 import type { RunManifest } from "./types.js";
-import { el, $$, render, renderError, renderEloTable, renderCostItem, formatDate } from "./helpers.js";
+import { el, $$, render, renderError, renderCostItem, formatDate } from "./helpers.js";
 import { renderPromptSection } from "./prompt-section.js";
 import { renderJudgmentsSection } from "./judgments.js";
+import { renderJudgeQualitySection } from "./judge-quality.js";
+import { createRatingToggle } from "./rating-toggle.js";
+import { createRatingSettings } from "./rating-settings.js";
+import { clearRatingSubscribers } from "./state.js";
 
 // ── Data fetching ───────────────────────────────────
 
@@ -14,6 +18,9 @@ async function fetchManifest(id: string): Promise<RunManifest> {
 // ── Run Detail ──────────────────────────────────────
 
 export function renderRunDetail(manifest: RunManifest): void {
+  // Clear stale subscribers from previous page renders
+  clearRatingSubscribers();
+
   const frag = document.createDocumentFragment();
   const runId = manifest.config.id;
 
@@ -36,6 +43,12 @@ export function renderRunDetail(manifest: RunManifest): void {
     );
   }
 
+  // Unified rating settings (sticky tab bar + custom panel)
+  frag.appendChild(createRatingSettings({
+    alternativeRatings: manifest.alternativeRatings,
+    manifest,
+  }));
+
   // ELO tables -- per-run ratings have W/L/T instead of just match count
   const wlt = (r: { model: string; wins?: number; losses?: number; ties?: number }) =>
     r.wins != null ? `${r.wins}/${r.losses}/${r.ties}` : "-";
@@ -48,20 +61,57 @@ export function renderRunDetail(manifest: RunManifest): void {
   };
 
   frag.appendChild(el("h2", {}, "Initial Writer ELO"));
-  frag.appendChild(renderEloTable(manifest.elo.initial.ratings, { ...eloOpts, costStages: ["initial"] }));
+  frag.appendChild(createRatingToggle({
+    defaultRatings: manifest.elo.initial.ratings,
+    alternativeRatings: manifest.alternativeRatings,
+    manifest,
+    dimension: "initial",
+    eloTableOpts: { ...eloOpts, costStages: ["initial"] },
+  }).container);
 
   frag.appendChild(el("h2", {}, "Revised Writer ELO"));
-  frag.appendChild(renderEloTable(manifest.elo.revised.ratings, { ...eloOpts, costStages: ["revised"] }));
+  frag.appendChild(createRatingToggle({
+    defaultRatings: manifest.elo.revised.ratings,
+    alternativeRatings: manifest.alternativeRatings,
+    manifest,
+    dimension: "revised",
+    eloTableOpts: { ...eloOpts, costStages: ["revised"] },
+  }).container);
 
   if (
     manifest.elo.revised.feedbackRatings &&
     manifest.elo.revised.feedbackRatings.length > 0
   ) {
     frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
-    frag.appendChild(renderEloTable(manifest.elo.revised.feedbackRatings, { ...eloOpts, costStages: ["feedback"] }));
+    frag.appendChild(createRatingToggle({
+      defaultRatings: manifest.elo.revised.feedbackRatings,
+      alternativeRatings: manifest.alternativeRatings,
+      manifest,
+      dimension: "feedback",
+      eloTableOpts: { ...eloOpts, costStages: ["feedback"] },
+    }).container);
   }
 
-  // ELO by category
+  // Judge quality section (collapsed by default, lazy DOM on expand)
+  if (manifest.judgeQuality && manifest.judgeQuality.length > 0) {
+    frag.appendChild(el("h2", {}, "Judge Quality"));
+    const jqDetails = el("details");
+    jqDetails.appendChild(el("summary", {}, "Judge Quality"));
+    const jqInner = el("div", { className: "details-content" });
+    jqDetails.appendChild(jqInner);
+
+    let jqLoaded = false;
+    jqDetails.addEventListener("toggle", () => {
+      if (!(jqDetails as HTMLDetailsElement).open || jqLoaded) return;
+      jqLoaded = true;
+      const jqSection = renderJudgeQualitySection(manifest.judgeQuality!, "Judge Quality", manifest);
+      if (jqSection) jqInner.appendChild(jqSection);
+    });
+
+    frag.appendChild(jqDetails);
+  }
+
+  // ELO by category (lazy DOM construction on expand)
   if (
     manifest.elo.initial.byTag &&
     Object.keys(manifest.elo.initial.byTag).length > 0
@@ -71,15 +121,34 @@ export function renderRunDetail(manifest: RunManifest): void {
       const d = el("details");
       d.appendChild(el("summary", {}, cat));
       const inner = el("div", { className: "details-content" });
-      inner.appendChild(el("h4", {}, "Initial"));
-      inner.appendChild(renderEloTable(ratings, { ...eloOpts, costStages: ["initial"] }));
-      if (manifest.elo.revised.byTag?.[cat]) {
-        inner.appendChild(el("h4", {}, "Revised"));
-        inner.appendChild(
-          renderEloTable(manifest.elo.revised.byTag[cat], { ...eloOpts, costStages: ["revised"] }),
-        );
-      }
       d.appendChild(inner);
+
+      let loaded = false;
+      d.addEventListener("toggle", () => {
+        if (!(d as HTMLDetailsElement).open || loaded) return;
+        loaded = true;
+
+        inner.appendChild(el("h4", {}, "Initial"));
+        inner.appendChild(createRatingToggle({
+          defaultRatings: ratings,
+          manifest,
+          dimension: "initial",
+          tagFilter: cat,
+          eloTableOpts: { ...eloOpts, costStages: ["initial"] },
+        }).container);
+
+        if (manifest.elo.revised.byTag?.[cat]) {
+          inner.appendChild(el("h4", {}, "Revised"));
+          inner.appendChild(createRatingToggle({
+            defaultRatings: manifest.elo.revised.byTag[cat],
+            manifest,
+            dimension: "revised",
+            tagFilter: cat,
+            eloTableOpts: { ...eloOpts, costStages: ["revised"] },
+          }).container);
+        }
+      });
+
       frag.appendChild(d);
     }
   }
