@@ -14,7 +14,8 @@ export interface ModelConfig {
   provider: ProviderName;
   model: string;
   label: string; // Display name (resolved from models.dev or explicit)
-  registryId: string; // "provider:model" for SDK resolution and cache
+  registryId: string; // "provider:model" canonical identity for cache and ratings
+  apiModelIds?: string[]; // API endpoint specs when aliased (e.g. via ~)
   temperature?: number;
   maxTokens?: number;
   apiBase?: string;

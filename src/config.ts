@@ -70,18 +70,92 @@ export async function loadPrompts(pattern: string): Promise<PromptConfig[]> {
 // ── Model config parsing ────────────────────────────
 
 /**
+ * Return the model spec to pass to resolveModel() for API calls.
+ * Uses the first aliased endpoint if available, otherwise the canonical registryId.
+ */
+export function apiModelId(cfg: ModelConfig): string {
+  return cfg.apiModelIds?.[0] ?? cfg.registryId;
+}
+
+/**
  * Parse CLI model specs into ModelConfig objects.
  */
 export function parseModelConfigs(specs: string[]): ModelConfig[] {
   return specs.map((spec) => {
-    const { provider, model, label, registryId } = parseModelSpec(spec);
+    const { provider, model, label, registryId, apiModelIds } = parseModelSpec(spec);
     return {
       provider: provider as ModelConfig["provider"],
       model,
       label,
       registryId,
+      apiModelIds,
     };
   });
+}
+
+/**
+ * Merge ModelConfig entries that resolve to the same canonical registryId.
+ * Collects all API endpoints into a single apiModelIds array.
+ * Validates that conflicting explicit labels are not provided.
+ */
+export function mergeModelEndpoints(models: ModelConfig[]): ModelConfig[] {
+  // Group by canonical registryId
+  const groups = new Map<string, ModelConfig[]>();
+  for (const m of models) {
+    const group = groups.get(m.registryId) ?? [];
+    group.push(m);
+    groups.set(m.registryId, group);
+  }
+
+  const result: ModelConfig[] = [];
+  for (const [registryId, group] of groups) {
+    if (group.length === 1) {
+      result.push(group[0]);
+      continue;
+    }
+
+    // Validate labels: find the single explicit label (where label !== model)
+    let explicitLabel: string | undefined;
+    for (const m of group) {
+      if (m.label !== m.model) {
+        if (explicitLabel != null && explicitLabel !== m.label) {
+          throw new Error(
+            `Conflicting labels for ${registryId}: '${explicitLabel}' vs '${m.label}'. ` +
+            `When aliasing multiple endpoints to the same model, use at most one =label.`
+          );
+        }
+        explicitLabel = m.label;
+      }
+    }
+
+    // Merge apiModelIds: collect all API endpoints
+    const allApiIds: string[] = [];
+    let hasCanonicalDirect = false;
+    for (const m of group) {
+      if (m.apiModelIds?.length) {
+        allApiIds.push(...m.apiModelIds);
+      } else {
+        // This config IS the canonical spec (no ~alias), add registryId to pool
+        hasCanonicalDirect = true;
+      }
+    }
+    if (hasCanonicalDirect) {
+      allApiIds.push(registryId);
+    }
+
+    // Use the first group entry as base, apply merged values
+    const merged: ModelConfig = {
+      provider: group[0].provider,
+      model: group[0].model,
+      registryId,
+      label: explicitLabel ?? group[0].model,
+      apiModelIds: allApiIds.length > 0 ? allApiIds : undefined,
+    };
+
+    result.push(merged);
+  }
+
+  return result;
 }
 
 /**

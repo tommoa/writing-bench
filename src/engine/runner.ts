@@ -2,6 +2,7 @@ import { readdir } from "fs/promises";
 import { streamText } from "ai";
 import { nanoid } from "nanoid";
 import { resolveModel } from "../providers/registry.js";
+import { apiModelId } from "../config.js";
 import { withRetry, OutputTruncatedError, isProviderError, safeStreamText } from "./retry.js";
 import { resolveMaxOutputTokens, resolveTemperature } from "./model-utils.js";
 import {
@@ -1674,7 +1675,7 @@ export class BenchmarkRunner {
     stage: "initial" | "revised",
   ): Promise<WritingSample> {
     const startTime = Date.now();
-    const model = await resolveModel(`${modelCfg.provider}:${modelCfg.model}`);
+    const model = await resolveModel(apiModelId(modelCfg));
 
     const systemPrompt = `You are a skilled writer. Write the requested piece to the best of your ability. Focus on quality, depth, and craft.${
       prompt.maxWords ? ` Target length: approximately ${prompt.maxWords} words.` : ""
@@ -1724,7 +1725,7 @@ export class BenchmarkRunner {
     sample: WritingSample,
   ): Promise<Feedback> {
     const startTime = Date.now();
-    const model = await resolveModel(`${feedbackModelCfg.provider}:${feedbackModelCfg.model}`);
+    const model = await resolveModel(apiModelId(feedbackModelCfg));
 
     const criteria = prompt.judgingCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n");
     const systemPrompt =
@@ -1786,7 +1787,7 @@ Please provide your detailed feedback.`;
     feedback: Feedback,
   ): Promise<WritingSample> {
     const startTime = Date.now();
-    const model = await resolveModel(`${writerCfg.provider}:${writerCfg.model}`);
+    const model = await resolveModel(apiModelId(writerCfg));
 
     const systemPrompt =
       prompt.revisionPrompt ??

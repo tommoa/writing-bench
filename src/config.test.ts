@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { loadPrompts, parseModelConfigs, createRunConfig, filterPrompts } from "./config.js";
-import type { PromptConfig } from "./types.js";
+import { loadPrompts, parseModelConfigs, mergeModelEndpoints, createRunConfig, filterPrompts } from "./config.js";
+import type { ModelConfig, PromptConfig } from "./types.js";
 
 describe("loadPrompts", () => {
   it("loads all TOML prompt files", async () => {
@@ -183,5 +183,102 @@ describe("filterPrompts", () => {
     // Matches both "sermon" and "youth-talk" by tag
     expect(result).toHaveLength(2);
     expect(result.map((p) => p.id).sort()).toEqual(["sermon", "youth-talk"]);
+  });
+});
+
+describe("mergeModelEndpoints", () => {
+  function makeConfig(overrides: Partial<ModelConfig> & { provider: string; model: string }): ModelConfig {
+    return {
+      label: overrides.model,
+      registryId: `${overrides.provider}:${overrides.model}`,
+      ...overrides,
+    } as ModelConfig;
+  }
+
+  it("passes through models with no shared registryId", () => {
+    const models = [
+      makeConfig({ provider: "openai", model: "gpt-4o" }),
+      makeConfig({ provider: "anthropic", model: "claude-sonnet-4" }),
+    ];
+    const result = mergeModelEndpoints(models);
+    expect(result).toHaveLength(2);
+    expect(result[0].registryId).toBe("openai:gpt-4o");
+    expect(result[1].registryId).toBe("anthropic:claude-sonnet-4");
+  });
+
+  it("merges a single alias into one config", () => {
+    const models = parseModelConfigs([
+      "opencode:minimax-m2.5-free~opencode:minimax-m2.5",
+    ]);
+    const result = mergeModelEndpoints(models);
+    expect(result).toHaveLength(1);
+    expect(result[0].registryId).toBe("opencode:minimax-m2.5");
+    expect(result[0].apiModelIds).toEqual(["opencode:minimax-m2.5-free"]);
+  });
+
+  it("merges multiple aliases to the same canonical", () => {
+    const models = parseModelConfigs([
+      "gv-anthropic:claude-sonnet-4~anthropic:claude-sonnet-4",
+      "bedrock:anthropic.claude-sonnet-4~anthropic:claude-sonnet-4",
+    ]);
+    const result = mergeModelEndpoints(models);
+    expect(result).toHaveLength(1);
+    expect(result[0].registryId).toBe("anthropic:claude-sonnet-4");
+    expect(result[0].apiModelIds).toEqual([
+      "gv-anthropic:claude-sonnet-4",
+      "bedrock:anthropic.claude-sonnet-4",
+    ]);
+  });
+
+  it("includes canonical endpoint when specified directly alongside aliases", () => {
+    const models = parseModelConfigs([
+      "opencode:minimax-m2.5-free~opencode:minimax-m2.5",
+      "opencode:minimax-m2.5",
+    ]);
+    const result = mergeModelEndpoints(models);
+    expect(result).toHaveLength(1);
+    expect(result[0].registryId).toBe("opencode:minimax-m2.5");
+    expect(result[0].apiModelIds).toContain("opencode:minimax-m2.5-free");
+    expect(result[0].apiModelIds).toContain("opencode:minimax-m2.5");
+  });
+
+  it("uses the single explicit label from the merged group", () => {
+    const models = parseModelConfigs([
+      "opencode:minimax-m2.5-free~opencode:minimax-m2.5=MiniMax",
+      "opencode:minimax-m2.5",
+    ]);
+    const result = mergeModelEndpoints(models);
+    expect(result).toHaveLength(1);
+    expect(result[0].label).toBe("MiniMax");
+  });
+
+  it("allows same explicit label on multiple entries", () => {
+    const models = parseModelConfigs([
+      "opencode:minimax-m2.5-free~opencode:minimax-m2.5=MiniMax",
+      "opencode:minimax-m2.5=MiniMax",
+    ]);
+    const result = mergeModelEndpoints(models);
+    expect(result).toHaveLength(1);
+    expect(result[0].label).toBe("MiniMax");
+  });
+
+  it("throws on conflicting explicit labels", () => {
+    const models = parseModelConfigs([
+      "opencode:minimax-m2.5-free~opencode:minimax-m2.5=LabelA",
+      "opencode:minimax-m2.5=LabelB",
+    ]);
+    expect(() => mergeModelEndpoints(models)).toThrow("Conflicting labels");
+  });
+
+  it("preserves non-aliased models alongside merged groups", () => {
+    const models = parseModelConfigs([
+      "opencode:minimax-m2.5-free~opencode:minimax-m2.5",
+      "anthropic:claude-sonnet-4",
+    ]);
+    const result = mergeModelEndpoints(models);
+    expect(result).toHaveLength(2);
+    expect(result[0].registryId).toBe("opencode:minimax-m2.5");
+    expect(result[1].registryId).toBe("anthropic:claude-sonnet-4");
+    expect(result[1].apiModelIds).toBeUndefined();
   });
 });

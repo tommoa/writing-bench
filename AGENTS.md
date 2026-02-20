@@ -5,6 +5,24 @@ discover that any section is outdated or encounter behavior that
 contradicts what is documented here, update this file as part of your
 change.
 
+**CRITICAL:** When considering any code change, ask the following
+questions:
+- Is it the right way to solve this issue?
+- Will it be the most maintainable option?
+- Is this actually a bug in a different system that we should be fixing?
+- Is this the right interface to use?
+- What is the simplest interface that will cover all my current needs?
+- In how many situations will this method be used?
+- Is this API easy to use for my current needs?
+- Does any information get used in multiple places?
+- Will users be able to determine a better value than can be determined
+  here? (for configuration)
+- Is there any code that needs to be written more than once?
+- Can you hide any special cases?
+
+Make sure you thoroughly answer all of these questions. Present the
+responses to the user when providing your plan.
+
 ## Build & Run
 
 Runtime is **Bun** (not Node). The CLI entry point is `src/index.tsx`.
@@ -16,6 +34,7 @@ bun run start run --cache-only                          # run from cache only (a
 bun run start run --cache-only -m provider:model        # run from cache for specific models
 bun run start run --skip-seeding -m provider:model      # skip Phase 1 cache scan
 bun run start run --max-rounds 10 -m provider:model     # limit productive adaptive rounds
+bun run start cache combine provider:source provider:target  # merge cache directories
 bun run start serve               # build + export + serve web viewer
 bun run build:web                 # bundle web/src/app.ts -> web/app.js
 ```
@@ -136,7 +155,6 @@ judgments.filter((j) => j.stage === "improvement");
   ```
 - `beforeEach` / `afterEach` for filesystem cleanup -- save original
   content, restore in teardown
-- Test pure logic and storage. No tests for runner, UI, or providers.
 
 ## Project Structure
 
@@ -204,6 +222,14 @@ Dependencies flow downward: CLI -> Engine -> Providers/Storage -> Types.
 - LSP errors in `src/ui/*.tsx` files are pre-existing Ink/React JSX
   type issues -- they are harmless and unrelated to actual bugs.
 - The `ai` SDK `Intl.Segmenter` type error is a known upstream issue.
+- **Model aliasing**: The model spec format supports `~` for declaring
+  endpoint equivalence: `provider:model~canonical_provider:canonical_model`.
+  The canonical identity (right of `~`) is used for cache, labels, and
+  ratings; the API endpoint (left of `~`) is used only for API calls.
+  Multiple endpoints can alias to the same canonical model.
+  `ModelConfig.apiModelIds` holds the API endpoint spec(s); only 4
+  `resolveModel()` call sites use it. The `cache combine` command
+  merges existing cache data between model key directories.
 
 ## Pull-Based Architecture
 

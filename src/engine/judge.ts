@@ -1,6 +1,7 @@
 import { generateObject, streamText } from "ai";
 import { z } from "zod";
 import { resolveModel } from "../providers/registry.js";
+import { apiModelId } from "../config.js";
 import { withRetry, isRetryable, isProviderError, MalformedOutputError, safeStreamText } from "./retry.js";
 import { resolveTemperature } from "./model-utils.js";
 import {
@@ -131,9 +132,7 @@ export async function judgePair(
 ): Promise<PairwiseJudgment> {
   const startTime = Date.now();
 
-  const model = await resolveModel(
-    `${judgeConfig.provider}:${judgeConfig.model}`
-  );
+  const model = await resolveModel(apiModelId(judgeConfig));
 
   const schema = reasoning
     ? JudgmentSchemaWithReasoning

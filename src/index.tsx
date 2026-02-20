@@ -5,13 +5,13 @@ import { join } from "path";
 import { rm } from "fs/promises";
 import { existsSync } from "fs";
 import { parseArgs, type Command } from "./cli.js";
-import { loadPrompts, parseModelConfigs, createRunConfig, filterPrompts, resolveModelLabels } from "./config.js";
+import { loadPrompts, parseModelConfigs, mergeModelEndpoints, createRunConfig, filterPrompts, resolveModelLabels } from "./config.js";
 import { BenchmarkRunner } from "./engine/runner.js";
 import { saveRun, loadRun, loadLatestRun, listRuns } from "./storage/run-store.js";
 import { updateCumulativeElo, loadCumulativeElo } from "./storage/elo-store.js";
 import { exportForWeb } from "./export/web-export.js";
 import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson, reverseModelKey } from "./storage/cache-status.js";
-import { modelKey, trimModelOutputs } from "./storage/sample-cache.js";
+import { modelKey, trimModelOutputs, combineModelCaches } from "./storage/sample-cache.js";
 import { safeReaddir } from "./storage/fs-utils.js";
 import { parseModelSpec } from "./providers/registry.js";
 import { checkProviderEnv } from "./providers/models.js";
@@ -69,10 +69,14 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     );
   }
 
-  const models = parseModelConfigs(modelSpecs!);
-  const judges = args.judges?.length
+  let models = parseModelConfigs(modelSpecs!);
+  let judges = args.judges?.length
     ? parseModelConfigs(args.judges)
     : undefined;
+
+  // Merge endpoints that alias to the same canonical model (via ~)
+  models = mergeModelEndpoints(models);
+  if (judges) judges = mergeModelEndpoints(judges);
 
   // Resolve display names from models.dev (best-effort in cache-only mode)
   try {
@@ -86,12 +90,19 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
   const prompts = await loadAndFilterPrompts(args.prompts, args.filter);
 
   // Check provider env vars -- skip in cache-only mode (no API calls needed)
+  // When aliases are used, check the API provider (not the canonical one)
   if (!args.cacheOnly) {
-    const allProviders = [...new Set([
-      ...models.map((m) => m.provider),
-      ...(judges ?? []).map((m) => m.provider),
-    ])];
-    const envWarnings = await checkProviderEnv(allProviders);
+    const apiProviders = new Set<string>();
+    for (const m of [...models, ...(judges ?? [])]) {
+      if (m.apiModelIds?.length) {
+        for (const apiId of m.apiModelIds) {
+          apiProviders.add(parseModelSpec(apiId).provider);
+        }
+      } else {
+        apiProviders.add(m.provider);
+      }
+    }
+    const envWarnings = await checkProviderEnv([...apiProviders]);
     for (const warn of envWarnings) {
       console.warn(`Warning: ${warn}`);
     }
@@ -517,6 +528,34 @@ async function handleClearCache(
   }
 }
 
+async function handleCacheCombine(
+  args: Extract<Command, { command: "cache-combine" }>["args"]
+) {
+  const sourceKey = specToKey(args.source);
+  const targetKey = specToKey(args.target);
+
+  if (sourceKey === targetKey) {
+    console.log("Source and target resolve to the same cache key. Nothing to do.");
+    return;
+  }
+
+  const cacheBase = join(process.cwd(), "data", "cache");
+  const result = await combineModelCaches(cacheBase, sourceKey, targetKey);
+
+  const total = result.writesMoved + result.feedbackMoved + result.feedbackDeduped
+    + result.revisionsMoved + result.revisionsRekeyed + result.judgmentsMoved;
+  if (total === 0) {
+    console.log(`No cache data found for ${args.source}.`);
+    return;
+  }
+
+  console.log(`Combined cache from ${args.source} into ${args.target}:`);
+  console.log(`  ${result.writesMoved} writes moved`);
+  console.log(`  ${result.feedbackMoved} feedback files moved${result.feedbackDeduped > 0 ? `, ${result.feedbackDeduped} deduplicated` : ""}`);
+  console.log(`  ${result.revisionsMoved} revisions moved${result.revisionsRekeyed > 0 ? `, ${result.revisionsRekeyed} re-keyed` : ""}`);
+  console.log(`  ${result.judgmentsMoved} judgments moved`);
+}
+
 // Main
 async function main() {
   try {
@@ -540,6 +579,9 @@ async function main() {
         break;
       case "cache-clear":
         await handleClearCache(cmd.args);
+        break;
+      case "cache-combine":
+        await handleCacheCombine(cmd.args);
         break;
       case "cache-status":
         await handleCacheStatus(cmd.args);

@@ -188,21 +188,84 @@ export async function resolveModel(modelId: string) {
 }
 
 /**
- * Parse a CLI model spec "provider:model[=label]" into its parts.
- * Provider names are models.dev provider IDs (e.g., google-vertex).
+ * Parse a CLI model spec into its parts.
+ *
+ * Full format: provider:model[~canonical_provider:canonical_model][=label]
  *
  * The first colon separates provider from model. Everything after
  * that colon is the model ID -- which may itself contain colons
  * (e.g. Ollama's "llama3.1:8b"). An optional "=label" suffix
  * provides an explicit display name.
  *
+ * The optional "~canonical" suffix declares that this API endpoint
+ * serves the same model as the canonical spec. The canonical identity
+ * is used for cache, labels, and ratings; the left-hand spec is used
+ * only for API calls.
+ *
  * Examples:
  *   "openai:gpt-4o"              → provider=openai, model=gpt-4o
  *   "ollama:llama3.1:8b"         → provider=ollama, model=llama3.1:8b
  *   "openai:gpt-4o=fast"         → provider=openai, model=gpt-4o, label=fast
  *   "ollama:llama3.1:8b=my-llama"→ provider=ollama, model=llama3.1:8b, label=my-llama
+ *   "opencode:model-free~opencode:model"
+ *     → provider=opencode, model=model (canonical),
+ *       apiModelIds=["opencode:model-free"]
+ *   "opencode:model-free~opencode:model=MyModel"
+ *     → provider=opencode, model=model (canonical), label=MyModel,
+ *       apiModelIds=["opencode:model-free"]
  */
 export function parseModelSpec(spec: string): {
+  provider: string;
+  model: string;
+  label: string;
+  registryId: string;
+  apiModelIds?: string[];
+} {
+  // Check for ~ alias: split into API spec (left) and canonical spec (right).
+  // Only treat ~ as an alias separator if the part after ~ contains a colon
+  // (i.e., is a valid provider:model spec), to avoid misinterpreting ~ in labels.
+  const tildeIdx = spec.indexOf("~");
+  if (tildeIdx >= 0) {
+    const rightSide = spec.slice(tildeIdx + 1);
+    if (rightSide.includes(":")) {
+      const apiPart = spec.slice(0, tildeIdx);
+      const canonicalPart = rightSide;
+
+      // Validate the API part has provider:model format (no =label allowed)
+      const apiColon = apiPart.indexOf(":");
+      if (apiColon < 0) {
+        throw new Error(
+          `Invalid API endpoint spec "${apiPart}" in alias. Expected format: provider:model~canonical_provider:canonical_model[=label]`
+        );
+      }
+      if (apiPart.includes("=")) {
+        throw new Error(
+          `Labels (=) are not allowed on the API endpoint side of ~. ` +
+          `Put the label on the canonical side: provider:model~canonical_provider:canonical_model=label`
+        );
+      }
+
+      // Parse canonical part with existing logic (handles : and =)
+      const canonical = parseModelSpecSimple(canonicalPart);
+
+      return {
+        provider: canonical.provider,
+        model: canonical.model,
+        label: canonical.label,
+        registryId: canonical.registryId,
+        apiModelIds: [apiPart],
+      };
+    }
+  }
+
+  // No alias -- standard parsing
+  return parseModelSpecSimple(spec);
+}
+
+/**
+ * Parse a simple "provider:model[=label]" spec (no alias handling).
+ */
+function parseModelSpecSimple(spec: string): {
   provider: string;
   model: string;
   label: string;
