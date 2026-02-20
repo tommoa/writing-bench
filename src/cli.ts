@@ -2,7 +2,7 @@ import yargs from "yargs";
 import type { Argv, ArgumentsCamelCase } from "yargs";
 import { hideBin } from "yargs/helpers";
 import type { JudgeQualityMode } from "./types.js";
-import { DEFAULT_CONVERGENCE } from "./types.js";
+import { DEFAULT_CONVERGENCE, DEFAULT_CONCURRENCY } from "./types.js";
 
 export interface RunArgs {
   models?: string[];
@@ -25,6 +25,7 @@ export interface RunArgs {
   judgeSensitivity: "low" | "medium" | "high";
   judgeDecay?: number;
   judgePruneThreshold?: number;
+  concurrency: number;
   cacheOnly: boolean;
   skipSeeding: boolean;
 }
@@ -321,6 +322,20 @@ export async function parseArgs(): Promise<Command> {
               describe:
                 "Prune judges with weight below this (0-1). Default from --judge-sensitivity.",
             })
+            .option("concurrency", {
+              type: "number",
+              default: DEFAULT_CONCURRENCY,
+              describe:
+                "Max needs fulfilled concurrently. Each need may make 1-6 API calls across models. "
+                + "Lower this if you hit rate limits; raise it if your providers allow high throughput. "
+                + "Needs are interleaved across models, so a value of 8 typically means 1-3 concurrent calls per model.",
+            })
+            .check((argv) => {
+              if (argv.concurrency < 1) {
+                throw new Error("--concurrency must be at least 1");
+              }
+              return true;
+            })
             .option("skip-seeding", {
               type: "boolean",
               default: false,
@@ -365,6 +380,7 @@ export async function parseArgs(): Promise<Command> {
               judgeSensitivity: argv.judgeSensitivity as "low" | "medium" | "high",
               judgeDecay: argv.judgeDecay,
               judgePruneThreshold: argv.judgePruneThreshold,
+              concurrency: argv.concurrency,
               cacheOnly: argv.cacheOnly,
               skipSeeding: argv.skipSeeding,
             },

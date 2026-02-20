@@ -129,6 +129,8 @@ export const DEFAULT_CONVERGENCE: ConvergenceConfig = {
   judgePruneThreshold: 0.5,
 };
 
+export const DEFAULT_CONCURRENCY = 8;
+
 /** Sensitivity presets for judge quality weighting and pruning. */
 export const JUDGE_PRESETS: Record<"low" | "medium" | "high", { judgeDecay: number; judgePruneThreshold: number }> = {
   low:    { judgeDecay: 0.007, judgePruneThreshold: 0.3 },
@@ -149,6 +151,13 @@ export interface RunConfig {
   cacheOnly: boolean; // Only use cached data, no API calls in ensure methods
   skipSeeding: boolean; // Skip Phase 1 cache scan; adaptive loop discovers cache lazily
   timestamp: string;
+  /** Max needs fulfilled concurrently. Controls overall API pressure.
+   *  Each need may trigger 1-6 sequential API calls across different
+   *  models. Needs are interleaved by model, so effective per-model
+   *  concurrency is roughly concurrency / num_models.
+   *  TODO: Support per-provider concurrency limits for mixed-provider
+   *  setups where providers have different rate limits. */
+  concurrency: number;
   /** Convergence settings (defaults from DEFAULT_CONVERGENCE). */
   convergence: ConvergenceConfig;
 }
@@ -406,6 +415,8 @@ export interface BenchmarkProgress {
   needDescription?: string;
   /** Summary of needs in the current adaptive batch. */
   batchSummary?: string;
+  /** Models suspended this batch due to rate-limit / server errors. */
+  suspendedModels?: string[];
   /** Per-judge bias statistics (only present when judge quality is active). */
   judgeBias?: {
     selfPreference: Record<string, {

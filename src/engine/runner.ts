@@ -1,7 +1,8 @@
+import { readdir } from "fs/promises";
 import { streamText } from "ai";
 import { nanoid } from "nanoid";
 import { resolveModel } from "../providers/registry.js";
-import { withRetry, OutputTruncatedError } from "./retry.js";
+import { withRetry, OutputTruncatedError, isProviderError, safeStreamText } from "./retry.js";
 import { resolveMaxOutputTokens, resolveTemperature } from "./model-utils.js";
 import {
   getModelInfoMap,
@@ -27,6 +28,8 @@ import { computeJudgeBias, computeBiasCorrections, composeWeights } from "./judg
 import type { JudgeBiasData } from "./judge-bias.js";
 import {
   SampleCache,
+  judgmentPairHash,
+  modelKey,
   type CachedWrite,
 } from "../storage/sample-cache.js";
 import {
@@ -38,11 +41,11 @@ import {
   feedbackKey,
   revisionKey,
   judgmentGroupKey,
-  completedWorkSize,
   emptyCompletedWork,
   formatNeedDescription,
   formatBatchSummary,
   formatConvergenceTarget,
+  primaryModel,
 } from "./need-identifier.js";
 import type { Need, CompletedWork } from "./need-identifier.js";
 import {
@@ -69,6 +72,58 @@ import {
 type EventHandler = (event: BenchmarkEvent) => void;
 
 const ZERO_COST: CostBreakdown = Object.freeze({ input: 0, output: 0, total: 0, totalUncached: 0 });
+
+// ── Concurrency Utilities ───────────────────────────
+
+/**
+ * Process items with bounded concurrency, settling all (never rejects).
+ * Like Promise.allSettled but limits how many items run at once.
+ * The fn callback should handle its own errors (e.g. via .catch()).
+ */
+export async function settledPool<T>(
+  limit: number,
+  items: T[],
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  const active = new Set<Promise<void>>();
+  for (const item of items) {
+    const p = fn(item).then(
+      () => { active.delete(p); },
+      () => { active.delete(p); },
+    );
+    active.add(p);
+    if (active.size >= limit) await Promise.race(active);
+  }
+  if (active.size > 0) await Promise.all(active);
+}
+
+/**
+ * Tag a rejected promise with the model that caused the failure.
+ * The tag is read by the circuit breaker to suspend the correct model.
+ * Preserves an existing tag so inner (closer to the API call) attribution
+ * is not overwritten by outer cascade wrappers.
+ */
+export function tagModel<T>(label: string, p: Promise<T>): Promise<T> {
+  return p.catch((err) => {
+    if (err instanceof Error && !(err as any).failedModel) {
+      (err as any).failedModel = label;
+    }
+    throw err;
+  });
+}
+
+/**
+ * Extract all model labels involved in a need (for circuit breaker skip check).
+ */
+export function needModels(n: Need): string[] {
+  if (n.type === "initial_judgment") {
+    return [n.modelA, n.modelB, n.judgeModel.label];
+  }
+  if (n.type === "improvement_judgment") {
+    return [n.writer, n.feedbackModel, n.judgeModel.label];
+  }
+  return [n.modelA, n.modelB, n.feedbackModel, n.judgeModel.label];
+}
 
 /**
  * Pull-based adaptive benchmark runner. Instead of generating all work
@@ -143,6 +198,9 @@ export class BenchmarkRunner {
   private judgeBiasData: JudgeBiasData = { selfPreference: new Map(), positionBias: new Map() };
   private biasCorrections = new Map<string, number>();
 
+  // Models suspended by the circuit breaker this batch (cleared each round)
+  private suspendedModels = new Set<string>();
+
   /** Judge weights when active, undefined during bootstrap. */
   private get activeJudgeWeights(): Map<string, number> | undefined {
     return this.judgeQuality.active ? this.judgeQuality.weights : undefined;
@@ -158,6 +216,9 @@ export class BenchmarkRunner {
   // Cached progress values -- recomputed in recomputeRatings() instead
   // of on every emitProgress call (avoids O(n²) per progress update).
   private cachedMaxCi = 0;
+  private cachedWritingMaxCi = 0;
+  private cachedRevisedMaxCi = 0;
+  private cachedFeedbackMaxCi = 0;
   private cachedOverlapProgress = 0;
 
   // Need context for UI
@@ -251,7 +312,8 @@ export class BenchmarkRunner {
     if (inflight) return inflight;
     const promise = fn();
     map.set(key, promise);
-    promise.finally(() => map.delete(key));
+    const cleanup = () => { map.delete(key); };
+    promise.then(cleanup, cleanup);
     return promise;
   }
 
@@ -340,7 +402,7 @@ export class BenchmarkRunner {
       data: {
         stage: activeStages[0] ?? "initialWriting",
         activeStages,
-        stageProgress: this.computeStageProgress(maxCi, ciThreshold),
+        stageProgress: this.computeStageProgress(ciThreshold),
         stageDone: this.opsDone,
         currentOp,
         elo: {
@@ -372,6 +434,8 @@ export class BenchmarkRunner {
         ciThreshold,
         needDescription: this.currentNeedDescription,
         batchSummary: this.currentBatchSummary,
+        suspendedModels: this.suspendedModels.size > 0
+          ? [...this.suspendedModels] : undefined,
         judgeBias: this.serializeJudgeBias(),
       },
     });
@@ -396,14 +460,31 @@ export class BenchmarkRunner {
 
   /**
    * Compute stage progress as a 0-1 fraction for the current convergence mode.
-   * In CI-threshold mode: ratio of how close maxCi is to the threshold.
-   * In overlap mode: fraction of resolved (non-overlapping) pairs.
+   *
+   * CI-threshold mode: averages per-dimension progress, where each dimension's
+   * progress is (CI tightness) * (model coverage). This ensures progress cannot
+   * reach 100% until every configured model has ratings in every dimension --
+   * matching the requirement in isConverged() (need-identifier.ts).
+   *
+   * Overlap mode: fraction of resolved (non-overlapping) pairs.
    */
-  private computeStageProgress(maxCi: number, ciThreshold: number): number {
+  private computeStageProgress(ciThreshold: number): number {
     if (ciThreshold > 0) {
-      return maxCi < Infinity
-        ? Math.min(1, 1 - (maxCi - ciThreshold) / (maxCi + ciThreshold))
-        : 0;
+      const n = this.config.models.length;
+      const dims = [
+        { maxCi: this.cachedWritingMaxCi, count: this.writingWhr.ratings.length },
+        { maxCi: this.cachedRevisedMaxCi, count: this.revisedWhr.ratings.length },
+        { maxCi: this.cachedFeedbackMaxCi, count: this.feedbackWhr.ratings.length },
+      ];
+      let total = 0;
+      for (const d of dims) {
+        const ciProgress = d.maxCi < Infinity
+          ? Math.min(1, 1 - (d.maxCi - ciThreshold) / (d.maxCi + ciThreshold))
+          : 0;
+        const coverage = n > 0 ? Math.min(d.count, n) / n : 1;
+        total += ciProgress * coverage;
+      }
+      return total / dims.length;
     }
     return this.cachedOverlapProgress;
   }
@@ -511,10 +592,13 @@ export class BenchmarkRunner {
     this.lastRatingRecompute = Date.now();
 
     // Update cached progress values so emitProgress doesn't recompute them
+    this.cachedWritingMaxCi = maxCiHalfWidth(this.writingWhr);
+    this.cachedRevisedMaxCi = maxCiHalfWidth(this.revisedWhr);
+    this.cachedFeedbackMaxCi = maxCiHalfWidth(this.feedbackWhr);
     this.cachedMaxCi = Math.max(
-      maxCiHalfWidth(this.writingWhr),
-      maxCiHalfWidth(this.revisedWhr),
-      maxCiHalfWidth(this.feedbackWhr),
+      this.cachedWritingMaxCi,
+      this.cachedRevisedMaxCi,
+      this.cachedFeedbackMaxCi,
     );
     const ciThreshold = this.config.convergence.ciThreshold;
     this.cachedOverlapProgress = ciThreshold === 0 ? this.computeOverlapProgress() : 0;
@@ -588,7 +672,9 @@ export class BenchmarkRunner {
       this.emitProgress(`${modelCfg.label} writing "${prompt.name}" (${outputIndex + 1})`);
 
       try {
-        const sample = await this.generateSample(modelCfg, prompt, outputIndex, "initial");
+        const sample = await tagModel(modelCfg.label,
+          this.generateSample(modelCfg, prompt, outputIndex, "initial"),
+        );
         const cacheId = sample.id;
         this.sampleToCacheId.set(sample.id, cacheId);
 
@@ -676,7 +762,9 @@ export class BenchmarkRunner {
       this.emitProgress(`${sourceModel.label} reviewing ${targetSample.model}'s "${prompt.name}"`);
 
       try {
-        const feedback = await this.generateFeedback(sourceModel, prompt, targetSample);
+        const feedback = await tagModel(sourceModel.label,
+          this.generateFeedback(sourceModel, prompt, targetSample),
+        );
         const fbCacheId = feedback.id;
         this.feedbackToCacheId.set(feedback.id, fbCacheId);
 
@@ -772,7 +860,9 @@ export class BenchmarkRunner {
       );
 
       try {
-        const revised = await this.generateRevision(writerCfg, prompt, original, feedback);
+        const revised = await tagModel(writerCfg.label,
+          this.generateRevision(writerCfg, prompt, original, feedback),
+        );
         const revCacheId = revised.id;
         this.sampleToCacheId.set(revised.id, revCacheId);
 
@@ -862,7 +952,9 @@ export class BenchmarkRunner {
       this.emitProgress(`${judgeCfg.label} judging "${prompt.name}" (${stage})`);
 
       try {
-        const judgment = await this.doJudge(judgeCfg, prompt, sampleA, sampleB, stage);
+        const judgment = await tagModel(judgeCfg.label,
+          this.doJudge(judgeCfg, prompt, sampleA, sampleB, stage),
+        );
 
         // Cache the judgment
         if (cacheIdA && cacheIdB) {
@@ -914,6 +1006,36 @@ export class BenchmarkRunner {
    * completedWork.judgments.has(jkey) skips already-known judgments.
    */
   private async seedJudgmentsFromArrays(): Promise<void> {
+    // Pre-load judgment directory listings: one readdir per judge model
+    // instead of O(S^2 * J) existsSync calls per prompt.
+    const judgmentFileSets = new Map<string, Set<string>>();
+    await Promise.all(
+      this.judgeModels.map(async (judge) => {
+        const mk = modelKey(judge.provider, judge.model);
+        const dir = this.cache.judgmentsDir(judge.provider, judge.model);
+        try {
+          judgmentFileSets.set(mk, new Set(await readdir(dir)));
+        } catch {
+          judgmentFileSets.set(mk, new Set());
+        }
+      }),
+    );
+
+    // Fast check: is this judgment file on disk?
+    const hasCachedJudgment = (
+      judge: ModelConfig,
+      stage: string,
+      sampleA: WritingSample,
+      sampleB: WritingSample,
+    ): boolean => {
+      const cidA = this.sampleToCacheId.get(sampleA.id);
+      const cidB = this.sampleToCacheId.get(sampleB.id);
+      if (!cidA || !cidB) return false;
+      const hash = judgmentPairHash(stage, cidA, cidB);
+      const mk = modelKey(judge.provider, judge.model);
+      return judgmentFileSets.get(mk)?.has(`${hash}.json`) ?? false;
+    };
+
     const tasks: Promise<unknown>[] = [];
 
     // Initial judgments
@@ -928,6 +1050,7 @@ export class BenchmarkRunner {
               prompt.id, judge.label,
               promptSamples[i].outputIndex, promptSamples[j].outputIndex);
             if (this.completedWork.judgments.has(jkey)) continue;
+            if (!hasCachedJudgment(judge, "initial", promptSamples[i], promptSamples[j])) continue;
 
             tasks.push(
               this.ensureJudgment(
@@ -954,6 +1077,7 @@ export class BenchmarkRunner {
           revised.model, revised.feedbackModel ?? "",
           prompt.id, judge.label, original.outputIndex);
         if (this.completedWork.judgments.has(jkey)) continue;
+        if (!hasCachedJudgment(judge, "improvement", original, revised)) continue;
 
         tasks.push(
           this.ensureJudgment(
@@ -986,6 +1110,7 @@ export class BenchmarkRunner {
                 `${prompt.id}:${group[i].feedbackModel}`, judge.label,
                 group[i].outputIndex, group[j].outputIndex);
               if (this.completedWork.judgments.has(jkey)) continue;
+              if (!hasCachedJudgment(judge, "revised", group[i], group[j])) continue;
 
               tasks.push(
                 this.ensureJudgment(
@@ -1322,22 +1447,46 @@ export class BenchmarkRunner {
           `Adaptive round ${this.judgingRound + 1}: max CI ±${this.cachedMaxCi === Infinity ? "∞" : this.cachedMaxCi} → target ${formatConvergenceTarget(convergence.ciThreshold)}`,
         );
 
-        // Fulfill needs in parallel -- errors are recorded, not propagated.
+        // Fulfill needs with bounded concurrency -- errors are recorded,
+        // not propagated. The circuit breaker tracks which models have
+        // failed (429/5xx) and skips subsequent needs involving them.
         // tripleResults tracks per-triple judgment hit/miss within this batch;
         // only triples where ALL judges missed are added to missingJudgments
         // after the batch (post-batch aggregation).
         const opsBefore = this.opsDone;
-        const completedBefore = completedWorkSize(this.completedWork);
         const tripleResults = new Map<string, boolean>();
 
-        await Promise.allSettled(needs.map((n) =>
-          this.fulfillNeed(n, tripleResults).catch((err) => {
-            const model = n.type === "improvement_judgment" ? n.writer : n.modelA;
-            const taskError = extractTaskError(err, model);
-            this.taskErrors.push(taskError);
-            this.emit({ type: "error", data: taskError });
-          }),
-        ));
+        // TODO: Per-provider concurrency limits would allow users with
+        // mixed providers to set different limits per provider. Currently,
+        // --concurrency is a global cap on concurrent needs.
+        this.suspendedModels.clear();
+
+        await settledPool(this.config.concurrency, needs, (n) => {
+          // Skip needs involving a suspended model (first provider error = suspension)
+          if (needModels(n).some((m) => this.suspendedModels.has(m))) {
+            return Promise.resolve();
+          }
+          return this.fulfillNeed(n, tripleResults).catch((err) => {
+            const primary = primaryModel(n);
+
+            if (isProviderError(err)) {
+              // Rate-limit / server errors: suspend model immediately.
+              // No retries at the request level -- the adaptive loop
+              // gives the model a fresh chance next round.
+              const model = (err as any)?.failedModel ?? primary;
+              if (!this.suspendedModels.has(model)) {
+                const reason = err instanceof Error ? err.message : String(err);
+                this.emitProgress(`${model}: ${reason}`);
+              }
+              this.suspendedModels.add(model);
+            } else {
+              // Other errors: record as TaskError with full details
+              const taskError = extractTaskError(err, primary);
+              this.taskErrors.push(taskError);
+              this.emit({ type: "error", data: taskError });
+            }
+          });
+        });
 
         // Post-batch: only triples where ALL judges missed get pruned
         for (const [key, hadHit] of tripleResults) {
@@ -1352,30 +1501,37 @@ export class BenchmarkRunner {
         const opsBeforeProbe = this.opsDone;
         await this.seedJudgmentsFromArrays();
 
-        const completedAfter = completedWorkSize(this.completedWork);
-
         // Only count productive rounds (with actual ops) toward maxRounds.
         // Cache-miss-only rounds are free -- just pruning the candidate space.
         // Include ops from both batch fulfillment and opportunistic discovery.
         if (this.opsDone > opsBefore) {
           this.judgingRound++;
-          this.recomputeJudgeQuality();
-          this.recomputeRatings();
+          try {
+            this.recomputeJudgeQuality();
+            this.recomputeRatings();
+          } catch (err) {
+            this.emitProgress(
+              `Warning: rating recomputation failed (${err instanceof Error ? err.message : err}), continuing`,
+            );
+          }
           const probed = this.opsDone - opsBeforeProbe;
           const suffix = probed > 0 ? ` (${probed} discovered from cache)` : "";
           this.emitProgress(`Round ${this.judgingRound} complete${suffix}`);
         }
 
-        // Stall: no new ops AND no new discoveries (missing artifact sets
-        // didn't grow either). Negative caching IS progress -- it prunes
-        // the candidate space for the next round.
-        if (this.opsDone === opsBefore && completedAfter === completedBefore) break;
+        // Stall: no new ops means no new artifacts were discovered or
+        // generated. After exhaustive seeding (Phase 1), a single
+        // unproductive round proves nothing remains. With --skip-seeding,
+        // lazy discovery in fulfillNeed finds what it can on the first
+        // pass; a second unproductive round confirms exhaustion.
+        if (this.opsDone === opsBefore) break;
       }
     }
 
     // Clear need context -- no longer in the adaptive loop
     this.currentNeedDescription = undefined;
     this.currentBatchSummary = undefined;
+    this.suspendedModels.clear();
 
     // Compute final ratings using WHR (produces confidence intervals)
     this.beginStage("computingElo");
@@ -1528,15 +1684,15 @@ export class BenchmarkRunner {
     const maxOutputTokens = resolveMaxOutputTokens(modelCfg.maxTokens, modelInfo);
 
     const { text, usage: rawUsage } = await withRetry(async () => {
-      const result = streamText({
+      const { text, result } = await safeStreamText((handler) => streamText({
         model,
         system: systemPrompt,
         prompt: prompt.prompt,
         temperature: resolveTemperature(modelCfg.temperature, 0.7, modelInfo),
         maxOutputTokens,
         maxRetries: 0,
-      });
-      const text = await result.text;
+        ...handler,
+      }));
       if ((await result.finishReason) === "length") throw new OutputTruncatedError();
       return { text, usage: await result.usage };
     });
@@ -1591,15 +1747,15 @@ Please provide your detailed feedback.`;
     const maxOutputTokens = resolveMaxOutputTokens(feedbackModelCfg.maxTokens, modelInfo);
 
     const { text, usage: rawUsage } = await withRetry(async () => {
-      const result = streamText({
+      const { text, result } = await safeStreamText((handler) => streamText({
         model,
         system: systemPrompt,
         prompt: userPrompt,
         temperature: resolveTemperature(feedbackModelCfg.temperature, 0.3, modelInfo),
         maxOutputTokens,
         maxRetries: 0,
-      });
-      const text = await result.text;
+        ...handler,
+      }));
       if ((await result.finishReason) === "length") throw new OutputTruncatedError();
       return { text, usage: await result.usage };
     });
@@ -1654,15 +1810,15 @@ Please write an improved version incorporating this feedback.`;
     const maxOutputTokens = resolveMaxOutputTokens(writerCfg.maxTokens, modelInfo);
 
     const { text, usage: rawUsage } = await withRetry(async () => {
-      const result = streamText({
+      const { text, result } = await safeStreamText((handler) => streamText({
         model,
         system: systemPrompt,
         prompt: userPrompt,
         temperature: resolveTemperature(writerCfg.temperature, 0.7, modelInfo),
         maxOutputTokens,
         maxRetries: 0,
-      });
-      const text = await result.text;
+        ...handler,
+      }));
       if ((await result.finishReason) === "length") throw new OutputTruncatedError();
       return { text, usage: await result.usage };
     });

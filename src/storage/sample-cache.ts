@@ -255,7 +255,8 @@ export class SampleCache {
   }
   // ── Judgments ──────────────────────────────────────
 
-  private judgmentsDir(provider: string, model: string): string {
+  /** Path to a judge model's cache directory. */
+  judgmentsDir(provider: string, model: string): string {
     return join(this.baseDir, "judgments", modelKey(provider, model));
   }
 

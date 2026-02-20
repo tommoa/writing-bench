@@ -232,18 +232,6 @@ export function uncachedSteps(
     + (work.existingRevisions.has(revisionKey(writer, fbModel, promptId, outputIdx)) ? 0 : 1);
 }
 
-/** Sum of all completed/missing entries for stall detection.
- *  Excludes existingFeedback/existingRevisions -- those track cached
- *  artifacts for cost estimation, not work-unit progress. Stall
- *  detection uses opsDone as the primary progress signal. */
-export function completedWorkSize(work: CompletedWork): number {
-  return work.judgments.size
-    + work.missingSamples.size
-    + work.missingFeedback.size
-    + work.missingRevisions.size
-    + work.missingJudgments.size;
-}
-
 // ── Batch Selection Helpers ─────────────────────────
 
 /** Compute diversification key based on the player pair in each dimension.
@@ -655,7 +643,13 @@ export function identifyNeeds(
     }
   }
 
-  return { needs: selected, ratingMap };
+  // ── Interleave by model for load spreading ────────
+  // Group needs by their primary model (the model most likely to require
+  // a fresh API call), then round-robin across groups. Within each group,
+  // needs retain their score-descending order. This ensures the batch
+  // hits different models early instead of saturating one model's
+  // concurrency gate before touching others.
+  return { needs: interleaveByModel(selected), ratingMap };
 }
 
 /**
@@ -695,4 +689,42 @@ function dimensionConverged(
     if (!isModelSettled(r, ratings, convergence)) return false;
   }
   return true;
+}
+
+// ── Need Interleaving ───────────────────────────────
+
+/**
+ * Extract the primary model from a need -- the model most likely to
+ * trigger a fresh API call (the writer or first model in the pair).
+ */
+export function primaryModel(need: Need): string {
+  return need.type === "improvement_judgment"
+    ? need.writer : need.modelA;
+}
+
+/**
+ * Interleave needs by primary model using round-robin. Within each
+ * model's bucket, needs retain their original (score-descending) order.
+ * This spreads concurrent API calls across models instead of front-loading
+ * all requests for the highest-uncertainty pair.
+ */
+export function interleaveByModel(needs: Need[]): Need[] {
+  if (needs.length <= 1) return needs;
+
+  // Group by primary model, preserving insertion order; round-robin across groups
+  const buckets = new Map<string, Need[]>();
+  for (const n of needs) {
+    const key = primaryModel(n);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(n);
+  }
+  const groups = [...buckets.values()];
+  const result: Need[] = [];
+  const maxLen = Math.max(...groups.map((g) => g.length));
+  for (let i = 0; i < maxLen; i++) {
+    for (const g of groups) {
+      if (i < g.length) result.push(g[i]);
+    }
+  }
+  return result;
 }

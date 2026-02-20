@@ -10,6 +10,8 @@ import {
   uncachedSteps,
   feedbackKey,
   revisionKey,
+  primaryModel,
+  interleaveByModel,
 } from "./need-identifier.js";
 import type { Need, CompletedWork } from "./need-identifier.js";
 import type { WhrRating } from "./whr.js";
@@ -1644,5 +1646,156 @@ describe("cost-aware scoring", () => {
     const goodSide = impNeedsWriterA.filter((n) => n.feedbackModel === "modelB");
     expect(brokenSide).toHaveLength(0);
     expect(goodSide.length).toBeGreaterThan(0);
+  });
+});
+
+// ── primaryModel ────────────────────────────────────
+
+describe("primaryModel", () => {
+  it("returns modelA for initial_judgment", () => {
+    const need: Need = {
+      type: "initial_judgment",
+      modelA: "a",
+      modelB: "b",
+      outputIdxA: 0,
+      outputIdxB: 0,
+      promptId: "p1",
+      judgeModel: makeModel("judge"),
+      score: 1,
+    };
+    expect(primaryModel(need)).toBe("a");
+  });
+
+  it("returns writer for improvement_judgment", () => {
+    const need: Need = {
+      type: "improvement_judgment",
+      writer: "writer-x",
+      outputIdx: 0,
+      feedbackModel: "fb",
+      againstFeedbackModel: "other-fb",
+      promptId: "p1",
+      judgeModel: makeModel("judge"),
+      score: 1,
+    };
+    expect(primaryModel(need)).toBe("writer-x");
+  });
+
+  it("returns modelA for revised_judgment", () => {
+    const need: Need = {
+      type: "revised_judgment",
+      modelA: "x",
+      modelB: "y",
+      outputIdxA: 0,
+      outputIdxB: 0,
+      feedbackModel: "fb",
+      promptId: "p1",
+      judgeModel: makeModel("judge"),
+      score: 1,
+    };
+    expect(primaryModel(need)).toBe("x");
+  });
+});
+
+// ── interleaveByModel ───────────────────────────────
+
+describe("interleaveByModel", () => {
+  function makeNeedForModel(model: string, score: number): Need {
+    return {
+      type: "initial_judgment",
+      modelA: model,
+      modelB: "other",
+      outputIdxA: 0,
+      outputIdxB: 0,
+      promptId: "p1",
+      judgeModel: makeModel("judge"),
+      score,
+    };
+  }
+
+  it("returns empty array for empty input", () => {
+    expect(interleaveByModel([])).toEqual([]);
+  });
+
+  it("returns single item unchanged", () => {
+    const needs = [makeNeedForModel("a", 10)];
+    expect(interleaveByModel(needs)).toEqual(needs);
+  });
+
+  it("interleaves needs from different models", () => {
+    const needs = [
+      makeNeedForModel("a", 10),
+      makeNeedForModel("a", 9),
+      makeNeedForModel("a", 8),
+      makeNeedForModel("b", 7),
+      makeNeedForModel("b", 6),
+      makeNeedForModel("b", 5),
+    ];
+    const result = interleaveByModel(needs);
+
+    // Should alternate: a, b, a, b, a, b
+    const models = result.map((n) => primaryModel(n));
+    expect(models).toEqual(["a", "b", "a", "b", "a", "b"]);
+  });
+
+  it("preserves score order within each model bucket", () => {
+    const needs = [
+      makeNeedForModel("a", 10),
+      makeNeedForModel("a", 5),
+      makeNeedForModel("b", 8),
+      makeNeedForModel("b", 3),
+    ];
+    const result = interleaveByModel(needs);
+
+    // Within model a's positions: score 10 before score 5
+    const aNeedsInOrder = result.filter((n) => primaryModel(n) === "a");
+    expect(aNeedsInOrder[0].score).toBe(10);
+    expect(aNeedsInOrder[1].score).toBe(5);
+
+    // Within model b's positions: score 8 before score 3
+    const bNeedsInOrder = result.filter((n) => primaryModel(n) === "b");
+    expect(bNeedsInOrder[0].score).toBe(8);
+    expect(bNeedsInOrder[1].score).toBe(3);
+  });
+
+  it("handles uneven bucket sizes", () => {
+    const needs = [
+      makeNeedForModel("a", 10),
+      makeNeedForModel("a", 9),
+      makeNeedForModel("a", 8),
+      makeNeedForModel("b", 7),
+    ];
+    const result = interleaveByModel(needs);
+
+    // Round-robin: a, b, a, a
+    const models = result.map((n) => primaryModel(n));
+    expect(models).toEqual(["a", "b", "a", "a"]);
+    expect(result).toHaveLength(4);
+  });
+
+  it("handles all needs from the same model", () => {
+    const needs = [
+      makeNeedForModel("a", 10),
+      makeNeedForModel("a", 9),
+      makeNeedForModel("a", 8),
+    ];
+    const result = interleaveByModel(needs);
+    expect(result).toHaveLength(3);
+    expect(result.map((n) => n.score)).toEqual([10, 9, 8]);
+  });
+
+  it("spreads three models evenly", () => {
+    const needs = [
+      makeNeedForModel("a", 10),
+      makeNeedForModel("a", 7),
+      makeNeedForModel("b", 9),
+      makeNeedForModel("b", 6),
+      makeNeedForModel("c", 8),
+      makeNeedForModel("c", 5),
+    ];
+    const result = interleaveByModel(needs);
+
+    // Round-robin: a, b, c, a, b, c
+    const models = result.map((n) => primaryModel(n));
+    expect(models).toEqual(["a", "b", "c", "a", "b", "c"]);
   });
 });

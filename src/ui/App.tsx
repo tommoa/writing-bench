@@ -139,6 +139,7 @@ export function App({ subscribe, showSpeed }: AppProps) {
         ciThreshold={progress.ciThreshold}
         needDescription={progress.needDescription}
         batchSummary={progress.batchSummary}
+        suspendedModels={progress.suspendedModels}
       />
 
       <RunProgress progress={progress.stageProgress} opsDone={progress.stageDone} />

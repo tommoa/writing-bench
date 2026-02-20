@@ -39,6 +39,7 @@ interface StatusBarProps {
   ciThreshold?: number;
   needDescription?: string;
   batchSummary?: string;
+  suspendedModels?: string[];
 }
 
 export function StatusBar({
@@ -56,6 +57,7 @@ export function StatusBar({
   ciThreshold,
   needDescription,
   batchSummary,
+  suspendedModels,
 }: StatusBarProps) {
   const isComplete = stage === "complete";
   const pct = isComplete ? 100 : Math.round(stageProgress * 100);
@@ -146,6 +148,13 @@ export function StatusBar({
             {batchSummary ? ` | ${batchSummary}` : ""}
             {maxCi != null ? ` | CI \u00b1${maxCi}` : ""}
             {ciThreshold != null ? ` \u2192 target ${formatConvergenceTarget(ciThreshold)}` : ""}
+          </Text>
+        </Box>
+      )}
+      {suspendedModels && suspendedModels.length > 0 && (
+        <Box marginLeft={3}>
+          <Text color="yellow">
+            {"Suspended: "}{suspendedModels.join(", ")}
           </Text>
         </Box>
       )}

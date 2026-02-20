@@ -4,7 +4,7 @@ import { parse as parseTOML } from "smol-toml";
 import { z } from "zod";
 import { Glob } from "bun";
 import type { PromptConfig, ModelConfig, RunConfig, ConvergenceConfig } from "./types.js";
-import { DEFAULT_CONVERGENCE } from "./types.js";
+import { DEFAULT_CONVERGENCE, DEFAULT_CONCURRENCY } from "./types.js";
 import { parseModelSpec } from "./providers/registry.js";
 import { getModelDisplayName, getProviderDisplayName } from "./providers/models.js";
 
@@ -157,6 +157,7 @@ export function createRunConfig(opts: {
   noCache?: boolean;
   cacheOnly?: boolean;
   skipSeeding?: boolean;
+  concurrency?: number;
   convergence?: Partial<ConvergenceConfig>;
 }): RunConfig {
   const now = new Date();
@@ -172,6 +173,7 @@ export function createRunConfig(opts: {
     noCache: opts.noCache ?? false,
     cacheOnly: opts.cacheOnly ?? false,
     skipSeeding: opts.skipSeeding ?? false,
+    concurrency: opts.concurrency ?? DEFAULT_CONCURRENCY,
     timestamp: now.toISOString(),
     convergence: { ...DEFAULT_CONVERGENCE, ...opts.convergence },
   };
