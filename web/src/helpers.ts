@@ -162,6 +162,8 @@ export interface EloTableOpts {
   wlt?: (r: { model: string }) => string;
   /** Add "sortable" CSS class to the ELO header. */
   sortableElo?: boolean;
+  /** Callback when a model name is clicked (e.g. to focus judgments). */
+  onModelClick?: (model: string) => void;
 }
 
 /**
@@ -265,9 +267,19 @@ export function renderEloTable(
           ? "rating bottom"
           : "rating";
 
+    const modelCell = opts.onModelClick
+      ? el("td", {},
+          el("a", {
+            href: "#",
+            className: "model-link",
+            onClick: (e: Event) => { e.preventDefault(); opts.onModelClick!(r.model); },
+          }, r.model),
+        )
+      : el("td", {}, r.model);
+
     const cells = [
       el("td", { className: "rank" }, String(i + 1)),
-      el("td", {}, r.model),
+      modelCell,
       el("td", { className: cls }, String(r.rating)),
     ];
     if (hasCi) {

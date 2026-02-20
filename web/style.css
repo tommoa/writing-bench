@@ -146,6 +146,10 @@ tr:hover {
   width: 3em;
 }
 
+.model-link {
+  color: inherit;
+}
+
 .rating {
   font-weight: 700;
   font-size: 1.1em;
@@ -600,6 +604,11 @@ details[open] summary ~ * {
 .judgment-matchup-item {
   display: inline-flex;
   flex-direction: column;
+}
+
+/* "vs" column: center text and matchup button horizontally */
+.judgment-vs {
+  align-items: center;
 }
 
 /* "view output" link on judgment matchup line */
@@ -1215,9 +1224,7 @@ tr.judge-row.pruned {
   }
 
   .judgment-matchup {
-    flex-direction: column;
-    gap: 0.25em;
-    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .judgment-judge {

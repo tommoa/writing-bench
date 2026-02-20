@@ -476,7 +476,7 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
       // "vs" column: "vs" label + optional "view matchup" below
       const vsColumn = el(
         "span",
-        { className: "judgment-matchup-item" },
+        { className: "judgment-matchup-item judgment-vs" },
         el("span", { className: "muted" }, "vs"),
         matchupBtn,
       );

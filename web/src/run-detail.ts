@@ -5,7 +5,7 @@ import { renderJudgmentsSection } from "./judgments.js";
 import { renderJudgeQualitySection } from "./judge-quality.js";
 import { createRatingToggle } from "./rating-toggle.js";
 import { createRatingSettings } from "./rating-settings.js";
-import { clearRatingSubscribers } from "./state.js";
+import { clearRatingSubscribers, getJudgmentApi } from "./state.js";
 
 // ── Data fetching ───────────────────────────────────
 
@@ -58,6 +58,7 @@ export function renderRunDetail(manifest: RunManifest): void {
     tokensByModelByStage: manifest.meta.tokensByModelByStage ?? {},
     speedByModel: manifest.meta.speedByModel,
     wlt,
+    onModelClick: (model: string) => getJudgmentApi()?.focusModel(model),
   };
 
   frag.appendChild(el("h2", {}, "Initial Writer ELO"));
