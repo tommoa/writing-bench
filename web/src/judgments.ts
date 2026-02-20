@@ -172,7 +172,15 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
   // so we can look up reasoning by position later
   const indexed: Array<[number, JudgmentMeta]> = judgments.map((j, i) => [i, j]);
 
-  const multiOutput = manifest.config.outputsPerModel > 1;
+  const multiOutput = manifest.config.outputsPerModel !== 1 && (() => {
+    const seen = new Set<string>();
+    for (const s of sampleMap.values()) {
+      const key = `${s.model}\0${s.promptId}`;
+      if (seen.has(key)) return true;
+      seen.add(key);
+    }
+    return false;
+  })();
 
   function buildMatchupLink(
     sampleId: string,
