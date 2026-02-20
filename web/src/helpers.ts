@@ -362,3 +362,36 @@ export function renderCostItem(label: string, value: string): HTMLElement {
     el("div", { className: "value" }, value),
   );
 }
+
+// ── Section descriptions ────────────────────────────
+
+/** Shared description strings for ELO sections. */
+export const SECTION_DESC = {
+  writerElo:
+    "Cumulative head-to-head writing quality across all runs. " +
+    "Two outputs for the same prompt are compared by a judge; " +
+    "the preferred one wins. Elo (higher = better), " +
+    "\u00b1CI is the 95% confidence interval " +
+    "-- click to toggle range display.",
+  initialWriterElo:
+    "Head-to-head writing quality from this run's initial outputs. " +
+    "Elo (higher = better), \u00b1CI is the 95% confidence " +
+    "interval -- click to toggle range display.",
+  revisedElo:
+    "Head-to-head quality of revised outputs, scoped by feedback " +
+    "source to isolate writing ability from feedback quality.",
+  feedbackElo:
+    "How useful each model's editorial feedback is, measured " +
+    "indirectly through the improvement it produces in revised outputs.",
+  judgeQuality:
+    "Judge reliability estimated via cross-evaluation consensus. " +
+    "Higher-rated judges contribute more to Elo computation.",
+  eloByTag:
+    "Ratings filtered by prompt category. Expand a tag to see " +
+    "how models perform on that subset.",
+};
+
+/** Create a description paragraph for use below section headings. */
+export function sectionDesc(text: string): HTMLElement {
+  return el("p", { className: "section-desc" }, text);
+}

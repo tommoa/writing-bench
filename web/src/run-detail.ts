@@ -1,5 +1,5 @@
 import type { RunManifest } from "./types.js";
-import { el, $$, render, renderError, renderCostItem, formatDate } from "./helpers.js";
+import { el, $$, render, renderError, renderCostItem, formatDate, sectionDesc, SECTION_DESC } from "./helpers.js";
 import { renderPromptSection } from "./prompt-section.js";
 import { renderJudgmentsSection } from "./judgments.js";
 import { renderJudgeQualitySection } from "./judge-quality.js";
@@ -61,6 +61,7 @@ export function renderRunDetail(manifest: RunManifest): void {
   };
 
   frag.appendChild(el("h2", {}, "Initial Writer ELO"));
+  frag.appendChild(sectionDesc(SECTION_DESC.initialWriterElo));
   frag.appendChild(createRatingToggle({
     defaultRatings: manifest.elo.initial.ratings,
     alternativeRatings: manifest.alternativeRatings,
@@ -70,6 +71,7 @@ export function renderRunDetail(manifest: RunManifest): void {
   }).container);
 
   frag.appendChild(el("h2", {}, "Revised Writer ELO"));
+  frag.appendChild(sectionDesc(SECTION_DESC.revisedElo));
   frag.appendChild(createRatingToggle({
     defaultRatings: manifest.elo.revised.ratings,
     alternativeRatings: manifest.alternativeRatings,
@@ -83,6 +85,7 @@ export function renderRunDetail(manifest: RunManifest): void {
     manifest.elo.revised.feedbackRatings.length > 0
   ) {
     frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
+    frag.appendChild(sectionDesc(SECTION_DESC.feedbackElo));
     frag.appendChild(createRatingToggle({
       defaultRatings: manifest.elo.revised.feedbackRatings,
       alternativeRatings: manifest.alternativeRatings,
@@ -95,6 +98,7 @@ export function renderRunDetail(manifest: RunManifest): void {
   // Judge quality section (collapsed by default, lazy DOM on expand)
   if (manifest.judgeQuality && manifest.judgeQuality.length > 0) {
     frag.appendChild(el("h2", {}, "Judge Quality"));
+    frag.appendChild(sectionDesc(SECTION_DESC.judgeQuality));
     const jqDetails = el("details");
     jqDetails.appendChild(el("summary", {}, "Judge Quality"));
     const jqInner = el("div", { className: "details-content" });
@@ -117,6 +121,7 @@ export function renderRunDetail(manifest: RunManifest): void {
     Object.keys(manifest.elo.initial.byTag).length > 0
   ) {
     frag.appendChild(el("h2", {}, "ELO by Tag"));
+    frag.appendChild(sectionDesc(SECTION_DESC.eloByTag));
     for (const [cat, ratings] of Object.entries(manifest.elo.initial.byTag)) {
       const d = el("details");
       d.appendChild(el("summary", {}, cat));

@@ -72,6 +72,36 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
 
   wrapper.appendChild(bar);
 
+  // ── Tab description (updates reactively) ──
+
+  const TAB_DESCRIPTIONS: Record<RatingMode, string> = {
+    default:
+      "Judges weighted by estimated reliability, with position-bias correction.",
+    equalWeight:
+      "All judges treated equally -- no quality weighting or bias correction.",
+    noBiasCorrection:
+      "Judges weighted by reliability, without position-bias correction.",
+    custom:
+      "Customize judge inclusion, quality weighting, and bias correction.",
+  };
+
+  // Anchors validated at build time by build-methodology.ts REQUIRED_ANCHORS.
+  // If you add a new anchor here, add it to REQUIRED_ANCHORS in build-methodology.ts.
+  const TAB_METHODOLOGY_LINKS: Record<RatingMode, string> = {
+    default: "methodology.html#judge-quality-estimation",
+    equalWeight: "methodology.html#judge-quality-estimation",
+    noBiasCorrection: "methodology.html#position-bias-mitigation",
+    custom: "methodology.html#judge-quality-estimation",
+  };
+
+  const initMode = getRatingState().ratingMode;
+  const descText = document.createTextNode(TAB_DESCRIPTIONS[initMode] + " ");
+  const learnMoreLink = el("a", { href: TAB_METHODOLOGY_LINKS[initMode] }, "Learn more");
+  const descEl = el("p", { className: "section-desc" });
+  descEl.appendChild(descText);
+  descEl.appendChild(learnMoreLink);
+  wrapper.appendChild(descEl);
+
   // ── Custom panel (below sticky bar, scrolls normally) ──
 
   function buildCustomPanel(): HTMLElement {
@@ -84,7 +114,13 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
 
     if (judgeLabels.length > 1) {
       const header = el("div", { className: "custom-header" });
-      header.appendChild(el("span", { className: "label" }, "judges"));
+      const headerLeft = el("span", {},
+        el("span", { className: "label" }, "judges"),
+        el("span", { className: "custom-row-desc" },
+          " \u2014 include or exclude individual judges from the rating computation",
+        ),
+      );
+      header.appendChild(headerLeft);
 
       const quickToggles = el("span", {});
       const allBtn = el("button", {
@@ -129,7 +165,13 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
     // ── Row 2: Quality mode pills ──
 
     const modeHeader = el("div", { className: "custom-header" });
-    modeHeader.appendChild(el("span", { className: "label" }, "quality mode"));
+    modeHeader.appendChild(el("span", {},
+      el("span", { className: "label" }, "quality mode"),
+      el("span", { className: "custom-row-desc" },
+        " \u2014 how judge reliability is estimated. Consensus uses " +
+        "cross-evaluation majority vote; others use the judge's own Elo",
+      ),
+    ));
     panel.appendChild(modeHeader);
 
     const modeContainer = el("div", { className: "mode-pills" });
@@ -155,8 +197,17 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
 
     const initState = getRatingState();
 
+    const decayHeader = el("div", { className: "custom-header" });
+    decayHeader.appendChild(el("span", {},
+      el("span", { className: "label" }, "quality decay"),
+      el("span", { className: "custom-row-desc" },
+        " \u2014 how sharply lower-rated judges are down-weighted. " +
+        "Lower half-life = more aggressive",
+      ),
+    ));
+    panel.appendChild(decayHeader);
+
     const decayRow = el("div", { className: "decay-row" });
-    decayRow.appendChild(el("span", { className: "label" }, "quality decay"));
 
     const slider = document.createElement("input");
     slider.type = "range";
@@ -181,6 +232,7 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
 
     // ── Row 4: Bias correction pill ──
 
+    const biasRow = el("div", { className: "bias-row" });
     const biasPill = el("button", {
       className: initState.applyBiasCorrection ? "bias-pill active" : "bias-pill",
       onClick: () => {
@@ -190,7 +242,12 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
         biasPill.textContent = s.applyBiasCorrection ? "\u2713 bias correction" : "bias correction";
       },
     }, initState.applyBiasCorrection ? "\u2713 bias correction" : "bias correction");
-    panel.appendChild(biasPill);
+    biasRow.appendChild(biasPill);
+    biasRow.appendChild(el("span", { className: "custom-row-desc" },
+      "Adjusts judgment weights to compensate for remaining " +
+      "position bias after randomization.",
+    ));
+    panel.appendChild(biasRow);
 
     return panel;
   }
@@ -215,12 +272,16 @@ export function createRatingSettings(config: RatingSettingsConfig): HTMLElement 
       i++;
     }
 
+    // Update tab description text and link
+    descText.textContent = TAB_DESCRIPTIONS[s.ratingMode] + " ";
+    learnMoreLink.setAttribute("href", TAB_METHODOLOGY_LINKS[s.ratingMode]);
+
     // Show/hide custom panel
     if (config.manifest) {
       if (s.ratingMode === "custom") {
         if (!customPanel) {
           customPanel = buildCustomPanel();
-          bar.after(customPanel);
+          descEl.after(customPanel);
         }
         customPanel.style.display = "";
       } else if (customPanel) {

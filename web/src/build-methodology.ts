@@ -7,6 +7,7 @@
  */
 import { readFile, writeFile } from "fs/promises";
 import { Marked } from "marked";
+import { gfmHeadingId, getHeadingList } from "marked-gfm-heading-id";
 import katex from "katex";
 
 const MD_PATH = new URL("../../METHODOLOGY.md", import.meta.url).pathname;
@@ -71,6 +72,7 @@ function restoreMath(html: string): string {
 
 const marked = new Marked();
 
+marked.use(gfmHeadingId());
 marked.use({
   renderer: {
     // Map blockquotes to <p class="note">
@@ -127,3 +129,21 @@ ${methodologyHtml}
 
 await writeFile(HTML_OUT_PATH, fullPage, "utf-8");
 console.log(`wrote ${HTML_OUT_PATH}`);
+
+// ── Validate methodology anchors ────────────────────
+
+const headingIds = new Set(getHeadingList().map((h) => h.id));
+
+// Anchors referenced by the web viewer (rating-settings.ts "Learn more" links).
+// If a heading in METHODOLOGY.md is renamed, this fails the build immediately.
+const REQUIRED_ANCHORS = [
+  "judge-quality-estimation",
+  "position-bias-mitigation",
+];
+
+const missing = REQUIRED_ANCHORS.filter((a) => !headingIds.has(a));
+if (missing.length > 0) {
+  console.error(`ERROR: methodology anchors missing: ${missing.join(", ")}`);
+  console.error("These are referenced by the web viewer. Update METHODOLOGY.md headings or REQUIRED_ANCHORS.");
+  process.exit(1);
+}

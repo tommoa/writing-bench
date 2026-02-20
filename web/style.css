@@ -235,14 +235,24 @@ th.sortable::after {
 /* Run list */
 .run-list {
   list-style: none;
+  display: grid;
+  gap: 0.75em;
+  margin: 0.5em 0;
 }
 
 .run-list li {
-  padding: 0.75em 0;
-  border-bottom: 1px solid var(--border);
+  padding: 0.75em 1em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  transition: border-color 0.2s;
+}
+
+.run-list li:hover {
+  border-color: var(--accent);
 }
 
 .run-list .run-meta {
@@ -807,6 +817,55 @@ select option:hover {
   font-size: 0.85em;
 }
 
+/* Inline description below section headings and settings */
+.section-desc {
+  color: var(--comment);
+  font-size: 0.85em;
+  margin: -0.25em 0 0.5em;
+  line-height: 1.6;
+}
+
+.section-desc a {
+  color: var(--comment);
+  border-bottom: 1px dashed var(--comment);
+}
+
+.section-desc a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Inline description next to custom panel row headers */
+.custom-row-desc {
+  color: var(--comment);
+  font-size: 0.8em;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Callout card with accent left border */
+.callout-card {
+  margin: 1.5em 0;
+  padding: 0.75em 1em;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 0.9em;
+  line-height: 1.7;
+}
+
+.callout-card a {
+  color: var(--accent);
+  font-weight: 600;
+  border-bottom: 1px solid transparent;
+}
+
+.callout-card a:hover {
+  border-bottom-color: var(--accent);
+}
+
 .mt-1 {
   margin-top: 1em;
 }
@@ -1004,16 +1063,7 @@ select option:hover {
   display: flex;
   align-items: center;
   gap: 0.75em;
-  margin: 0.6em 0;
-}
-
-.decay-row .label {
-  color: var(--header);
-  font-weight: 700;
-  font-size: 0.85em;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
+  margin: 0.25em 0;
 }
 
 .decay-value {
@@ -1060,6 +1110,14 @@ select option:hover {
   border-radius: 2px;
 }
 
+/* Bias correction row */
+.bias-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75em;
+  margin-top: 0.6em;
+}
+
 /* Bias correction pill */
 .bias-pill {
   display: inline-block;
@@ -1072,7 +1130,6 @@ select option:hover {
   background: transparent;
   color: var(--comment);
   transition: color 0.2s, border-color 0.2s;
-  margin-top: 0.3em;
 }
 
 .bias-pill:hover {

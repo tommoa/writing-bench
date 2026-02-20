@@ -1,5 +1,5 @@
 import type { RunsIndex, RunIndexEntry, TagAlternatives } from "./types.js";
-import { el, render, renderEloTable, formatDate } from "./helpers.js";
+import { el, render, renderEloTable, formatDate, sectionDesc, SECTION_DESC } from "./helpers.js";
 import { renderJudgeQualitySection } from "./judge-quality.js";
 import { createRatingToggle } from "./rating-toggle.js";
 import { createRatingSettings } from "./rating-settings.js";
@@ -18,8 +18,18 @@ export function renderDashboard(index: RunsIndex): void {
     alternativeRatings: index.cumulativeAlternativeRatings,
   }));
 
+  if (index.runs.length > 0) {
+    frag.appendChild(el("div", { className: "callout-card" },
+      "Individual runs contain per-prompt outputs, head-to-head " +
+      "comparisons, full judgment reasoning, and custom rating " +
+      "controls. ",
+      el("a", { href: "?page=runs" }, "View all runs \u2192"),
+    ));
+  }
+
   if (index.cumulativeElo.writing.length > 0) {
     frag.appendChild(el("h2", {}, "Writer ELO"));
+    frag.appendChild(sectionDesc(SECTION_DESC.writerElo));
     frag.appendChild(createRatingToggle({
       defaultRatings: index.cumulativeElo.writing,
       alternativeRatings: index.cumulativeAlternativeRatings,
@@ -33,6 +43,7 @@ export function renderDashboard(index: RunsIndex): void {
 
   if (index.cumulativeElo.feedback.length > 0) {
     frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
+    frag.appendChild(sectionDesc(SECTION_DESC.feedbackElo));
     frag.appendChild(createRatingToggle({
       defaultRatings: index.cumulativeElo.feedback,
       alternativeRatings: index.cumulativeAlternativeRatings,
@@ -47,6 +58,7 @@ export function renderDashboard(index: RunsIndex): void {
   // Cumulative judge quality (collapsed by default, lazy DOM on expand)
   if (index.cumulativeJudgeQuality && index.cumulativeJudgeQuality.length > 0) {
     frag.appendChild(el("h2", {}, "Judge Quality"));
+    frag.appendChild(sectionDesc(SECTION_DESC.judgeQuality));
     const jqDetails = el("details");
     jqDetails.appendChild(el("summary", {}, "Judge Quality"));
     const jqInner = el("div", { className: "details-content" });
@@ -70,6 +82,7 @@ export function renderDashboard(index: RunsIndex): void {
     Object.keys(index.cumulativeElo.byTag).length > 0
   ) {
     frag.appendChild(el("h2", {}, "ELO by Tag"));
+    frag.appendChild(sectionDesc(SECTION_DESC.eloByTag));
     for (const [cat, ratings] of Object.entries(
       index.cumulativeElo.byTag
     )) {
@@ -183,7 +196,7 @@ export function renderRunList(runs: RunIndexEntry[]): HTMLElement {
     const meta = el(
       "span",
       { className: "run-meta" },
-      `${run.models.join(", ")} | ${run.promptCount} prompts | $${(run.totalCostUncached ?? run.totalCost).toFixed(4)}`,
+      `${run.models.length} model${run.models.length !== 1 ? "s" : ""} \u00b7 ${run.promptCount} prompts \u00b7 $${(run.totalCostUncached ?? run.totalCost).toFixed(4)}`,
     );
     list.appendChild(el("li", {}, link, meta));
   }
