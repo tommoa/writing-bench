@@ -100,6 +100,13 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
   let filterPrompt = "all";
   let filterSampleId: string | null = null;
 
+  // Named setters (one per filter, reused across all call sites)
+  const setStage = (v: string) => { filterStage = v; };
+  const setJudge = (v: string) => { filterJudge = v; };
+  const setModelA = (v: string) => { filterModelA = v; };
+  const setModelB = (v: string) => { filterModelB = v; };
+  const setPrompt = (v: string) => { filterPrompt = v; };
+
   // Pagination state
   let pageSize = 25;
   let currentPage = 0;
@@ -173,22 +180,43 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
     side: "side-a" | "side-b",
     outputIdx: number | null,
   ): HTMLElement {
+    const select = side === "side-a" ? modelASelect : modelBSelect;
+    const setter = side === "side-a" ? setModelA : setModelB;
+    const model = sampleMap.get(sampleId)?.model ?? label;
+
     const idxEl = multiOutput && outputIdx != null
       ? el("span", { className: "judgment-output-idx" }, ` #${outputIdx + 1}`)
       : null;
-    return el(
+
+    const nameLink = el(
       "a",
       {
         href: "#",
-        className: `judgment-sample-link ${side}`,
+        className: `judgment-filter-link ${side}`,
         onClick: (e: Event) => {
           e.preventDefault();
-          scrollToSample(sampleId, manifest);
+          setFilter(select, model, setter);
+          resetAndRerender();
         },
       },
       el("span", { className: "judgment-model-name" }, label),
       idxEl,
     );
+
+    const viewLink = el(
+      "a",
+      {
+        href: "#",
+        className: "view-output-link",
+        onClick: (e: Event) => {
+          e.preventDefault();
+          scrollToSample(sampleId, manifest);
+        },
+      },
+      "view output",
+    );
+
+    return el("span", { className: "judgment-matchup-item" }, nameLink, viewLink);
   }
 
   const rerender = (): void => {
@@ -382,55 +410,94 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
         j.winner === "A" ? "winner-a" : j.winner === "B" ? "winner-b" : "";
       const judgEl = el("div", { className: `judgment ${winnerBorder}`.trim() });
 
-      // Line 1: stage, prompt, judge
+      // Line 1: stage, prompt (filter link), judge (filter link)
+      const promptLink = el(
+        "a",
+        {
+          href: "#",
+          className: "judgment-filter-link",
+          onClick: (e: Event) => {
+            e.preventDefault();
+            setFilter(promptSelect, `id:${j.promptId}`, setPrompt);
+            resetAndRerender();
+          },
+        },
+        prompt?.name ?? j.promptId,
+      );
+      const judgeLink = el(
+        "a",
+        {
+          href: "#",
+          className: "judgment-filter-link",
+          onClick: (e: Event) => {
+            e.preventDefault();
+            setFilter(judgeSelect, j.judgeModel, setJudge);
+            resetAndRerender();
+          },
+        },
+        j.judgeModel,
+      );
       judgEl.appendChild(
         el(
           "div",
           { className: "judgment-header" },
           el("span", { className: "judgment-stage" }, j.stage),
-          el("span", {}, ` ${prompt?.name ?? j.promptId}`),
-          el(
-            "span",
-            { className: "judgment-judge" },
-            `Judge: ${j.judgeModel}`,
-          ),
+          el("span", {}, " "),
+          promptLink,
+          el("span", { className: "judgment-judge" }, "Judge: ", judgeLink),
         ),
       );
 
-      // Line 2: matchup
-      judgEl.appendChild(
-        el(
-          "div",
-          { className: "judgment-matchup" },
-          linkA,
-          el("span", { className: "muted" }, " vs "),
-          linkB,
-        ),
+      // View matchup button (goes in the "vs" column)
+      const modelNameA = sampleMap.get(j.sampleA)?.model;
+      const modelNameB = sampleMap.get(j.sampleB)?.model;
+      const alreadyFiltered =
+        (filterModelA === modelNameA && filterModelB === modelNameB) ||
+        (filterModelA === modelNameB && filterModelB === modelNameA);
+      const isCrossModel = modelNameA && modelNameB && modelNameA !== modelNameB;
+
+      const matchupBtn = isCrossModel && !alreadyFiltered
+        ? el(
+            "button",
+            {
+              className: "judgment-action",
+              onClick: (e: Event) => {
+                e.stopPropagation();
+                setFilter(modelASelect, modelNameA, setModelA);
+                setFilter(modelBSelect, modelNameB, setModelB);
+                resetAndRerender();
+                container.scrollIntoView({ behavior: "smooth" });
+              },
+            },
+            "view matchup",
+          )
+        : null;
+
+      // "vs" column: "vs" label + optional "view matchup" below
+      const vsColumn = el(
+        "span",
+        { className: "judgment-matchup-item" },
+        el("span", { className: "muted" }, "vs"),
+        matchupBtn,
       );
 
-      // Line 3: winner
-      judgEl.appendChild(
-        el(
-          "div",
-          { className: "judgment-result" },
-          el("span", { className: "muted" }, "\u2192 "),
-          el(
-            "span",
-            { className: `judgment-winner ${winnerClass}` },
-            winnerLabel,
-          ),
-        ),
+      // Matchup line (left side)
+      const matchupLine = el(
+        "div",
+        { className: "judgment-matchup" },
+        linkA,
+        vsColumn,
+        linkB,
       );
 
-      // Reasoning: lazy-loaded via expand/collapse
+      // Reasoning: lazy-loaded via expand/collapse (right side)
       const reasoningContainer = el("div", { className: "judgment-reasoning-container" });
       const expandBtn = el(
         "button",
         {
-          className: "reasoning-toggle",
+          className: "judgment-action",
           onClick: async () => {
             if (reasoningContainer.dataset.loaded === "true") {
-              // Toggle visibility
               const text = reasoningContainer.querySelector(".judgment-reasoning");
               if (text) {
                 text.classList.toggle("hidden");
@@ -442,11 +509,6 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
             expandBtn.textContent = "loading...";
             try {
               const promptData = await fetchPromptContent(runId, j.promptId);
-              // manifestIdx is an index into the manifest's judgments array,
-              // which is sorted by promptId. slice.start is the offset of
-              // this prompt's judgments within that same sorted array. The
-              // reasoning array in the per-prompt content file is parallel
-              // to this slice (same order, same length).
               const slice = manifest.promptJudgmentSlices[j.promptId];
               const localIndex = manifestIdx - slice.start;
               const reasoning = promptData.reasoning[localIndex];
@@ -463,7 +525,30 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
         },
         "show reasoning",
       );
-      judgEl.appendChild(expandBtn);
+
+      // Winner + show reasoning toggle (right side)
+      const rightSide = el(
+        "div",
+        { className: "judgment-body-right" },
+        el(
+          "div",
+          { className: "judgment-result" },
+          el("span", { className: "muted" }, "winner: "),
+          el(
+            "span",
+            { className: `judgment-winner ${winnerClass}` },
+            winnerLabel,
+          ),
+        ),
+        expandBtn,
+      );
+
+      // Two-column body
+      judgEl.appendChild(
+        el("div", { className: "judgment-body" }, matchupLine, rightSide),
+      );
+
+      // Reasoning expands below the full card width
       judgEl.appendChild(reasoningContainer);
 
       listContainer.appendChild(judgEl);
@@ -474,51 +559,57 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
     }
   };
 
+  /** Clear sample filter, reset pagination, and rerender. */
+  function resetAndRerender(): void {
+    filterSampleId = null;
+    currentPage = 0;
+    rerender();
+  }
+
+  /** Set a filter variable and sync its <select> element. */
+  function setFilter(select: HTMLSelectElement, value: string, setter: (v: string) => void): void {
+    setter(value);
+    select.value = value;
+  }
+
   function bindFilter(select: HTMLSelectElement, setter: (v: string) => void): void {
     select.addEventListener("change", () => {
-      setter(select.value);
-      filterSampleId = null;
-      currentPage = 0;
-      rerender();
+      setFilter(select, select.value, setter);
+      resetAndRerender();
     });
   }
 
-  bindFilter(promptSelect, (v) => { filterPrompt = v; });
-  bindFilter(stageSelect, (v) => { filterStage = v; });
-  bindFilter(judgeSelect, (v) => { filterJudge = v; });
-  bindFilter(modelASelect, (v) => { filterModelA = v; });
-  bindFilter(modelBSelect, (v) => { filterModelB = v; });
+  bindFilter(promptSelect, setPrompt);
+  bindFilter(stageSelect, setStage);
+  bindFilter(judgeSelect, setJudge);
+  bindFilter(modelASelect, setModelA);
+  bindFilter(modelBSelect, setModelB);
+
+  /** Reset all filters to defaults, sync selects, and rerender. */
+  function resetAllFilters(): void {
+    setFilter(promptSelect, "all", setPrompt);
+    setFilter(stageSelect, "all", setStage);
+    setFilter(judgeSelect, "all", setJudge);
+    setFilter(modelASelect, "all", setModelA);
+    setFilter(modelBSelect, "all", setModelB);
+  }
 
   // Expose API for cross-section interaction
   setJudgmentApi({
     focusSample(sampleId: string) {
       const sample = sampleMap.get(sampleId);
       filterSampleId = sampleId;
-      filterPrompt = "all";
-      filterStage = "all";
-      filterJudge = "all";
-      filterModelA = sample?.model ?? "all";
-      filterModelB = "all";
-      promptSelect.value = "all";
-      stageSelect.value = "all";
-      judgeSelect.value = "all";
-      modelASelect.value = filterModelA;
-      modelBSelect.value = "all";
+      resetAllFilters();
+      setFilter(modelASelect, sample?.model ?? "all", setModelA);
+      currentPage = 0;
       rerender();
       container.scrollIntoView({ behavior: "smooth" });
     },
     focusModel(model: string) {
       filterSampleId = null;
-      filterPrompt = "all";
-      filterModelA = model;
-      filterModelB = "all";
-      filterStage = "all";
-      filterJudge = "all";
-      promptSelect.value = "all";
-      stageSelect.value = "all";
-      judgeSelect.value = "all";
-      modelASelect.value = model;
-      modelBSelect.value = "all";
+      resetAllFilters();
+      setFilter(modelASelect, model, setModelA);
+      currentPage = 0;
       rerender();
       container.scrollIntoView({ behavior: "smooth" });
     },

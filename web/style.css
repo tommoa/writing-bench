@@ -257,13 +257,19 @@ details {
   border-radius: 4px;
 }
 
+details:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
 summary {
   padding: 0.75em 1em;
   cursor: pointer;
   font-weight: 500;
-  background: var(--surface);
   border-radius: 4px;
   user-select: none;
+  transition: color 0.35s;
 }
 
 summary:hover {
@@ -273,6 +279,15 @@ summary:hover {
 details[open] summary {
   border-bottom: 1px solid var(--border);
   border-radius: 4px 4px 0 0;
+}
+
+details[open] summary ~ * {
+  animation: sweep 400ms ease-in-out;
+}
+
+@keyframes sweep {
+  0%   { opacity: 0; transform: translateX(-10px); }
+  100% { opacity: 1; transform: translateX(0); }
 }
 
 .details-content {
@@ -474,6 +489,10 @@ details[open] summary {
 .judgment-stage {
   color: var(--purple);
   font-weight: 700;
+  background: color-mix(in srgb, var(--purple) 15%, transparent);
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
 }
 
 .judgment-judge {
@@ -482,13 +501,49 @@ details[open] summary {
   font-size: 0.9em;
 }
 
+/* Inline filter links on judgment cards (prompt, judge, model names) */
+.judgment-filter-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--comment);
+  cursor: pointer;
+  transition: border-bottom-color 0.35s, color 0.35s;
+}
+
+.judgment-filter-link:hover {
+  border-bottom-color: var(--accent);
+}
+
+.judgment-filter-link.side-a {
+  color: var(--side-a);
+}
+
+.judgment-filter-link.side-b {
+  color: var(--side-b);
+}
+
 .judgment-matchup {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
   padding-left: 0.25em;
 }
 
+/* Two-column body: matchup on left, winner + reasoning on right */
+.judgment-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1em;
+}
+
+.judgment-body-right {
+  text-align: right;
+  flex-shrink: 0;
+}
+
 .judgment-result {
-  padding-left: 0.25em;
-  margin-top: 0.2em;
+  margin-top: 0;
 }
 
 .judgment-winner {
@@ -517,18 +572,42 @@ details[open] summary {
   display: none;
 }
 
-.reasoning-toggle {
-  font-size: 0.8em;
-  color: var(--accent);
+/* Shared action links on judgment cards (show reasoning, view matchup) */
+.judgment-action {
+  font-family: inherit;
+  font-size: 0.75em;
+  color: var(--comment);
   background: none;
   border: none;
   cursor: pointer;
-  padding: 0.15em 0;
-  margin-top: 0.2em;
+  padding: 0;
+  transition: color 0.35s;
 }
 
-.reasoning-toggle:hover {
-  text-decoration: underline;
+/* Matchup item: model name stacked above "view output" link */
+.judgment-matchup-item {
+  display: inline-flex;
+  flex-direction: column;
+}
+
+/* "view output" link on judgment matchup line */
+.view-output-link {
+  align-self: start;
+  font-size: 0.75em;
+  color: var(--comment);
+  text-decoration: none;
+  border-bottom: 1px dashed transparent;
+  cursor: pointer;
+  transition: border-bottom-color 0.35s, color 0.35s;
+}
+
+.view-output-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.judgment-action:hover {
+  color: var(--accent);
 }
 
 /* Judgment sample backlinks */
@@ -540,21 +619,6 @@ details[open] summary {
   border-left-color: var(--side-b);
 }
 
-.judgment-sample-link {
-  color: inherit;
-  border-bottom: 1px dashed var(--comment);
-  cursor: pointer;
-  transition: color 0.2s, border-color 0.2s;
-}
-
-.judgment-sample-link.side-a {
-  color: var(--side-a);
-}
-
-.judgment-sample-link.side-b {
-  color: var(--side-b);
-}
-
 .judgment-model-name {
   font-weight: 600;
 }
@@ -563,11 +627,6 @@ details[open] summary {
   font-weight: 400;
   opacity: 0.7;
   font-size: 0.9em;
-}
-
-.judgment-sample-link:hover {
-  color: var(--accent);
-  border-color: var(--accent);
 }
 
 .pagination {
