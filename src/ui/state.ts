@@ -1,24 +1,20 @@
 import type {
   BenchmarkProgress,
   BenchmarkEvent,
-  TerminalPalette,
 } from "../types.js";
 import type { RunSummary } from "../storage/run-store.js";
 import type { RunResult } from "../types.js";
+import type { CacheDiskSize } from "../storage/cache-status.js";
 
 // ── Tab Types ───────────────────────────────────────
 
 export type TabId = "benchmark" | "cache" | "runs";
 
-// ── Cache Tab State ─────────────────────────────────
+// ── Re-exports ──────────────────────────────────────
 
-export interface CacheDiskSize {
-  writes: number;
-  feedback: number;
-  revisions: number;
-  judgments: number;
-  total: number;
-}
+export type { CacheDiskSize };
+
+// ── Cache Tab State ─────────────────────────────────
 
 export interface CacheModelEntry {
   key: string;
@@ -39,6 +35,7 @@ export interface CacheTabState {
   models: CacheModelEntry[];
   cursorIndex: number;
   confirmAction: CacheConfirmAction | null;
+  error: string | null;
 }
 
 // ── Runs Tab State ──────────────────────────────────
@@ -102,6 +99,7 @@ export const INITIAL_STATE: AppState = {
     models: [],
     cursorIndex: 0,
     confirmAction: null,
+    error: null,
   },
   runs: {
     loading: false,
@@ -129,6 +127,7 @@ export type AppAction =
   | { type: "CACHE_CONFIRM"; action: CacheConfirmAction }
   | { type: "CACHE_CANCEL" }
   | { type: "CACHE_ACTION_DONE" }
+  | { type: "CACHE_ERROR"; message: string }
   // Runs
   | { type: "RUNS_LOADING" }
   | { type: "RUNS_LOADED"; summaries: RunSummary[] }
@@ -177,7 +176,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "CACHE_LOADING":
       return {
         ...state,
-        cache: { ...state.cache, loading: true },
+        cache: { ...state.cache, loading: true, error: null },
       };
     case "CACHE_LOADED":
       return {
@@ -187,6 +186,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           loading: false,
           diskSize: action.diskSize,
           models: action.models,
+          cursorIndex: Math.min(
+            state.cache.cursorIndex,
+            Math.max(0, action.models.length - 1),
+          ),
         },
       };
     case "CACHE_CURSOR":
@@ -208,6 +211,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         cache: { ...state.cache, confirmAction: null, loading: true },
+      };
+    case "CACHE_ERROR":
+      return {
+        ...state,
+        cache: { ...state.cache, loading: false, error: action.message },
       };
 
     // ── Runs ──

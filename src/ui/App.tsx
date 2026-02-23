@@ -2,6 +2,7 @@ import { useReducer, useEffect } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { TabBar } from "./TabBar.js";
 import { BenchmarkTab } from "./tabs/BenchmarkTab.js";
+import { CacheTab } from "./tabs/CacheTab.js";
 import { CostBreakdownTable } from "./CostBreakdownTable.js";
 import { appReducer, benchmarkEventToAction, INITIAL_STATE } from "./state.js";
 import type { TabId } from "./state.js";
@@ -85,9 +86,12 @@ export function App({ subscribe, showSpeed, palette, onExit }: AppProps) {
         )}
 
         {state.activeTab === "cache" && (
-          <box flexGrow={1} paddingLeft={1} paddingTop={1}>
-            <text fg={palette.gray}>Cache management -- coming soon</text>
-          </box>
+          <CacheTab
+            state={state.cache}
+            activeTab={state.activeTab}
+            dispatch={dispatch}
+            palette={palette}
+          />
         )}
 
         {state.activeTab === "runs" && (
