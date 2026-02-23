@@ -89,7 +89,8 @@ export type Command =
   | { command: "cache-combine"; args: CacheCombineArgs }
   | { command: "cache-status"; args: CacheStatusArgs }
   | { command: "runs-list"; args: RunsListArgs }
-  | { command: "runs-delete"; args: RunsDeleteArgs };
+  | { command: "runs-delete"; args: RunsDeleteArgs }
+  | { command: "tui" };
 
 function buildCacheCommand(resolve: (cmd: Command) => void) {
   const statusOpts = <T>(sy: Argv<T>) =>
@@ -234,7 +235,7 @@ export async function parseArgs(): Promise<Command> {
     const cache = buildCacheCommand(resolve);
     yargs(hideBin(process.argv))
       .scriptName("writing-bench")
-      .usage("$0 <command> [options]")
+      .usage("$0 [command] [options]")
       .command(
         "run",
         "Run a benchmark",
@@ -589,7 +590,12 @@ export async function parseArgs(): Promise<Command> {
           });
         },
       )
-      .demandCommand(1, "Please specify a command")
+      .command(
+        "$0",
+        "Open interactive TUI (default when no command is given)",
+        () => {},
+        () => { resolve({ command: "tui" }); },
+      )
       .strict()
       .help()
       .fail((msg, err) => {

@@ -11,20 +11,25 @@ const SIDEBAR_MIN_WIDTH = 100;
 const SIDEBAR_WIDTH = 42;
 
 interface AppProps {
-  subscribe: (handler: (event: BenchmarkEvent) => void) => void;
+  /** Event subscription for an active benchmark. Null in standalone mode. */
+  subscribe: ((handler: (event: BenchmarkEvent) => void) => void) | null;
   showSpeed?: boolean;
   palette: TerminalPalette;
+  /** Called when the user presses q to exit. */
+  onExit?: () => void;
 }
 
-export function App({ subscribe, showSpeed, palette }: AppProps) {
+export function App({ subscribe, showSpeed, palette, onExit }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
   const { benchmark } = state;
   const progress = benchmark.progress;
   const { width: termWidth } = useTerminalDimensions();
   const showSidebar = state.activeTab === "benchmark" && termWidth >= SIDEBAR_MIN_WIDTH;
+  const standalone = subscribe === null;
 
   // ── Benchmark event subscription ──────────────────
   useEffect(() => {
+    if (!subscribe) return;
     subscribe((event) => {
       const action = benchmarkEventToAction(event);
       if (action) dispatch(action);
@@ -33,9 +38,18 @@ export function App({ subscribe, showSpeed, palette }: AppProps) {
 
   // ── Global keyboard handler ───────────────────────
   useKeyboard((key) => {
+    // Tab switching
     const tab = ({ "1": "benchmark", "2": "cache", "3": "runs" } as Record<string, TabId>)[key.name];
     if (tab) {
       dispatch({ type: "SET_TAB", tab });
+      return;
+    }
+
+    // Exit on q (when benchmark is complete or in standalone mode,
+    // but not during an active confirmation prompt)
+    const confirmActive = state.cache.confirmAction !== null || state.runs.confirmDelete !== null;
+    if (key.name === "q" && (benchmark.complete || standalone) && !confirmActive) {
+      onExit?.();
     }
   });
 
@@ -52,14 +66,22 @@ export function App({ subscribe, showSpeed, palette }: AppProps) {
       <box flexDirection="row" flexGrow={1}>
         {/* Main content area */}
         {state.activeTab === "benchmark" && (
-          <BenchmarkTab
-            progress={progress}
-            complete={benchmark.complete}
-            error={benchmark.error}
-            showSpeed={showSpeed}
-            showCostInline={!showSidebar}
-            palette={palette}
-          />
+          standalone ? (
+            <box flexGrow={1} paddingLeft={1} paddingTop={1}>
+              <text fg={palette.gray}>
+                No active benchmark. Run `writing-bench run` to start one.
+              </text>
+            </box>
+          ) : (
+            <BenchmarkTab
+              progress={progress}
+              complete={benchmark.complete}
+              error={benchmark.error}
+              showSpeed={showSpeed}
+              showCostInline={!showSidebar}
+              palette={palette}
+            />
+          )
         )}
 
         {state.activeTab === "cache" && (
@@ -75,7 +97,7 @@ export function App({ subscribe, showSpeed, palette }: AppProps) {
         )}
 
         {/* Sidebar: cost breakdown (benchmark tab, wide terminals) */}
-        {showSidebar && (
+        {showSidebar && !standalone && (
           <box width={SIDEBAR_WIDTH} flexDirection="column">
             <scrollbox flexGrow={1} paddingLeft={1} paddingRight={1}>
               <CostBreakdownTable
@@ -90,6 +112,13 @@ export function App({ subscribe, showSpeed, palette }: AppProps) {
           </box>
         )}
       </box>
+
+      {/* ── Footer ────────────────────────────────── */}
+      {(benchmark.complete || standalone) && (
+        <box paddingLeft={1} marginTop={1}>
+          <text fg={palette.gray}>Press q to exit</text>
+        </box>
+      )}
     </box>
   );
 }

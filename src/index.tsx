@@ -21,6 +21,73 @@ import type { BenchmarkEvent, EloRating, PromptConfig, TaskError, TerminalPalett
 import { DEFAULT_CONVERGENCE, JUDGE_PRESETS } from "./types.js";
 import { formatConvergenceTarget, formatConvergenceDescription } from "./engine/need-identifier.js";
 
+// ── TUI Setup ───────────────────────────────────────
+
+const DEFAULT_PALETTE: TerminalPalette = {
+  red: "#FF0000", green: "#00AA00", yellow: "#FFFF00", blue: "#0000FF",
+  magenta: "#AA00AA", cyan: "#00AAAA", white: "#AAAAAA", gray: "#555555",
+  brightRed: "#FF5555", brightGreen: "#55FF55", brightYellow: "#FFFF55",
+  brightMagenta: "#FF55FF", brightCyan: "#55FFFF", fg: "#FFFFFF",
+};
+
+/**
+ * Create the OpenTUI renderer, resolve the terminal palette, and
+ * return a React root ready for rendering. Shared by `handleRun`
+ * and `handleTui`.
+ */
+async function createTui() {
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: true,
+    useAlternateScreen: true,
+    useMouse: true,
+    useConsole: false,
+  });
+
+  let palette: TerminalPalette;
+  try {
+    const termColors = await renderer.getPalette({ size: 16, timeout: 1000 });
+    palette = {
+      red:           termColors.palette[1]  ?? DEFAULT_PALETTE.red,
+      green:         termColors.palette[2]  ?? DEFAULT_PALETTE.green,
+      yellow:        termColors.palette[3]  ?? DEFAULT_PALETTE.yellow,
+      blue:          termColors.palette[4]  ?? DEFAULT_PALETTE.blue,
+      magenta:       termColors.palette[5]  ?? DEFAULT_PALETTE.magenta,
+      cyan:          termColors.palette[6]  ?? DEFAULT_PALETTE.cyan,
+      white:         termColors.palette[7]  ?? DEFAULT_PALETTE.white,
+      gray:          termColors.palette[8]  ?? DEFAULT_PALETTE.gray,
+      brightRed:     termColors.palette[9]  ?? DEFAULT_PALETTE.brightRed,
+      brightGreen:   termColors.palette[10] ?? DEFAULT_PALETTE.brightGreen,
+      brightYellow:  termColors.palette[11] ?? DEFAULT_PALETTE.brightYellow,
+      brightMagenta: termColors.palette[13] ?? DEFAULT_PALETTE.brightMagenta,
+      brightCyan:    termColors.palette[14] ?? DEFAULT_PALETTE.brightCyan,
+      fg:            termColors.defaultForeground ?? DEFAULT_PALETTE.fg,
+    };
+  } catch {
+    palette = DEFAULT_PALETTE;
+  }
+
+  const root = createRoot(renderer);
+  return { renderer, palette, root };
+}
+
+/**
+ * Cleanly shut down the TUI: unmount the React tree, wait for the
+ * renderer to idle, and destroy (exits the alternate screen buffer).
+ */
+async function destroyTui(
+  root: ReturnType<typeof createRoot>,
+  renderer: Awaited<ReturnType<typeof createCliRenderer>>,
+) {
+  try {
+    root.unmount();
+    await renderer.idle();
+  } finally {
+    renderer.destroy();
+  }
+}
+
+// ── Helpers ─────────────────────────────────────────
+
 /** Convert a CLI model spec ("provider:model") to a cache-safe key. */
 function specToKey(spec: string): string {
   const { provider, model } = parseModelSpec(spec);
@@ -167,46 +234,16 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     eventHandler = handler;
   };
 
-  const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
-    useAlternateScreen: true,
-    useMouse: true,
-    useConsole: false,
-  });
+  const { renderer, palette, root } = await createTui();
 
-  // Fetch the terminal's ANSI palette so TUI colors match the user's theme.
-  // Falls back to dark-theme defaults if the query fails (CI, pipe, dumb terminal).
-  const DEFAULT_PALETTE: TerminalPalette = {
-    red: "#FF0000", green: "#00AA00", yellow: "#FFFF00", blue: "#0000FF",
-    magenta: "#AA00AA", cyan: "#00AAAA", white: "#AAAAAA", gray: "#555555",
-    brightRed: "#FF5555", brightGreen: "#55FF55", brightYellow: "#FFFF55",
-    brightMagenta: "#FF55FF", brightCyan: "#55FFFF", fg: "#FFFFFF",
-  };
-  let palette: TerminalPalette;
-  try {
-    const termColors = await renderer.getPalette({ size: 16, timeout: 1000 });
-    palette = {
-      red:           termColors.palette[1]  ?? DEFAULT_PALETTE.red,
-      green:         termColors.palette[2]  ?? DEFAULT_PALETTE.green,
-      yellow:        termColors.palette[3]  ?? DEFAULT_PALETTE.yellow,
-      blue:          termColors.palette[4]  ?? DEFAULT_PALETTE.blue,
-      magenta:       termColors.palette[5]  ?? DEFAULT_PALETTE.magenta,
-      cyan:          termColors.palette[6]  ?? DEFAULT_PALETTE.cyan,
-      white:         termColors.palette[7]  ?? DEFAULT_PALETTE.white,
-      gray:          termColors.palette[8]  ?? DEFAULT_PALETTE.gray,
-      brightRed:     termColors.palette[9]  ?? DEFAULT_PALETTE.brightRed,
-      brightGreen:   termColors.palette[10] ?? DEFAULT_PALETTE.brightGreen,
-      brightYellow:  termColors.palette[11] ?? DEFAULT_PALETTE.brightYellow,
-      brightMagenta: termColors.palette[13] ?? DEFAULT_PALETTE.brightMagenta,
-      brightCyan:    termColors.palette[14] ?? DEFAULT_PALETTE.brightCyan,
-      fg:            termColors.defaultForeground ?? DEFAULT_PALETTE.fg,
-    };
-  } catch {
-    palette = DEFAULT_PALETTE;
-  }
+  // Exit promise: resolved when the user presses q after completion
+  let resolveExit: () => void;
+  const exitPromise = new Promise<void>((r) => { resolveExit = r; });
+  const onExit = () => { resolveExit(); };
 
-  const root = createRoot(renderer);
-  root.render(<App subscribe={subscribe} showSpeed={args.speed} palette={palette} />);
+  root.render(
+    <App subscribe={subscribe} showSpeed={args.speed} palette={palette} onExit={onExit} />
+  );
 
   runner.on((event) => {
     if (eventHandler) eventHandler(event);
@@ -221,16 +258,10 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     // Update cumulative ELO
     await updateCumulativeElo(result);
 
-    // Wait for UI to render final state, then cleanly shut down
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    try {
-      root.unmount();
-      await renderer.idle();
-    } finally {
-      renderer.destroy();
-    }
+    // Wait for user to press q
+    await exitPromise;
 
-    // Print final tables to main buffer with palette colors
+    await destroyTui(root, renderer);
     printFinalTables(result, palette);
 
     console.log(`Results saved to: ${path}`);
@@ -281,15 +312,23 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
       }
     }
   } catch (error) {
-    try {
-      root.unmount();
-      await renderer.idle();
-    } finally {
-      renderer.destroy();
-    }
+    await destroyTui(root, renderer);
     console.error("Benchmark failed:", error);
     process.exit(1);
   }
+}
+
+async function handleTui() {
+  const { renderer, palette, root } = await createTui();
+
+  let resolveExit: () => void;
+  const exitPromise = new Promise<void>((r) => { resolveExit = r; });
+  const onExit = () => { resolveExit(); };
+
+  root.render(<App subscribe={null} palette={palette} onExit={onExit} />);
+
+  await exitPromise;
+  await destroyTui(root, renderer);
 }
 
 async function handleResults(
@@ -676,6 +715,9 @@ async function main() {
         break;
       case "runs-delete":
         await handleRunsDelete(cmd.args);
+        break;
+      case "tui":
+        await handleTui();
         break;
     }
   } catch (error) {
