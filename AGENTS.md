@@ -176,12 +176,19 @@ src/
     registry.ts      Provider factory, model spec parsing
     models.ts        models.dev API, cost calculation
   storage/           Persistence layer
-    run-store.ts     Run result JSON persistence
-    elo-store.ts     Cumulative ELO with pairwise records
+    run-store.ts     Run result JSON persistence + deletion + summaries
+    elo-store.ts     Cumulative ELO with pairwise records + rebuild
     sample-cache.ts  Disk cache for API outputs
   export/
-    web-export.ts    Export tiered data for web viewer
-  ui/                Ink terminal UI components (React/JSX)
+    web-export.ts    Export tiered data for web viewer + run removal
+  ui/                OpenTUI terminal UI components (React/JSX)
+    state.ts         AppState, AppAction, appReducer (centralized state)
+    TabBar.tsx       Tab header: [1] Benchmark  [2] Cache  [3] Runs
+    ConfirmPrompt.tsx  Shared y/n confirmation component
+    tabs/
+      BenchmarkTab.tsx  Tab 1: live benchmark dashboard
+      CacheTab.tsx      Tab 2: disk usage, model list, trim/delete
+      RunsTab.tsx       Tab 3: run history, detail view, deletion
 prompts/             TOML prompt definitions
 web/                 Static SPA viewer (vanilla TS, bundled by Bun)
   src/
@@ -213,15 +220,21 @@ Dependencies flow downward: CLI -> Engine -> Providers/Storage -> Types.
 - ESM module (`"type": "module"` in package.json)
 - Bun is both runtime and bundler (no separate compile step for CLI)
 - The web viewer (`web/`) is a separate vanilla TypeScript SPA, built
-  with `bun run build:web`. It is independent from the Ink terminal UI.
+  with `bun run build:web`. It is independent from the OpenTUI terminal UI.
 - The web viewer uses tiered data loading: a lean manifest (~350 KB
   gzipped) loads immediately, and per-prompt content (~400 KB gzipped
   each) loads on-demand when the user expands prompt sections or views
   judgment reasoning.
 - The methodology page (`web/methodology.html`) is a standalone static
   HTML file generated at build time -- it has no JavaScript dependency.
-- LSP errors in `src/ui/*.tsx` files are pre-existing Ink/React JSX
+- LSP errors in `src/ui/*.tsx` files are pre-existing OpenTUI/React JSX
   type issues -- they are harmless and unrelated to actual bugs.
+- **OpenTUI rendering rule**: `<text>` elements inside a `<box>` do NOT
+  participate in flex layout -- multiple `<text>` children will render
+  at position (0,0) and overlap. Wrap each `<text>` in a `<box>` to
+  get block-level stacking, or combine into a single `<text>` with
+  `<span>` children. `<scrollbox>` treats `<text>` children as
+  block-level automatically.
 - The `ai` SDK `Intl.Segmenter` type error is a known upstream issue.
 - **Model aliasing**: The model spec format supports `~` for declaring
   endpoint equivalence: `provider:model~canonical_provider:canonical_model`.

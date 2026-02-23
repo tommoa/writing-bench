@@ -122,11 +122,12 @@ export function App({ subscribe, showSpeed, palette, onExit }: AppProps) {
       </box>
 
       {/* ── Footer ────────────────────────────────── */}
-      {(benchmark.complete || standalone) && (
-        <box paddingLeft={1} marginTop={1}>
-          <text fg={palette.gray}>Press q to exit</text>
-        </box>
-      )}
+      <box paddingLeft={1} marginTop={1}>
+        <text fg={palette.gray}>
+          [1-3] switch tabs
+          {(benchmark.complete || standalone) ? "  [q] exit" : ""}
+        </text>
+      </box>
     </box>
   );
 }
