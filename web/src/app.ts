@@ -3,6 +3,7 @@ import { $$, renderError } from "./helpers.js";
 import { state, setJudgmentApi } from "./state.js";
 import { renderDashboard, renderRunsPage } from "./dashboard.js";
 import { renderRunDetailPage } from "./run-detail.js";
+import { resetLogoUids } from "./model-logos.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -33,6 +34,7 @@ async function fetchIndex(): Promise<RunsIndex> {
 function route(): void {
   const { page, id } = getPage();
   setJudgmentApi(null);
+  resetLogoUids();
 
   $$(".nav a").forEach((a) => {
     const dataPage = a.getAttribute("data-page");

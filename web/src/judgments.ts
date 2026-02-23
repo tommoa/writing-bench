@@ -2,6 +2,7 @@ import type { RunManifest, SampleMeta, JudgmentMeta } from "./types.js";
 import { el, $$ } from "./helpers.js";
 import { setJudgmentApi, fetchPromptContent } from "./state.js";
 import { scrollToSample } from "./prompt-section.js";
+import { modelLogo, buildModelFamilies } from "./model-logos.js";
 
 // ── Judgment label helpers ──────────────────────────
 
@@ -81,6 +82,9 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
   }
 
   const runId = manifest.config.id;
+
+  // Build label -> family map for logo resolution
+  const mFamilies = buildModelFamilies(manifest.modelInfo);
 
   // Build sample lookup once
   const sampleMap = new Map(manifest.samples.map((s) => [s.id, s]));
@@ -196,6 +200,7 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
       ? el("span", { className: "judgment-output-idx" }, ` #${outputIdx + 1}`)
       : null;
 
+    const logo = modelLogo(mFamilies[model], 14);
     const nameLink = el(
       "a",
       {
@@ -207,6 +212,7 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
           resetAndRerender();
         },
       },
+      logo,
       el("span", { className: "judgment-model-name" }, label),
       idxEl,
     );
@@ -328,6 +334,7 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
         el(
           "div",
           { className: "h2h-record" },
+          modelLogo(mFamilies[filterModelA], 14),
           el("span", { className: "h2h-model" }, filterModelA),
           el("span", { className: "h2h-wins" }, ` ${winsA}W`),
           el("span", { className: "muted" }, " / "),
@@ -335,6 +342,7 @@ export function renderJudgmentsSection(manifest: RunManifest): HTMLElement {
           el("span", { className: "muted" }, " / "),
           el("span", { className: "h2h-ties" }, `${ties}T`),
           el("span", { className: "muted" }, ` vs `),
+          modelLogo(mFamilies[filterModelB], 14),
           el("span", { className: "h2h-model" }, filterModelB),
         ),
       );

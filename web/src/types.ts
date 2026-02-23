@@ -334,4 +334,6 @@ export interface RunsIndex {
   cumulativeJudgeQuality?: JudgeQualityEntry[];
   /** Cumulative alternative rating sets. */
   cumulativeAlternativeRatings?: AlternativeRatings;
+  /** Maps model display labels to models.dev family names (for logo resolution). */
+  modelFamilies?: Record<string, string>;
 }

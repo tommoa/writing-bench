@@ -1,5 +1,6 @@
 import type { RunManifest } from "./types.js";
 import { el, $$, render, renderError, renderCostItem, formatDate, sectionDesc, SECTION_DESC } from "./helpers.js";
+import { modelLogo, buildModelFamilies } from "./model-logos.js";
 import { renderPromptSection } from "./prompt-section.js";
 import { renderJudgmentsSection } from "./judgments.js";
 import { renderJudgeQualitySection } from "./judge-quality.js";
@@ -53,12 +54,16 @@ export function renderRunDetail(manifest: RunManifest): void {
   const wlt = (r: { model: string; wins?: number; losses?: number; ties?: number }) =>
     r.wins != null ? `${r.wins}/${r.losses}/${r.ties}` : "-";
 
+  // Build label -> family map for logo resolution
+  const modelFamilies = buildModelFamilies(manifest.modelInfo);
+
   const eloOpts = {
     costByModelByStage: manifest.meta.costByModelByStageUncached ?? {},
     tokensByModelByStage: manifest.meta.tokensByModelByStage ?? {},
     speedByModel: manifest.meta.speedByModel,
     wlt,
     onModelClick: (model: string) => getJudgmentApi()?.focusModel(model),
+    modelFamilies,
   };
 
   frag.appendChild(el("h2", {}, "Initial Writer ELO"));
@@ -253,10 +258,12 @@ function renderRunMetadata(manifest: RunManifest): HTMLElement {
     container.appendChild(el("h3", {}, "Models"));
     const cards = el("div", { className: "model-cards" });
     for (const [label, info] of Object.entries(manifest.modelInfo)) {
+      const logo = modelLogo(info.family, 24);
       cards.appendChild(
         el(
           "div",
           { className: "model-card" },
+          logo,
           el("div", { className: "name" }, label),
           el("div", { className: "detail" }, info.name),
           el("div", { className: "detail" }, `Family: ${info.family}`),

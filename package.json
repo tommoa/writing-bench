@@ -10,6 +10,7 @@
     "start": "bun run src/index.tsx",
     "test": "bun test",
     "export": "bun run src/index.tsx export",
+    "build:logos": "bun scripts/fetch-logos.ts",
     "build:web": "bun web/src/build-methodology.ts && bun build web/src/app.ts --outdir web --target browser --minify"
   },
   "dependencies": {

@@ -1,5 +1,6 @@
 import type { SampleMeta, SampleContent, FeedbackMeta, FeedbackContent, ModelSpeed, JudgmentMeta } from "./types.js";
 import type { PairwiseJudgment } from "../../src/types.js";
+import { modelLogo } from "./model-logos.js";
 
 // ── DOM helpers ─────────────────────────────────────
 
@@ -164,6 +165,8 @@ export interface EloTableOpts {
   sortableElo?: boolean;
   /** Callback when a model name is clicked (e.g. to focus judgments). */
   onModelClick?: (model: string) => void;
+  /** Maps model labels to family names for logo resolution. */
+  modelFamilies?: Record<string, string>;
 }
 
 /**
@@ -267,15 +270,17 @@ export function renderEloTable(
           ? "rating bottom"
           : "rating";
 
+    const logo = modelLogo(opts.modelFamilies?.[r.model]);
     const modelCell = opts.onModelClick
-      ? el("td", {},
+      ? el("td", { className: "model-cell" },
+          logo,
           el("a", {
             href: "#",
             className: "model-link",
             onClick: (e: Event) => { e.preventDefault(); opts.onModelClick!(r.model); },
           }, r.model),
         )
-      : el("td", {}, r.model);
+      : el("td", { className: "model-cell" }, logo, r.model);
 
     const cells = [
       el("td", { className: "rank" }, String(i + 1)),

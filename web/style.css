@@ -3,6 +3,7 @@
 :root {
   --bg: #fafafa;
   --text: #6a6a6a;
+  --text-strong: #1a1a1a;
   --accent: #e05661;
   --header: #ee9025;
   --blue: #118dc3;
@@ -22,6 +23,7 @@
   :root {
     --bg: #282c34;
     --text: #abb2bf;
+    --text-strong: #e6e6e6;
     --accent: #61afef;
     --header: #c678dd;
     --blue: #61afef;
@@ -519,6 +521,8 @@ details[open] summary ~ * {
 
 /* Inline filter links on judgment cards (prompt, judge, model names) */
 .judgment-filter-link {
+  display: inline-flex;
+  align-items: center;
   color: inherit;
   text-decoration: none;
   border-bottom: 1px dashed var(--comment);
@@ -1237,4 +1241,96 @@ tr.judge-row.pruned {
     align-items: flex-start;
     gap: 0.25em;
   }
+}
+
+/* ── Model Logos ──────────────────────────────────── */
+
+.model-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  margin-right: 0.4em;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.model-logo svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Stack both variants in the same space */
+.model-logo-light,
+.model-logo-dark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Brand-color layer sits on top, fades in/out */
+.model-logo-light {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+/* Strong text color for currentColor fills in brand-color SVGs (e.g. Kimi K) */
+.model-logo:has(.model-logo-dark) > .model-logo-light {
+  color: var(--text-strong);
+}
+
+/* Mono layer is always visible underneath */
+.model-logo-dark {
+  opacity: 1;
+}
+
+/* Logos without a dark variant: light is the only layer, always visible */
+.model-logo:not(:has(.model-logo-dark)) > .model-logo-light {
+  position: static;
+  opacity: 1;
+}
+
+/* Mono-only logos: subtle color emphasis on hover */
+.model-logo:not(:has(.model-logo-dark)) {
+  transition: color 0.25s ease;
+}
+
+tr:hover .model-logo:not(:has(.model-logo-dark)) {
+  color: var(--text-strong);
+}
+
+/* Leaderboard rows: crossfade to brand-color on hover */
+tr:hover .model-logo > .model-logo-light {
+  opacity: 1;
+}
+
+/* Model cell in ELO tables -- keep inline layout for proper row alignment */
+td.model-cell {
+  white-space: nowrap;
+}
+
+/* Sparkline label alignment */
+.sparkline-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Model cards + sparklines: always show brand-color */
+.model-card .model-logo > .model-logo-light,
+.sparkline-label .model-logo > .model-logo-light {
+  position: static;
+  opacity: 1;
+}
+.model-card .model-logo > .model-logo-dark,
+.sparkline-label .model-logo > .model-logo-dark {
+  position: absolute;
+  opacity: 0;
+}
+
+/* Model card logo spacing */
+.model-card .model-logo {
+  margin-bottom: 0.3em;
+  margin-right: 0;
 }

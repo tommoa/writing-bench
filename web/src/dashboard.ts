@@ -1,5 +1,6 @@
 import type { RunsIndex, RunIndexEntry, TagAlternatives } from "./types.js";
 import { el, render, renderEloTable, formatDate, sectionDesc, SECTION_DESC } from "./helpers.js";
+import { modelLogo } from "./model-logos.js";
 import { renderJudgeQualitySection } from "./judge-quality.js";
 import { createRatingToggle } from "./rating-toggle.js";
 import { createRatingSettings } from "./rating-settings.js";
@@ -37,6 +38,7 @@ export function renderDashboard(index: RunsIndex): void {
       eloTableOpts: {
         costStages: ["initial", "revised"],
         sortableElo: true,
+        modelFamilies: index.modelFamilies,
       },
     }).container);
   }
@@ -51,6 +53,7 @@ export function renderDashboard(index: RunsIndex): void {
       eloTableOpts: {
         costStages: ["feedback"],
         sortableElo: true,
+        modelFamilies: index.modelFamilies,
       },
     }).container);
   }
@@ -112,6 +115,7 @@ export function renderDashboard(index: RunsIndex): void {
           eloTableOpts: {
             costStages: ["initial", "revised"],
             sortableElo: true,
+            modelFamilies: index.modelFamilies,
           },
         }).container);
       });
@@ -122,7 +126,7 @@ export function renderDashboard(index: RunsIndex): void {
 
   if (index.eloHistory.length > 1) {
     frag.appendChild(el("h2", {}, "ELO History"));
-    frag.appendChild(renderSparklines(index.eloHistory));
+    frag.appendChild(renderSparklines(index.eloHistory, index.modelFamilies));
   }
 
   if (index.runs.length > 0) {
@@ -147,6 +151,7 @@ export function renderDashboard(index: RunsIndex): void {
 
 export function renderSparklines(
   history: RunsIndex["eloHistory"],
+  modelFamilies?: Record<string, string>,
 ): HTMLElement {
   const container = el("div");
   const models = new Set<string>();
@@ -174,11 +179,12 @@ export function renderSparklines(
     });
 
     const svg = `<svg viewBox="0 0 ${w} ${h}"><path d="M${points.join("L")}"/></svg>`;
+    const logo = modelLogo(modelFamilies?.[model]);
     container.appendChild(
       el(
         "div",
         { className: "mb-1" },
-        el("span", {}, model + " "),
+        el("span", { className: "sparkline-label" }, logo, model + " "),
         el("span", { className: "sparkline", innerHTML: svg }),
         el("span", { className: "muted small" }, ` ${values[values.length - 1]}`),
       ),

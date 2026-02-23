@@ -257,6 +257,8 @@ interface RunsIndex {
   }>;
   cumulativeJudgeQuality?: JudgeQualityExport[];
   cumulativeAlternativeRatings?: AlternativeRatingsExport;
+  /** Maps model display labels to models.dev family names (for logo resolution). */
+  modelFamilies?: Record<string, string>;
 }
 
 // ── Manifest & Content Types ─────────────────────────
@@ -318,6 +320,7 @@ export async function exportForWeb(outDir: string): Promise<number> {
   const allRevisedSampleToModel = new Map<string, string>();
   const allSampleToFeedbackModel = new Map<string, string>();
   const promptToTags = new Map<string, string[]>();
+  const modelFamilies: Record<string, string> = {};
 
   for (const id of runIds) {
     const run = await loadRun(id);
@@ -395,6 +398,11 @@ export async function exportForWeb(outDir: string): Promise<number> {
     for (const [k, v] of revisedSampleToModel) allRevisedSampleToModel.set(k, v);
     for (const [k, v] of sampleToFeedbackModel) allSampleToFeedbackModel.set(k, v);
     for (const p of run.config.prompts) promptToTags.set(p.id, p.tags);
+    if (run.modelInfo) {
+      for (const [label, info] of Object.entries(run.modelInfo)) {
+        if (info.family) modelFamilies[label] = info.family;
+      }
+    }
 
     // ── Write manifest (Tier 1) ──
 
@@ -633,6 +641,7 @@ export async function exportForWeb(outDir: string): Promise<number> {
     })),
     cumulativeJudgeQuality,
     cumulativeAlternativeRatings,
+    modelFamilies: Object.keys(modelFamilies).length > 0 ? modelFamilies : undefined,
   };
 
   await writeGzipped(

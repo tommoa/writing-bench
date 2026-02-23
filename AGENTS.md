@@ -36,6 +36,7 @@ bun run start run --skip-seeding -m provider:model      # skip Phase 1 cache sca
 bun run start run --max-rounds 10 -m provider:model     # limit productive adaptive rounds
 bun run start cache combine provider:source provider:target  # merge cache directories
 bun run start serve               # build + export + serve web viewer
+bun run build:logos               # fetch model logos from lobe-icons (dev-time, needs run data)
 bun run build:web                 # bundle web/src/app.ts -> web/app.js
 ```
 
