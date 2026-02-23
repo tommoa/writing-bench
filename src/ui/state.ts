@@ -42,11 +42,13 @@ export interface CacheTabState {
 
 export interface RunsTabState {
   loading: boolean;
+  loaded: boolean;
   summaries: RunSummary[];
   mode: "list" | "detail";
   cursorIndex: number;
   detailRun: RunResult | null;
   confirmDelete: string | null;
+  error: string | null;
 }
 
 // ── App State ───────────────────────────────────────
@@ -103,11 +105,13 @@ export const INITIAL_STATE: AppState = {
   },
   runs: {
     loading: false,
+    loaded: false,
     summaries: [],
     mode: "list",
     cursorIndex: 0,
     detailRun: null,
     confirmDelete: null,
+    error: null,
   },
 };
 
@@ -136,7 +140,8 @@ export type AppAction =
   | { type: "RUNS_BACK" }
   | { type: "RUNS_CONFIRM_DELETE"; runId: string }
   | { type: "RUNS_CANCEL_DELETE" }
-  | { type: "RUNS_DELETE_DONE"; summaries: RunSummary[] };
+  | { type: "RUNS_DELETE_DONE"; summaries: RunSummary[] }
+  | { type: "RUNS_ERROR"; message: string };
 
 // ── Reducer ─────────────────────────────────────────
 
@@ -144,7 +149,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     // ── Tab ──
     case "SET_TAB":
-      return { ...state, activeTab: action.tab };
+      return {
+        ...state,
+        activeTab: action.tab,
+        cache: { ...state.cache, confirmAction: null },
+        runs: { ...state.runs, confirmDelete: null },
+      };
 
     // ── Benchmark ──
     case "BENCHMARK_PROGRESS":
@@ -222,12 +232,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "RUNS_LOADING":
       return {
         ...state,
-        runs: { ...state.runs, loading: true },
+        runs: { ...state.runs, loading: true, error: null },
       };
     case "RUNS_LOADED":
       return {
         ...state,
-        runs: { ...state.runs, loading: false, summaries: action.summaries },
+        runs: { ...state.runs, loading: false, loaded: true, summaries: action.summaries },
       };
     case "RUNS_CURSOR":
       return {
@@ -261,12 +271,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.runs,
           confirmDelete: null,
           loading: false,
+          loaded: true,
+          error: null,
+          mode: "list",
+          detailRun: null,
           summaries: action.summaries,
           cursorIndex: Math.min(
             state.runs.cursorIndex,
             Math.max(0, action.summaries.length - 1),
           ),
         },
+      };
+    case "RUNS_ERROR":
+      return {
+        ...state,
+        runs: { ...state.runs, error: action.message },
       };
 
     default:

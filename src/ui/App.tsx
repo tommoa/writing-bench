@@ -3,6 +3,7 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { TabBar } from "./TabBar.js";
 import { BenchmarkTab } from "./tabs/BenchmarkTab.js";
 import { CacheTab } from "./tabs/CacheTab.js";
+import { RunsTab } from "./tabs/RunsTab.js";
 import { CostBreakdownTable } from "./CostBreakdownTable.js";
 import { appReducer, benchmarkEventToAction, INITIAL_STATE } from "./state.js";
 import type { TabId } from "./state.js";
@@ -95,9 +96,12 @@ export function App({ subscribe, showSpeed, palette, onExit }: AppProps) {
         )}
 
         {state.activeTab === "runs" && (
-          <box flexGrow={1} paddingLeft={1} paddingTop={1}>
-            <text fg={palette.gray}>Run history -- coming soon</text>
-          </box>
+          <RunsTab
+            state={state.runs}
+            activeTab={state.activeTab}
+            dispatch={dispatch}
+            palette={palette}
+          />
         )}
 
         {/* Sidebar: cost breakdown (benchmark tab, wide terminals) */}
