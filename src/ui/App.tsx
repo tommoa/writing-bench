@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useReducer, useEffect, useMemo } from "react";
 import { StatusBar } from "./StatusBar.js";
 import { EloTable } from "./EloTable.js";
 import { JudgeQualityTable } from "./JudgeQualityTable.js";
 import { CostBreakdownTable } from "./CostBreakdownTable.js";
 import { RunProgress } from "./RunProgress.js";
-import type { BenchmarkEvent, BenchmarkProgress, CacheSavings, ModelSpeed, TerminalPalette } from "../types.js";
+import { appReducer, benchmarkEventToAction, INITIAL_STATE } from "./state.js";
+import type { BenchmarkEvent, ModelSpeed, TerminalPalette } from "../types.js";
 
 interface AppProps {
   subscribe: (handler: (event: BenchmarkEvent) => void) => void;
@@ -41,52 +42,14 @@ function sliceAvgTimeForStage(
 }
 
 export function App({ subscribe, showSpeed, palette }: AppProps) {
-  const [progress, setProgress] = useState<BenchmarkProgress>({
-    stage: "initialWriting",
-    activeStages: [],
-    stageProgress: 0,
-    stageDone: 0,
-    currentOp: "Starting...",
-    elo: { initial: [], revised: [], feedback: [] },
-    totalCost: 0,
-    totalCostUncached: 0,
-    costByModel: {},
-    costByStage: {},
-    costByModelByStage: {},
-    speedByModel: {},
-    speedByModelByStage: {},
-    cacheSavings: {
-      writes:    { cached: 0, fresh: 0, savedCost: 0 },
-      feedback:  { cached: 0, fresh: 0, savedCost: 0 },
-      revisions: { cached: 0, fresh: 0, savedCost: 0 },
-      judgments:  { cached: 0, fresh: 0, savedCost: 0 },
-    },
-  });
-
-  const [complete, setComplete] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
+  const { benchmark } = state;
+  const progress = benchmark.progress;
 
   useEffect(() => {
     subscribe((event) => {
-      switch (event.type) {
-        case "progress":
-          setProgress(event.data);
-          break;
-        case "stageComplete":
-          break;
-        case "complete":
-          setProgress((prev) => ({
-            ...prev,
-            stage: "complete",
-            stageProgress: 1,
-            currentOp: "Benchmark complete!",
-          }));
-          setComplete(true);
-          break;
-        case "error":
-          setError(event.data.message);
-          break;
-      }
+      const action = benchmarkEventToAction(event);
+      if (action) dispatch(action);
     });
   }, [subscribe]);
 
@@ -216,13 +179,13 @@ export function App({ subscribe, showSpeed, palette }: AppProps) {
       </scrollbox>
 
       {/* ── Status footer ─────────────────────────────── */}
-      {error && (
+      {benchmark.error && (
         <box marginTop={1} paddingLeft={1}>
-          <text fg={palette.red}>Error: {error}</text>
+          <text fg={palette.red}>Error: {benchmark.error}</text>
         </box>
       )}
 
-      {complete && (
+      {benchmark.complete && (
         <box marginTop={1} paddingLeft={1}>
           <text fg={palette.green} attributes={1}>
             Benchmark complete! Total cost: ${progress.totalCost.toFixed(4)}
