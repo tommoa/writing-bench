@@ -1,4 +1,5 @@
-import { writeFile, mkdir } from "fs/promises";
+import { existsSync } from "fs";
+import { writeFile, mkdir, rm } from "fs/promises";
 import { join } from "path";
 import type { RunResult, TokenUsage, ModelInfo, EloRating, JudgeQualityExport, PairwiseJudgment } from "../types.js";
 import { DEFAULT_CONVERGENCE } from "../types.js";
@@ -650,4 +651,36 @@ export async function exportForWeb(outDir: string): Promise<number> {
   );
 
   return runIds.length;
+}
+
+/**
+ * Remove a single run from the web export and regenerate the index.
+ * No-op if the web data directory doesn't exist.
+ * Assumes cumulative ELO has already been rebuilt before calling this.
+ */
+export async function removeRunFromExport(
+  runId: string,
+  outDir: string = "web/data",
+): Promise<void> {
+  const indexPath = join(outDir, "runs.json");
+  if (!existsSync(indexPath) && !existsSync(indexPath + ".gz")) {
+    return; // No web export exists -- nothing to clean up
+  }
+
+  const runsDir = join(outDir, "runs");
+
+  // Remove per-run manifest files
+  for (const ext of [".json", ".json.gz"]) {
+    const p = join(runsDir, `${runId}${ext}`);
+    if (existsSync(p)) await rm(p);
+  }
+
+  // Remove per-run content directory
+  const contentDir = join(runsDir, runId);
+  if (existsSync(contentDir)) {
+    await rm(contentDir, { recursive: true });
+  }
+
+  // Regenerate the index with updated cumulative ELO and remaining runs
+  await exportForWeb(outDir);
 }

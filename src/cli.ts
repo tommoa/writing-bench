@@ -71,6 +71,14 @@ export interface CacheCombineArgs {
   target: string;
 }
 
+export interface RunsListArgs {
+  format: "table" | "json";
+}
+
+export interface RunsDeleteArgs {
+  runId: string;
+}
+
 export type Command =
   | { command: "run"; args: RunArgs }
   | { command: "results"; args: ResultsArgs }
@@ -79,7 +87,9 @@ export type Command =
   | { command: "serve"; args: ServeArgs }
   | { command: "cache-clear"; args: ClearCacheArgs }
   | { command: "cache-combine"; args: CacheCombineArgs }
-  | { command: "cache-status"; args: CacheStatusArgs };
+  | { command: "cache-status"; args: CacheStatusArgs }
+  | { command: "runs-list"; args: RunsListArgs }
+  | { command: "runs-delete"; args: RunsDeleteArgs };
 
 function buildCacheCommand(resolve: (cmd: Command) => void) {
   const statusOpts = <T>(sy: Argv<T>) =>
@@ -524,6 +534,61 @@ export async function parseArgs(): Promise<Command> {
         }
       )
       .command("cache", "Cache management commands (defaults to status)", cache.builder, cache.handler)
+      .command(
+        "runs",
+        "Run history management (defaults to list)",
+        (y) => {
+          const resolveList = (argv: ArgumentsCamelCase<RunsListArgs>) => {
+            resolve({
+              command: "runs-list",
+              args: { format: argv.format },
+            });
+          };
+
+          return y
+            .option("format", {
+              type: "string",
+              choices: ["table", "json"] as const,
+              default: "table" as const,
+              describe: "Output format",
+            })
+            .command(
+              "list",
+              "List all runs with summary metadata",
+              <U>(sy: Argv<U>) =>
+                sy.option("format", {
+                  type: "string",
+                  choices: ["table", "json"] as const,
+                  default: "table" as const,
+                  describe: "Output format",
+                }),
+              resolveList,
+            )
+            .command(
+              "delete <run-id>",
+              "Delete a run and rebuild cumulative ELO",
+              <U>(sy: Argv<U>) =>
+                sy.positional("run-id", {
+                  type: "string",
+                  demandOption: true,
+                  describe: "Run ID to delete (e.g. 2026-02-23T10-30-00-000Z)",
+                }),
+              (argv: ArgumentsCamelCase<RunsDeleteArgs>) => {
+                resolve({
+                  command: "runs-delete",
+                  args: { runId: argv.runId },
+                });
+              },
+            );
+        },
+        // Bare "runs" (no subcommand) defaults to "runs list"
+        (argv) => {
+          resolve({
+            command: "runs-list",
+            args: { format: (argv.format as "table" | "json") ?? "table" },
+          });
+        },
+      )
       .demandCommand(1, "Please specify a command")
       .strict()
       .help()

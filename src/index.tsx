@@ -7,8 +7,8 @@ import { existsSync } from "fs";
 import { parseArgs, type Command } from "./cli.js";
 import { loadPrompts, parseModelConfigs, mergeModelEndpoints, createRunConfig, filterPrompts, resolveModelLabels } from "./config.js";
 import { BenchmarkRunner } from "./engine/runner.js";
-import { saveRun, loadRun, loadLatestRun, listRuns } from "./storage/run-store.js";
-import { updateCumulativeElo, loadCumulativeElo } from "./storage/elo-store.js";
+import { saveRun, loadRun, loadLatestRun, listRuns, deleteRunFull, listRunSummaries } from "./storage/run-store.js";
+import { updateCumulativeElo, loadCumulativeElo, rebuildCumulativeElo } from "./storage/elo-store.js";
 import { exportForWeb } from "./export/web-export.js";
 import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson, reverseModelKey } from "./storage/cache-status.js";
 import { modelKey, trimModelOutputs, combineModelCaches } from "./storage/sample-cache.js";
@@ -371,29 +371,63 @@ async function handleElo(
 
 /** Delete cumulative ELO and rebuild from all stored run results. */
 async function recomputeCumulativeElo(): Promise<void> {
-  const eloPath = join(process.cwd(), "data", "elo.json");
-  if (existsSync(eloPath)) {
-    await rm(eloPath);
-    console.log("Deleted existing elo.json");
-  }
-
-  const runIds = (await listRuns()).reverse(); // chronological order for history
+  const runIds = await listRuns();
   if (runIds.length === 0) {
     console.log("No stored runs found. Nothing to recompute.");
     return;
   }
 
   console.log(`Replaying ${runIds.length} runs...`);
-  for (const id of runIds) {
-    try {
-      const run = await loadRun(id);
-      await updateCumulativeElo(run);
-      console.log(`  Replayed ${id}`);
-    } catch {
-      console.log(`  Skipping ${id} (could not load)`);
-    }
-  }
+  await rebuildCumulativeElo((id) => {
+    console.log(`  Replayed ${id}`);
+  });
   console.log("Cumulative ELO recomputed.\n");
+}
+
+async function handleRunsList(
+  args: Extract<Command, { command: "runs-list" }>["args"]
+) {
+  const summaries = await listRunSummaries();
+
+  if (summaries.length === 0) {
+    console.log("No runs found.");
+    return;
+  }
+
+  if (args.format === "json") {
+    console.log(JSON.stringify(summaries, null, 2));
+    return;
+  }
+
+  console.log(`\n${summaries.length} run(s):\n`);
+  console.log(
+    `${"ID".padEnd(28)}${"Models".padEnd(30)}${"Prompts".padStart(8)}${"Cost".padStart(10)}${"Duration".padStart(10)}`
+  );
+  console.log("─".repeat(86));
+  for (const s of summaries) {
+    const models = s.models.join(", ");
+    const modelsTrunc = models.length > 28 ? models.slice(0, 25) + "..." : models;
+    console.log(
+      `${s.id.padEnd(28)}${modelsTrunc.padEnd(30)}${String(s.promptCount).padStart(8)}${("$" + s.totalCost.toFixed(4)).padStart(10)}${(s.durationMs / 1000).toFixed(1).padStart(9)}s`
+    );
+  }
+}
+
+async function handleRunsDelete(
+  args: Extract<Command, { command: "runs-delete" }>["args"]
+) {
+  console.log(`Deleting run ${args.runId}...`);
+  try {
+    await deleteRunFull(args.runId, (step) => {
+      console.log(`  ${step}`);
+    });
+    console.log(`\nRun ${args.runId} deleted.`);
+  } catch (error) {
+    console.error(
+      `Failed to delete run: ${error instanceof Error ? error.message : error}`
+    );
+    process.exit(1);
+  }
 }
 
 async function handleExport(
@@ -636,6 +670,12 @@ async function main() {
         break;
       case "cache-status":
         await handleCacheStatus(cmd.args);
+        break;
+      case "runs-list":
+        await handleRunsList(cmd.args);
+        break;
+      case "runs-delete":
+        await handleRunsDelete(cmd.args);
         break;
     }
   } catch (error) {

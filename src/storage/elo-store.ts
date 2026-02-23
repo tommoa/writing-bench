@@ -1,5 +1,5 @@
 import { existsSync } from "fs";
-import { readFile, writeFile, mkdir } from "fs/promises";
+import { readFile, writeFile, mkdir, rm } from "fs/promises";
 import { join, dirname } from "path";
 import type {
   CumulativeElo,
@@ -186,6 +186,39 @@ export async function updateCumulativeElo(
 
   await saveCumulativeElo(elo);
   return elo;
+}
+
+// ── Rebuild ─────────────────────────────────────────
+
+/**
+ * Delete cumulative ELO and rebuild from all stored run results.
+ * Reusable from both CLI and TUI contexts -- uses a progress callback
+ * instead of console output.
+ */
+export async function rebuildCumulativeElo(
+  onProgress?: (runId: string, index: number, total: number) => void,
+): Promise<CumulativeElo> {
+  if (existsSync(ELO_FILE)) {
+    await rm(ELO_FILE);
+  }
+
+  const { listRuns, loadRun } = await import("./run-store.js");
+
+  const runIds = (await listRuns()).reverse(); // chronological order for history
+  for (let i = 0; i < runIds.length; i++) {
+    const id = runIds[i];
+    let run;
+    try {
+      run = await loadRun(id);
+    } catch {
+      // Skip unloadable runs (corrupt or missing data)
+      continue;
+    }
+    await updateCumulativeElo(run);
+    onProgress?.(id, i, runIds.length);
+  }
+
+  return loadCumulativeElo();
 }
 
 // ── Key Migration ───────────────────────────────────
