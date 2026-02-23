@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import React from "react";
-import { render } from "ink";
+import { createCliRenderer } from "@opentui/core";
+import { createRoot } from "@opentui/react";
 import { join } from "path";
 import { rm } from "fs/promises";
 import { existsSync } from "fs";
@@ -16,7 +16,8 @@ import { safeReaddir } from "./storage/fs-utils.js";
 import { parseModelSpec } from "./providers/registry.js";
 import { checkProviderEnv } from "./providers/models.js";
 import { App } from "./ui/App.js";
-import type { BenchmarkEvent, EloRating, PromptConfig, TaskError } from "./types.js";
+import { printFinalTables } from "./ui/print-tables.js";
+import type { BenchmarkEvent, EloRating, PromptConfig, TaskError, TerminalPalette } from "./types.js";
 import { DEFAULT_CONVERGENCE, JUDGE_PRESETS } from "./types.js";
 import { formatConvergenceTarget, formatConvergenceDescription } from "./engine/need-identifier.js";
 
@@ -160,15 +161,52 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
 
   const runner = new BenchmarkRunner(config);
 
-  // Set up Ink UI
+  // Set up OpenTUI
   let eventHandler: ((event: BenchmarkEvent) => void) | null = null;
   const subscribe = (handler: (event: BenchmarkEvent) => void) => {
     eventHandler = handler;
   };
 
-  const { unmount, waitUntilExit } = render(
-    <App subscribe={subscribe} showSpeed={args.speed} />
-  );
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: true,
+    useAlternateScreen: true,
+    useMouse: true,
+    useConsole: false,
+  });
+
+  // Fetch the terminal's ANSI palette so TUI colors match the user's theme.
+  // Falls back to dark-theme defaults if the query fails (CI, pipe, dumb terminal).
+  const DEFAULT_PALETTE: TerminalPalette = {
+    red: "#FF0000", green: "#00AA00", yellow: "#FFFF00", blue: "#0000FF",
+    magenta: "#AA00AA", cyan: "#00AAAA", white: "#AAAAAA", gray: "#555555",
+    brightRed: "#FF5555", brightGreen: "#55FF55", brightYellow: "#FFFF55",
+    brightMagenta: "#FF55FF", brightCyan: "#55FFFF", fg: "#FFFFFF",
+  };
+  let palette: TerminalPalette;
+  try {
+    const termColors = await renderer.getPalette({ size: 16, timeout: 1000 });
+    palette = {
+      red:           termColors.palette[1]  ?? DEFAULT_PALETTE.red,
+      green:         termColors.palette[2]  ?? DEFAULT_PALETTE.green,
+      yellow:        termColors.palette[3]  ?? DEFAULT_PALETTE.yellow,
+      blue:          termColors.palette[4]  ?? DEFAULT_PALETTE.blue,
+      magenta:       termColors.palette[5]  ?? DEFAULT_PALETTE.magenta,
+      cyan:          termColors.palette[6]  ?? DEFAULT_PALETTE.cyan,
+      white:         termColors.palette[7]  ?? DEFAULT_PALETTE.white,
+      gray:          termColors.palette[8]  ?? DEFAULT_PALETTE.gray,
+      brightRed:     termColors.palette[9]  ?? DEFAULT_PALETTE.brightRed,
+      brightGreen:   termColors.palette[10] ?? DEFAULT_PALETTE.brightGreen,
+      brightYellow:  termColors.palette[11] ?? DEFAULT_PALETTE.brightYellow,
+      brightMagenta: termColors.palette[13] ?? DEFAULT_PALETTE.brightMagenta,
+      brightCyan:    termColors.palette[14] ?? DEFAULT_PALETTE.brightCyan,
+      fg:            termColors.defaultForeground ?? DEFAULT_PALETTE.fg,
+    };
+  } catch {
+    palette = DEFAULT_PALETTE;
+  }
+
+  const root = createRoot(renderer);
+  root.render(<App subscribe={subscribe} showSpeed={args.speed} palette={palette} />);
 
   runner.on((event) => {
     if (eventHandler) eventHandler(event);
@@ -183,11 +221,19 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     // Update cumulative ELO
     await updateCumulativeElo(result);
 
-    // Wait for UI to render final state
+    // Wait for UI to render final state, then cleanly shut down
     await new Promise((resolve) => setTimeout(resolve, 500));
-    unmount();
+    try {
+      root.unmount();
+      await renderer.idle();
+    } finally {
+      renderer.destroy();
+    }
 
-    console.log(`\nResults saved to: ${path}`);
+    // Print final tables to main buffer with palette colors
+    printFinalTables(result, palette);
+
+    console.log(`Results saved to: ${path}`);
     console.log(
       `Total cost: $${result.meta.totalCost.toFixed(4)}`
     );
@@ -235,7 +281,12 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
       }
     }
   } catch (error) {
-    unmount();
+    try {
+      root.unmount();
+      await renderer.idle();
+    } finally {
+      renderer.destroy();
+    }
     console.error("Benchmark failed:", error);
     process.exit(1);
   }

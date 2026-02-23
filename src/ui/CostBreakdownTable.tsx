@@ -1,6 +1,4 @@
-import React from "react";
-import { Box, Text } from "ink";
-import type { EloRating, ModelSpeed } from "../types.js";
+import type { EloRating, ModelSpeed, TerminalPalette } from "../types.js";
 
 const STAGE_COLS = [
   { key: "initial", label: "Write" },
@@ -16,6 +14,7 @@ interface CostBreakdownTableProps {
   speedByModel: Record<string, ModelSpeed>;
   eloInitial: EloRating[];
   eloRevised: EloRating[];
+  palette: TerminalPalette;
 }
 
 function fmtCost(n: number): string {
@@ -48,6 +47,7 @@ export function CostBreakdownTable({
   speedByModel,
   eloInitial,
   eloRevised,
+  palette,
 }: CostBreakdownTableProps) {
   const models = Object.keys(costByModel);
   if (models.length === 0) return null;
@@ -66,38 +66,27 @@ export function CostBreakdownTable({
   const totalW = 9;
   const timeW = 9;
   const eloW = 7;
-
   const sep = "  ";
 
+  const headerStr =
+    "Model".padEnd(modelW) +
+    activeStages.map((s) => sep + s.label.padStart(colW)).join("") +
+    sep + "Total".padStart(totalW) +
+    sep + "Avg Time".padStart(timeW) +
+    (hasElo ? sep + "Avg ELO".padStart(eloW) : "");
+
+  const sepLen =
+    modelW +
+    activeStages.length * (colW + sep.length) +
+    sep.length + totalW +
+    sep.length + timeW +
+    (hasElo ? sep.length + eloW : 0);
+
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text bold color="yellow">
-        Cost Breakdown
-      </Text>
-
-      {/* Header */}
-      <Box>
-        <Text color="gray">
-          {"Model".padEnd(modelW)}
-          {activeStages.map((s) => sep + s.label.padStart(colW)).join("")}
-          {sep}{"Total".padStart(totalW)}
-          {sep}{"Avg Time".padStart(timeW)}
-          {hasElo ? sep + "Avg ELO".padStart(eloW) : ""}
-        </Text>
-      </Box>
-      <Box>
-        <Text color="gray">
-          {"─".repeat(
-            modelW +
-              activeStages.length * (colW + sep.length) +
-              sep.length + totalW +
-              sep.length + timeW +
-              (hasElo ? sep.length + eloW : 0)
-          )}
-        </Text>
-      </Box>
-
-      {/* Rows */}
+    <box flexDirection="column" marginBottom={1}>
+      <text fg={palette.yellow} attributes={1}>Cost Breakdown</text>
+      <text fg={palette.gray}>{headerStr}</text>
+      <text fg={palette.gray}>{"\u2500".repeat(sepLen)}</text>
       {models.map((model) => {
         const stages = costByModelByStage[model] ?? {};
         const total = costByModel[model] ?? 0;
@@ -105,31 +94,25 @@ export function CostBreakdownTable({
         const avgTime = speed ? fmtTime(speed.avgLatencyMs) : "-";
         const avgElo = computeAvgElo(model, eloInitial, eloRevised);
 
+        const stageStr = activeStages.map((s) => {
+          const cost = stages[s.key] ?? 0;
+          return sep + fmtCost(cost).padStart(colW);
+        }).join("");
+
         return (
-          <Box key={model}>
-            <Text>{model.padEnd(modelW)}</Text>
-            {activeStages.map((s) => {
-              const cost = stages[s.key] ?? 0;
-              return (
-                <Text key={s.key} color="gray">
-                  {sep}{fmtCost(cost).padStart(colW)}
-                </Text>
-              );
-            })}
-            <Text color="green">
-              {sep}{fmtCost(total).padStart(totalW)}
-            </Text>
-            <Text color="cyan">
-              {sep}{avgTime.padStart(timeW)}
-            </Text>
+          <text key={model}>
+            <span>{model.padEnd(modelW)}</span>
+            <span fg={palette.gray}>{stageStr}</span>
+            <span fg={palette.green}>{sep}{fmtCost(total).padStart(totalW)}</span>
+            <span fg={palette.cyan}>{sep}{avgTime.padStart(timeW)}</span>
             {hasElo && (
-              <Text color={avgElo != null ? "white" : "gray"}>
+              <span fg={avgElo != null ? palette.white : palette.gray}>
                 {sep}{(avgElo != null ? String(avgElo) : "-").padStart(eloW)}
-              </Text>
+              </span>
             )}
-          </Box>
+          </text>
         );
       })}
-    </Box>
+    </box>
   );
 }

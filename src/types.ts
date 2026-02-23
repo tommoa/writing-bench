@@ -454,6 +454,26 @@ export interface BenchmarkProgress {
   };
 }
 
+// ── Terminal Palette ────────────────────────────────
+
+/** Terminal palette colors resolved from the user's terminal theme. */
+export interface TerminalPalette {
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  gray: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightCyan: string;
+  brightMagenta: string;
+  fg: string;
+}
+
 export type BenchmarkEvent =
   | { type: "progress"; data: BenchmarkProgress }
   | { type: "sampleComplete"; data: WritingSample }

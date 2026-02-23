@@ -1,20 +1,20 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { Box, Text } from "ink";
+import { useState, useEffect, useMemo } from "react";
 import { StatusBar } from "./StatusBar.js";
 import { EloTable } from "./EloTable.js";
 import { JudgeQualityTable } from "./JudgeQualityTable.js";
 import { CostBreakdownTable } from "./CostBreakdownTable.js";
 import { RunProgress } from "./RunProgress.js";
-import type { BenchmarkEvent, BenchmarkProgress, CacheSavings, ModelSpeed } from "../types.js";
+import type { BenchmarkEvent, BenchmarkProgress, CacheSavings, ModelSpeed, TerminalPalette } from "../types.js";
 
 interface AppProps {
   subscribe: (handler: (event: BenchmarkEvent) => void) => void;
   showSpeed?: boolean;
+  palette: TerminalPalette;
 }
 
 /**
  * Extract a { model: value } map for a single stage from the
- * model×stage cross-product maps.
+ * model x stage cross-product maps.
  */
 function sliceCostForStage(
   byModelByStage: Record<string, Record<string, number>>,
@@ -40,7 +40,7 @@ function sliceAvgTimeForStage(
   return out;
 }
 
-export function App({ subscribe, showSpeed }: AppProps) {
+export function App({ subscribe, showSpeed, palette }: AppProps) {
   const [progress, setProgress] = useState<BenchmarkProgress>({
     stage: "initialWriting",
     activeStages: [],
@@ -117,102 +117,121 @@ export function App({ subscribe, showSpeed }: AppProps) {
   );
 
   return (
-    <Box flexDirection="column" padding={1}>
-      <Box marginBottom={1}>
-        <Text bold color="cyan">
-          writing-bench
-        </Text>
-      </Box>
+    <box flexDirection="column" flexGrow={1}>
+      {/* ── Fixed header ──────────────────────────────── */}
+      <box marginBottom={1} paddingLeft={1} paddingTop={1}>
+        <text fg={palette.cyan} attributes={1}>writing-bench</text>
+      </box>
 
-      <StatusBar
-        stage={progress.stage}
-        activeStages={progress.activeStages}
-        currentOp={progress.currentOp}
-        totalCost={progress.totalCost}
-        totalCostUncached={progress.totalCostUncached}
-        costByStage={progress.costByStage}
-        stageProgress={progress.stageProgress}
-        opsDone={progress.stageDone}
-        cacheSavings={progress.cacheSavings}
-        judgingRound={progress.judgingRound}
-        maxCi={progress.maxCi}
-        ciThreshold={progress.ciThreshold}
-        needDescription={progress.needDescription}
-        batchSummary={progress.batchSummary}
-        suspendedModels={progress.suspendedModels}
-      />
-
-      <RunProgress progress={progress.stageProgress} opsDone={progress.stageDone} />
-
-      <Box marginTop={1} />
-
-      {progress.elo.initial.length > 0 && (
-        <EloTable
-          title="Writer ELO (Initial)"
-          ratings={progress.elo.initial}
-          costByModel={initialCost}
-          avgTimeByModel={initialTime}
-          speedByModel={showSpeed ? progress.speedByModel : undefined}
+      <box paddingLeft={1}>
+        <StatusBar
+          stage={progress.stage}
+          activeStages={progress.activeStages}
+          currentOp={progress.currentOp}
+          totalCost={progress.totalCost}
+          totalCostUncached={progress.totalCostUncached}
+          costByStage={progress.costByStage}
+          stageProgress={progress.stageProgress}
+          opsDone={progress.stageDone}
+          cacheSavings={progress.cacheSavings}
+          judgingRound={progress.judgingRound}
+          maxCi={progress.maxCi}
           ciThreshold={progress.ciThreshold}
+          needDescription={progress.needDescription}
+          batchSummary={progress.batchSummary}
+          suspendedModels={progress.suspendedModels}
+          palette={palette}
         />
-      )}
+      </box>
 
-      {progress.elo.revised.length > 0 && (
-        <EloTable
-          title="Writer ELO (Revised)"
-          ratings={progress.elo.revised}
-          costByModel={revisedCost}
-          avgTimeByModel={revisedTime}
-          speedByModel={showSpeed ? progress.speedByModel : undefined}
-          ciThreshold={progress.ciThreshold}
+      <box paddingLeft={1}>
+        <RunProgress progress={progress.stageProgress} opsDone={progress.stageDone} palette={palette} />
+      </box>
+
+      {/* ── Scrollable tables area ────────────────────── */}
+      <scrollbox
+        flexGrow={1}
+        stickyScroll={true}
+        stickyStart="bottom"
+        focused={true}
+        paddingLeft={1}
+        paddingRight={1}
+        marginTop={1}
+      >
+        {progress.elo.initial.length > 0 && (
+          <EloTable
+            title="Writer ELO (Initial)"
+            ratings={progress.elo.initial}
+            costByModel={initialCost}
+            avgTimeByModel={initialTime}
+            speedByModel={showSpeed ? progress.speedByModel : undefined}
+            ciThreshold={progress.ciThreshold}
+            palette={palette}
+          />
+        )}
+
+        {progress.elo.revised.length > 0 && (
+          <EloTable
+            title="Writer ELO (Revised)"
+            ratings={progress.elo.revised}
+            costByModel={revisedCost}
+            avgTimeByModel={revisedTime}
+            speedByModel={showSpeed ? progress.speedByModel : undefined}
+            ciThreshold={progress.ciThreshold}
+            palette={palette}
+          />
+        )}
+
+        {progress.elo.feedback.length > 0 && (
+          <EloTable
+            title="Feedback Provider ELO"
+            ratings={progress.elo.feedback}
+            costByModel={feedbackCost}
+            avgTimeByModel={feedbackTime}
+            speedByModel={showSpeed ? progress.speedByModel : undefined}
+            ciThreshold={progress.ciThreshold}
+            palette={palette}
+          />
+        )}
+
+        {progress.elo.judgeQuality && progress.elo.judgeQuality.length > 0 && (
+          <JudgeQualityTable
+            ratings={progress.elo.judgeQuality}
+            weights={progress.judgeWeights}
+            pruneThreshold={progress.judgePruneThreshold}
+            mode={progress.judgeQualityMode}
+            judgeBias={progress.judgeBias}
+            palette={palette}
+          />
+        )}
+
+        <CostBreakdownTable
+          costByModelByStage={progress.costByModelByStage}
+          costByModel={progress.costByModel}
+          speedByModel={progress.speedByModel}
+          eloInitial={progress.elo.initial}
+          eloRevised={progress.elo.revised}
+          palette={palette}
         />
-      )}
+      </scrollbox>
 
-      {progress.elo.feedback.length > 0 && (
-        <EloTable
-          title="Feedback Provider ELO"
-          ratings={progress.elo.feedback}
-          costByModel={feedbackCost}
-          avgTimeByModel={feedbackTime}
-          speedByModel={showSpeed ? progress.speedByModel : undefined}
-          ciThreshold={progress.ciThreshold}
-        />
-      )}
-
-      {progress.elo.judgeQuality && progress.elo.judgeQuality.length > 0 && (
-        <JudgeQualityTable
-          ratings={progress.elo.judgeQuality}
-          weights={progress.judgeWeights}
-          pruneThreshold={progress.judgePruneThreshold}
-          mode={progress.judgeQualityMode}
-          judgeBias={progress.judgeBias}
-        />
-      )}
-
-      <CostBreakdownTable
-        costByModelByStage={progress.costByModelByStage}
-        costByModel={progress.costByModel}
-        speedByModel={progress.speedByModel}
-        eloInitial={progress.elo.initial}
-        eloRevised={progress.elo.revised}
-      />
-
+      {/* ── Status footer ─────────────────────────────── */}
       {error && (
-        <Box marginTop={1}>
-          <Text color="red">Error: {error}</Text>
-        </Box>
+        <box marginTop={1} paddingLeft={1}>
+          <text fg={palette.red}>Error: {error}</text>
+        </box>
       )}
 
       {complete && (
-        <Box marginTop={1}>
-          <Text color="green" bold>
+        <box marginTop={1} paddingLeft={1}>
+          <text fg={palette.green} attributes={1}>
             Benchmark complete! Total cost: ${progress.totalCost.toFixed(4)}
             {progress.totalCostUncached > progress.totalCost + 0.00005
               ? ` (uncached: $${progress.totalCostUncached.toFixed(4)})`
               : ""}
-          </Text>
-        </Box>
+          </text>
+        </box>
       )}
-    </Box>
+    </box>
   );
 }

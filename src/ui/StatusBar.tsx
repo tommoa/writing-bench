@@ -1,8 +1,21 @@
-import React from "react";
-import { Box, Text } from "ink";
-import Spinner from "ink-spinner";
-import type { BenchmarkStage, CacheSavings } from "../types.js";
+import { useState, useEffect } from "react";
+import type { BenchmarkStage, CacheSavings, TerminalPalette } from "../types.js";
 import { formatConvergenceTarget } from "../engine/need-identifier.js";
+
+// ── Spinner ──────────────────────────────────────────
+
+const SPINNER_FRAMES = ["\u28cb", "\u28d9", "\u28f9", "\u28f8", "\u28fc", "\u28f4", "\u28e6", "\u28e7", "\u28c7", "\u28cf"];
+
+function Spinner({ color }: { color: string }) {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
+    return () => clearInterval(id);
+  }, []);
+  return <span fg={color}>{SPINNER_FRAMES[frame]}</span>;
+}
+
+// ── Constants ────────────────────────────────────────
 
 const STAGE_LABELS: Record<BenchmarkStage, string> = {
   initialWriting: "Writing",
@@ -24,6 +37,8 @@ const STAGE_COST_LABELS: Record<string, string> = {
   revisedJudging: "Re-Judge",
 };
 
+// ── Component ────────────────────────────────────────
+
 interface StatusBarProps {
   stage: BenchmarkStage;
   activeStages: BenchmarkStage[];
@@ -40,6 +55,7 @@ interface StatusBarProps {
   needDescription?: string;
   batchSummary?: string;
   suspendedModels?: string[];
+  palette: TerminalPalette;
 }
 
 export function StatusBar({
@@ -58,6 +74,7 @@ export function StatusBar({
   needDescription,
   batchSummary,
   suspendedModels,
+  palette,
 }: StatusBarProps) {
   const isComplete = stage === "complete";
   const pct = isComplete ? 100 : Math.round(stageProgress * 100);
@@ -99,73 +116,69 @@ export function StatusBar({
       : "Starting...";
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
+    <box flexDirection="column" marginBottom={1} live={!isComplete}>
+      <text>
         {!isComplete && (
-          <Text color="cyan">
-            <Spinner type="dots" />
+          <>
+            <Spinner color={palette.cyan} />
             {"  "}
-          </Text>
+          </>
         )}
-        <Text bold color={isComplete ? "green" : "yellow"}>
-          {stageLabel}
-        </Text>
-        <Text color="gray">
-          {"  "}{pct}%  ({opsDone} ops)
-        </Text>
-        <Text color="gray">{"  "}|{"  "}</Text>
-        <Text color="green">${totalCost.toFixed(4)}</Text>
+        <b><span fg={isComplete ? palette.green : palette.yellow}>{stageLabel}</span></b>
+        <span fg={palette.gray}>{"  "}{pct}%  ({opsDone} ops)</span>
+        <span fg={palette.gray}>{"  "}|{"  "}</span>
+        <span fg={palette.green}>${totalCost.toFixed(4)}</span>
         {showUncached && (
-          <Text color="gray">
-            {"  "}(uncached: ${totalCostUncached.toFixed(4)})
-          </Text>
+          <span fg={palette.gray}>{"  "}(uncached: ${totalCostUncached.toFixed(4)})</span>
         )}
-      </Box>
+      </text>
       {stageEntries.length > 0 && (
-        <Box marginLeft={3}>
-          {stageEntries.map(({ label, cost }, i) => (
-            <Text key={label} color="gray">
-              {i > 0 ? "  " : ""}
-              {label}: <Text color="white">${cost.toFixed(4)}</Text>
-            </Text>
-          ))}
-        </Box>
+        <box marginLeft={3}>
+          <text fg={palette.gray}>
+            {stageEntries.map(({ label, cost }, i) => (
+              <span key={label}>
+                {i > 0 ? "  " : ""}
+                {label}: <span fg={palette.white}>${cost.toFixed(4)}</span>
+              </span>
+            ))}
+          </text>
+        </box>
       )}
       {totalFresh > 0 && hasCacheActivity && (
-        <Box marginLeft={3}>
-          <Text color="gray">{`Fresh: ${cacheSavings.writes.fresh}w ${cacheSavings.feedback.fresh}fb ${cacheSavings.revisions.fresh}rev ${cacheSavings.judgments.fresh}j`}</Text>
-        </Box>
+        <box marginLeft={3}>
+          <text fg={palette.gray}>{`Fresh: ${cacheSavings.writes.fresh}w ${cacheSavings.feedback.fresh}fb ${cacheSavings.revisions.fresh}rev ${cacheSavings.judgments.fresh}j`}</text>
+        </box>
       )}
       {totalCached > 0 && (
-        <Box marginLeft={3}>
-          <Text color="cyan">{`Cached: ${cacheSavings.writes.cached}w ${cacheSavings.feedback.cached}fb ${cacheSavings.revisions.cached}rev ${cacheSavings.judgments.cached}j (saved ~$${totalSavedCost.toFixed(4)})`}</Text>
-        </Box>
+        <box marginLeft={3}>
+          <text fg={palette.cyan}>{`Cached: ${cacheSavings.writes.cached}w ${cacheSavings.feedback.cached}fb ${cacheSavings.revisions.cached}rev ${cacheSavings.judgments.cached}j (saved ~$${totalSavedCost.toFixed(4)})`}</text>
+        </box>
       )}
       {judgingRound != null && judgingRound > 0 && (
-        <Box marginLeft={3}>
-          <Text color="magenta">
+        <box marginLeft={3}>
+          <text fg={palette.magenta}>
             {`Round ${judgingRound}`}
             {batchSummary ? ` | ${batchSummary}` : ""}
             {maxCi != null ? ` | CI \u00b1${maxCi}` : ""}
             {ciThreshold != null ? ` \u2192 target ${formatConvergenceTarget(ciThreshold)}` : ""}
-          </Text>
-        </Box>
+          </text>
+        </box>
       )}
       {suspendedModels && suspendedModels.length > 0 && (
-        <Box marginLeft={3}>
-          <Text color="yellow">
-            {"Suspended: "}{suspendedModels.join(", ")}
-          </Text>
-        </Box>
+        <box marginLeft={3}>
+          <text fg={palette.yellow}>{"Suspended: "}{suspendedModels.join(", ")}</text>
+        </box>
       )}
       {!isComplete && currentOp && (
-        <Box marginLeft={3}>
-          {needDescription && (
-            <Text color="gray">{needDescription}{" \u2014 "}</Text>
-          )}
-          <Text color="gray" dimColor>{currentOp}</Text>
-        </Box>
+        <box marginLeft={3}>
+          <text>
+            {needDescription && (
+              <span fg={palette.gray}>{needDescription}{" \u2014 "}</span>
+            )}
+            <span fg={palette.gray} attributes={2}>{currentOp}</span>
+          </text>
+        </box>
       )}
-    </Box>
+    </box>
   );
 }

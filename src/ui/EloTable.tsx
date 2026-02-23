@@ -1,6 +1,4 @@
-import React from "react";
-import { Box, Text } from "ink";
-import type { EloRating, ModelSpeed } from "../types.js";
+import type { EloRating, ModelSpeed, TerminalPalette } from "../types.js";
 import { estimateRemainingJudgments, overlapFreeThreshold } from "../engine/whr.js";
 import type { WhrRating } from "../engine/whr.js";
 
@@ -15,6 +13,7 @@ interface EloTableProps {
   speedByModel?: Record<string, ModelSpeed>;
   /** When provided, show estimated remaining judgments column. */
   ciThreshold?: number;
+  palette: TerminalPalette;
 }
 
 function fmtCost(n: number): string {
@@ -39,6 +38,7 @@ export function EloTable({
   avgTimeByModel,
   speedByModel,
   ciThreshold,
+  palette,
 }: EloTableProps) {
   if (ratings.length === 0) return null;
 
@@ -62,38 +62,31 @@ export function EloTable({
   const estW = 5;
   const whrRatings = hasCi ? ratings as WhrRating[] : undefined;
 
+  const headerStr =
+    "#".padEnd(rankW) +
+    "Model".padEnd(modelW + 2) +
+    "ELO".padStart(ratingW) +
+    (hasCi ? `  ${"\u00b1CI".padStart(ciW)}` : "") +
+    "  " + "W/L/T".padStart(wltW) +
+    (showCost ? `  ${"Cost".padStart(costW)}` : "") +
+    (showTime ? `  ${"Avg Time".padStart(timeW)}` : "") +
+    (showSpeed ? `  ${"Speed".padStart(speedW)}` : "") +
+    (showEst ? `  ${"Est.".padStart(estW)}` : "");
+
+  const sepLen =
+    rankW + modelW + 2 + ratingW
+    + (hasCi ? 2 + ciW : 0)
+    + 2 + wltW
+    + (showCost ? 2 + costW : 0)
+    + (showTime ? 2 + timeW : 0)
+    + (showSpeed ? 2 + speedW : 0)
+    + (showEst ? 2 + estW : 0);
+
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text bold color="yellow">
-        {title}
-      </Text>
-      <Box>
-        <Text color="gray">
-          {"#".padEnd(rankW)}
-          {"Model".padEnd(modelW + 2)}
-          {"ELO".padStart(ratingW)}
-          {hasCi ? `  ${"\u00b1CI".padStart(ciW)}` : ""}
-          {"  "}
-          {"W/L/T".padStart(wltW)}
-          {showCost ? `  ${"Cost".padStart(costW)}` : ""}
-          {showTime ? `  ${"Avg Time".padStart(timeW)}` : ""}
-          {showSpeed ? `  ${"Speed".padStart(speedW)}` : ""}
-          {showEst ? `  ${"Est.".padStart(estW)}` : ""}
-        </Text>
-      </Box>
-      <Box>
-        <Text color="gray">
-          {"─".repeat(
-            rankW + modelW + 2 + ratingW
-            + (hasCi ? 2 + ciW : 0)
-            + 2 + wltW
-            + (showCost ? 2 + costW : 0)
-            + (showTime ? 2 + timeW : 0)
-            + (showSpeed ? 2 + speedW : 0)
-            + (showEst ? 2 + estW : 0)
-          )}
-        </Text>
-      </Box>
+    <box flexDirection="column" marginBottom={1}>
+      <text fg={palette.yellow} attributes={1}>{title}</text>
+      <text fg={palette.gray}>{headerStr}</text>
+      <text fg={palette.gray}>{"\u2500".repeat(sepLen)}</text>
       {ratings.map((r, i) => {
         const wlt = `${r.wins}/${r.losses}/${r.ties}`;
         const cost = costByModel?.[r.model] ?? 0;
@@ -109,57 +102,44 @@ export function EloTable({
             )
           : undefined;
         const ratingColor =
-          i === 0 ? "green" : i === ratings.length - 1 ? "red" : "white";
+          i === 0 ? palette.green : i === ratings.length - 1 ? palette.red : palette.white;
+        const estColor =
+          estRemaining === 0 ? palette.green
+            : estRemaining != null && estRemaining <= 5 ? palette.yellow
+            : palette.gray;
+
+        const line =
+          String(i + 1).padEnd(rankW) +
+          r.model.padEnd(modelW + 2);
+
+        const ratingStr = String(r.rating).padStart(ratingW);
+        const ciStr = hasCi ? "  " + (ci95 != null ? `\u00b1${ci95}` : "-").padStart(ciW) : "";
+        const wltStr = "  " + wlt.padStart(wltW);
+        const costStr = showCost ? "  " + fmtCost(cost).padStart(costW) : "";
+        const timeStr = showTime ? "  " + (time != null ? fmtTime(time) : "-").padStart(timeW) : "";
+        const speedStr = showSpeed ? "  " + (speed ? fmtSpeed(speed.tokensPerSecond).padStart(speedW) : "-".padStart(speedW)) : "";
+        const estStr = showEst
+          ? "  " + (estRemaining === 0
+              ? "\u2713"
+              : estRemaining != null && estRemaining <= 9999
+                ? String(estRemaining)
+                : "?"
+            ).padStart(estW)
+          : "";
 
         return (
-          <Box key={r.model}>
-            <Text color="gray">{String(i + 1).padEnd(rankW)}</Text>
-            <Text>{r.model.padEnd(modelW + 2)}</Text>
-            <Text color={ratingColor}>
-              {String(r.rating).padStart(ratingW)}
-            </Text>
-            {hasCi && (
-              <Text color="gray">
-                {"  "}{(ci95 != null ? `\u00b1${ci95}` : "-").padStart(ciW)}
-              </Text>
-            )}
-            <Text color="gray">{"  "}{wlt.padStart(wltW)}</Text>
-            {showCost && (
-              <Text color="gray">
-                {"  "}{fmtCost(cost).padStart(costW)}
-              </Text>
-            )}
-            {showTime && (
-              <Text color="cyan">
-                {"  "}{(time != null ? fmtTime(time) : "-").padStart(timeW)}
-              </Text>
-            )}
-            {showSpeed && (
-              <Text color="cyan">
-                {"  "}{speed ? fmtSpeed(speed.tokensPerSecond).padStart(speedW) : "-".padStart(speedW)}
-              </Text>
-            )}
-            {showEst && (
-              <Text
-                color={
-                  estRemaining === 0 ? "green"
-                    : estRemaining != null && estRemaining <= 5 ? "yellow"
-                    : "gray"
-                }
-              >
-                {"  "}
-                {/* Cap at 9999 -- larger estimates are unreliable and overflow the column */}
-                {(estRemaining === 0
-                  ? "\u2713"
-                  : estRemaining != null && estRemaining <= 9999
-                    ? String(estRemaining)
-                    : "?"
-                ).padStart(estW)}
-              </Text>
-            )}
-          </Box>
+          <text key={r.model}>
+            <span fg={palette.gray}>{line}</span>
+            <span fg={ratingColor}>{ratingStr}</span>
+            <span fg={palette.gray}>{ciStr}</span>
+            <span fg={palette.gray}>{wltStr}</span>
+            {showCost && <span fg={palette.gray}>{costStr}</span>}
+            {showTime && <span fg={palette.cyan}>{timeStr}</span>}
+            {showSpeed && <span fg={palette.cyan}>{speedStr}</span>}
+            {showEst && <span fg={estColor}>{estStr}</span>}
+          </text>
         );
       })}
-    </Box>
+    </box>
   );
 }
