@@ -221,7 +221,8 @@ export interface RunConfig {
 
 export interface WritingSample {
   id: string;
-  model: string; // ModelConfig.label
+  model: string; // ModelConfig.label (display name)
+  registryId?: string; // ModelConfig.registryId (stable "provider:model" identity)
   promptId: string;
   outputIndex: number;
   text: string;
@@ -229,6 +230,7 @@ export interface WritingSample {
   originalSampleId?: string; // WritingSample.id this revision is based on
   feedbackUsed?: string; // Feedback.id incorporated (stage 3)
   feedbackModel?: string; // Which model gave the feedback
+  feedbackRegistryId?: string; // Feedback model's registryId
   fromCache?: boolean; // True if loaded from disk cache (no API call this run)
   usage: TokenUsage;
   cost: CostBreakdown;
@@ -237,7 +239,8 @@ export interface WritingSample {
 
 export interface Feedback {
   id: string;
-  sourceModel: string; // Who gave feedback
+  sourceModel: string; // Who gave feedback (ModelConfig.label)
+  sourceRegistryId?: string; // Stable "provider:model" identity for feedback model
   targetSampleId: string; // Which sample received feedback
   text: string;
   fromCache?: boolean; // True if loaded from disk cache (no API call this run)
@@ -248,7 +251,8 @@ export interface Feedback {
 
 export interface PairwiseJudgment {
   id: string;
-  judgeModel: string;
+  judgeModel: string; // ModelConfig.label (display name)
+  judgeRegistryId?: string; // Stable "provider:model" identity for the judge
   promptId: string;
   sampleA: string; // WritingSample.id
   sampleB: string;
@@ -259,6 +263,9 @@ export interface PairwiseJudgment {
    *  true = judge saw (B,A) but winner/sampleA/sampleB are corrected back.
    *  undefined for cached judgments where swap info was not persisted. */
   positionSwapped?: boolean;
+  /** True if loaded from disk cache (no API call this run).
+   *  Used to deduplicate judgments in cumulative ELO ingestion. */
+  fromCache?: boolean;
   usage: TokenUsage;
   cost: CostBreakdown;
   latencyMs: number;
@@ -351,6 +358,13 @@ export interface ModelSpeed {
   avgLatencyMs: number; // Average latency per call
 }
 
+export type RunTerminationReason =
+  | "converged"
+  | "exhausted"
+  | "stalled"
+  | "max_rounds"
+  | "unknown";
+
 export interface RunResult {
   config: RunConfig;
   samples: WritingSample[];
@@ -373,6 +387,9 @@ export interface RunResult {
     tokensByModelByStage?: Record<string, Record<string, number>>;
     speedByModel: Record<string, ModelSpeed>;
     durationMs: number;
+    terminationReason: RunTerminationReason;
+    converged: boolean;
+    roundsCompleted: number;
     errors?: TaskError[];
   };
   modelInfo: Record<string, ModelInfo>;
@@ -411,15 +428,40 @@ export interface PairwiseRecord {
 
 export interface CumulativeElo {
   lastUpdated: string;
+  /** Legacy alias for initialWriting (kept for compatibility). */
   writing: Record<string, EloRating>;
+  /** Cumulative initial-stage writing ratings. */
+  initialWriting: Record<string, EloRating>;
+  /** Cumulative revised-stage writing ratings. */
+  revisedWriting: Record<string, EloRating>;
   feedbackGiving: Record<string, EloRating>;
+  /** Legacy alias for initialWritingByTag (kept for compatibility). */
   writingByTag: Record<string, Record<string, EloRating>>; // tag -> model -> rating
+  /** Cumulative initial-stage writing ratings by tag. */
+  initialWritingByTag: Record<string, Record<string, EloRating>>;
+  /** Cumulative revised-stage writing ratings by tag. */
+  revisedWritingByTag: Record<string, Record<string, EloRating>>;
   /** Accumulated pairwise outcomes for WHR recomputation. */
   pairwise?: {
+    /** Legacy alias for initialWriting. */
     writing: PairwiseRecord[];
+    initialWriting: PairwiseRecord[];
+    revisedWriting: PairwiseRecord[];
     feedbackGiving: PairwiseRecord[];
+    /** Legacy alias for initialWritingByTag. */
     writingByTag: Record<string, PairwiseRecord[]>;
+    initialWritingByTag: Record<string, PairwiseRecord[]>;
+    revisedWritingByTag: Record<string, PairwiseRecord[]>;
   };
+  /** Stable keys of judgments already ingested into pairwise records.
+   *  Used for deduplication: when a run contains cache-seeded judgments
+   *  from a previous run, their keys will already be in this set and
+   *  they are skipped. Serialized as a sorted array for determinism. */
+  processedJudgmentKeys?: string[];
+  /** Maps registryId ("provider:model") to the latest display label.
+   *  Pairwise records use registryId for stable keying; this mapping
+   *  allows translating back to labels for display and export. */
+  modelLabels?: Record<string, string>;
   history: Array<{
     runId: string;
     timestamp: string;
