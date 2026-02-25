@@ -1,5 +1,5 @@
 import type { RunsIndex, RunIndexEntry, TagAlternatives } from "./types.js";
-import { el, render, renderEloTable, formatDate, sectionDesc, SECTION_DESC } from "./helpers.js";
+import { el, render, formatDate, sectionDesc, SECTION_DESC } from "./helpers.js";
 import { modelLogo } from "./model-logos.js";
 import { renderJudgeQualitySection } from "./judge-quality.js";
 import { createRatingToggle } from "./rating-toggle.js";
@@ -28,35 +28,41 @@ export function renderDashboard(index: RunsIndex): void {
     ));
   }
 
-  if (index.cumulativeElo.writing.length > 0) {
-    frag.appendChild(el("h2", {}, "Writer ELO"));
-    frag.appendChild(sectionDesc(SECTION_DESC.writerElo));
-    frag.appendChild(createRatingToggle({
-      defaultRatings: index.cumulativeElo.writing,
-      alternativeRatings: index.cumulativeAlternativeRatings,
-      dimension: "initial",
-      eloTableOpts: {
-        costStages: ["initial", "revised"],
-        sortableElo: true,
-        modelFamilies: index.modelFamilies,
-      },
-    }).container);
-  }
+  const commonEloOpts = {
+    sortableElo: true,
+    modelFamilies: index.modelFamilies,
+  };
 
-  if (index.cumulativeElo.feedback.length > 0) {
-    frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
-    frag.appendChild(sectionDesc(SECTION_DESC.feedbackElo));
-    frag.appendChild(createRatingToggle({
-      defaultRatings: index.cumulativeElo.feedback,
-      alternativeRatings: index.cumulativeAlternativeRatings,
-      dimension: "feedback",
-      eloTableOpts: {
-        costStages: ["feedback"],
-        sortableElo: true,
-        modelFamilies: index.modelFamilies,
-      },
-    }).container);
-  }
+  appendCumulativeSection(
+    frag,
+    "Initial Writer ELO",
+    SECTION_DESC.cumulativeInitialWriterElo,
+    index.cumulativeElo.initialWriting,
+    "initial",
+    "initial",
+    index,
+    commonEloOpts,
+  );
+  appendCumulativeSection(
+    frag,
+    "Revised Writer ELO",
+    SECTION_DESC.revisedElo,
+    index.cumulativeElo.revisedWriting,
+    "revised",
+    "revised",
+    index,
+    commonEloOpts,
+  );
+  appendCumulativeSection(
+    frag,
+    "Feedback Provider ELO",
+    SECTION_DESC.feedbackElo,
+    index.cumulativeElo.feedback,
+    "feedback",
+    "feedback",
+    index,
+    commonEloOpts,
+  );
 
   // Cumulative judge quality (collapsed by default, lazy DOM on expand)
   if (index.cumulativeJudgeQuality && index.cumulativeJudgeQuality.length > 0) {
@@ -80,49 +86,30 @@ export function renderDashboard(index: RunsIndex): void {
     frag.appendChild(jqDetails);
   }
 
-  if (
-    index.cumulativeElo.byTag &&
-    Object.keys(index.cumulativeElo.byTag).length > 0
-  ) {
-    frag.appendChild(el("h2", {}, "ELO by Tag"));
-    frag.appendChild(sectionDesc(SECTION_DESC.eloByTag));
-    for (const [cat, ratings] of Object.entries(
-      index.cumulativeElo.byTag
-    )) {
-      const d = el("details");
-      d.appendChild(el("summary", {}, cat));
-      const inner = el("div", { className: "details-content" });
-      d.appendChild(inner);
+  let tagAlternativesPromise: Promise<TagAlternatives | undefined> | undefined;
+  const loadTagAlternatives = (): Promise<TagAlternatives | undefined> => {
+    tagAlternativesPromise ??= fetchTagAlternatives().catch(() => undefined);
+    return tagAlternativesPromise;
+  };
 
-      let loaded = false;
-      d.addEventListener("toggle", async () => {
-        if (!(d as HTMLDetailsElement).open || loaded) return;
-        loaded = true;
-
-        // Lazy-load per-tag alternatives (cached after first fetch)
-        let tagAlts: TagAlternatives | undefined;
-        try {
-          tagAlts = await fetchTagAlternatives();
-        } catch {
-          // File may not exist for old exports -- degrade to default only
-        }
-
-        inner.appendChild(createRatingToggle({
-          defaultRatings: ratings,
-          dimension: "initial",
-          tagFilter: cat,
-          tagAlternatives: tagAlts,
-          eloTableOpts: {
-            costStages: ["initial", "revised"],
-            sortableElo: true,
-            modelFamilies: index.modelFamilies,
-          },
-        }).container);
-      });
-
-      frag.appendChild(d);
-    }
-  }
+  appendTagSection(
+    frag,
+    "Initial ELO by Tag",
+    index.cumulativeElo.initialByTag,
+    "initial",
+    "initial",
+    commonEloOpts,
+    loadTagAlternatives,
+  );
+  appendTagSection(
+    frag,
+    "Revised ELO by Tag",
+    index.cumulativeElo.revisedByTag,
+    "revised",
+    "revised",
+    commonEloOpts,
+    loadTagAlternatives,
+  );
 
   if (index.eloHistory.length > 1) {
     frag.appendChild(el("h2", {}, "ELO History"));
@@ -134,7 +121,11 @@ export function renderDashboard(index: RunsIndex): void {
     frag.appendChild(renderRunList(index.runs));
   }
 
-  if (index.runs.length === 0 && index.cumulativeElo.writing.length === 0) {
+  if (
+    index.runs.length === 0
+    && index.cumulativeElo.initialWriting.length === 0
+    && index.cumulativeElo.revisedWriting.length === 0
+  ) {
     frag.appendChild(
       el(
         "p",
@@ -145,6 +136,76 @@ export function renderDashboard(index: RunsIndex): void {
   }
 
   render(frag);
+}
+
+function appendCumulativeSection(
+  frag: DocumentFragment,
+  title: string,
+  description: string,
+  ratings: RunsIndex["cumulativeElo"]["initialWriting"],
+  dimension: "initial" | "revised" | "feedback",
+  costStage: "initial" | "revised" | "feedback",
+  index: RunsIndex,
+  commonEloOpts: {
+    sortableElo: true;
+    modelFamilies: RunsIndex["modelFamilies"];
+  },
+): void {
+  if (ratings.length === 0) return;
+  frag.appendChild(el("h2", {}, title));
+  frag.appendChild(sectionDesc(description));
+  frag.appendChild(createRatingToggle({
+    defaultRatings: ratings,
+    alternativeRatings: index.cumulativeAlternativeRatings,
+    dimension,
+    eloTableOpts: {
+      ...commonEloOpts,
+      costStages: [costStage],
+    },
+  }).container);
+}
+
+function appendTagSection(
+  frag: DocumentFragment,
+  title: string,
+  byTag: RunsIndex["cumulativeElo"]["initialByTag"] | RunsIndex["cumulativeElo"]["revisedByTag"],
+  dimension: "initial" | "revised",
+  costStage: "initial" | "revised",
+  commonEloOpts: {
+    sortableElo: true;
+    modelFamilies: RunsIndex["modelFamilies"];
+  },
+  loadTagAlternatives: () => Promise<TagAlternatives | undefined>,
+): void {
+  if (!byTag || Object.keys(byTag).length === 0) return;
+  frag.appendChild(el("h2", {}, title));
+  frag.appendChild(sectionDesc(SECTION_DESC.eloByTag));
+
+  for (const [cat, ratings] of Object.entries(byTag)) {
+    const details = el("details");
+    details.appendChild(el("summary", {}, cat));
+    const inner = el("div", { className: "details-content" });
+    details.appendChild(inner);
+
+    let loaded = false;
+    details.addEventListener("toggle", async () => {
+      if (!(details as HTMLDetailsElement).open || loaded) return;
+      loaded = true;
+      const tagAlts = await loadTagAlternatives();
+      inner.appendChild(createRatingToggle({
+        defaultRatings: ratings,
+        dimension,
+        tagFilter: cat,
+        tagAlternatives: tagAlts,
+        eloTableOpts: {
+          ...commonEloOpts,
+          costStages: [costStage],
+        },
+      }).container);
+    });
+
+    frag.appendChild(details);
+  }
 }
 
 // ── Sparklines ──────────────────────────────────────
@@ -199,10 +260,13 @@ export function renderRunList(runs: RunIndexEntry[]): HTMLElement {
   const list = el("ul", { className: "run-list" });
   for (const run of runs) {
     const link = el("a", { href: `?run=${run.id}` }, formatDate(run.timestamp));
+    const costText = run.totalCostUncached != null
+      ? `$${run.totalCost.toFixed(4)} (actual) · $${run.totalCostUncached.toFixed(4)} (est uncached)`
+      : `$${run.totalCost.toFixed(4)} (actual)`;
     const meta = el(
       "span",
       { className: "run-meta" },
-      `${run.models.length} model${run.models.length !== 1 ? "s" : ""} \u00b7 ${run.promptCount} prompts \u00b7 $${(run.totalCostUncached ?? run.totalCost).toFixed(4)}`,
+      `${run.models.length} model${run.models.length !== 1 ? "s" : ""} \u00b7 ${run.promptCount} prompts \u00b7 ${costText}`,
     );
     list.appendChild(el("li", {}, link, meta));
   }

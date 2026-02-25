@@ -5,10 +5,10 @@ import type { RunResult, TokenUsage, ModelInfo, EloRating, JudgeQualityExport, P
 import { DEFAULT_CONVERGENCE } from "../types.js";
 import { listRuns, loadRun } from "../storage/run-store.js";
 import { loadCumulativeElo } from "../storage/elo-store.js";
-import { computeJudgeQuality } from "../engine/judge-quality.js";
+import { computeJudgeQuality, computeEloBasedJudgeQuality } from "../engine/judge-quality.js";
 import type { JudgeQualityData } from "../engine/judge-quality.js";
 import { computeJudgeBias } from "../engine/judge-bias.js";
-import { judgmentsToGames, improvementJudgmentsToGames, whrRatings } from "../engine/whr.js";
+import { judgmentsToGames, improvementJudgmentsToGames, whrRatings, type WhrRating } from "../engine/whr.js";
 
 // ── Per-model per-stage aggregation ───────────────────
 
@@ -121,6 +121,7 @@ function buildSampleMaps(samples: RunResult["samples"]): {
 function computeJudgeQualityForExport(
   judgments: PairwiseJudgment[],
   sampleToModel: Map<string, string>,
+  judgeDecay: number,
   pruneThreshold: number,
   precomputedQuality?: JudgeQualityData,
 ): JudgeQualityExport[] {
@@ -128,7 +129,7 @@ function computeJudgeQualityForExport(
   if (judgeLabels.length < 2) return [];
 
   const quality = precomputedQuality ?? computeJudgeQuality(
-    judgments, judgeLabels, DEFAULT_CONVERGENCE.judgeDecay,
+    judgments, judgeLabels, judgeDecay,
   );
   if (!quality.active || quality.ratings.length === 0) return [];
 
@@ -167,6 +168,7 @@ function computeAlternativeRatings(
   sampleToModel: Map<string, string>,
   revisedSampleToModel: Map<string, string>,
   sampleToFeedbackModel: Map<string, string>,
+  judgeDecay: number,
   precomputedJw?: Map<string, number>,
 ): AlternativeRatingsExport | undefined {
   const judgeLabels = [...new Set(judgments.map((j) => j.judgeModel))];
@@ -175,8 +177,7 @@ function computeAlternativeRatings(
   // Use pre-computed judge weights if provided, otherwise compute
   let jw = precomputedJw;
   if (!jw) {
-    const k = DEFAULT_CONVERGENCE.judgeDecay;
-    const quality = computeJudgeQuality(judgments, judgeLabels, k);
+    const quality = computeJudgeQuality(judgments, judgeLabels, judgeDecay);
     jw = quality.active ? quality.weights : undefined;
   }
 
@@ -218,11 +219,13 @@ interface RunIndexEntry {
   timestamp: string;
   models: string[];
   promptCount: number;
-  outputsPerModel: number;
+  outputsPerModel: number | "adaptive";
   totalCost: number;
-  totalCostUncached: number;
+  totalCostUncached?: number;
   costByModel: Record<string, number>;
   costByModelByStage: Record<string, Record<string, number>>;
+  costByModelUncached?: Record<string, number>;
+  costByModelByStageUncached?: Record<string, Record<string, number>>;
   tokensByModel: Record<string, number>;
   tokensByModelByStage: Record<string, Record<string, number>>;
   totalTokens: number;
@@ -247,9 +250,11 @@ interface EloEntryWithCost {
 interface RunsIndex {
   runs: RunIndexEntry[];
   cumulativeElo: {
-    writing: EloEntryWithCost[];
+    initialWriting: EloEntryWithCost[];
+    revisedWriting: EloEntryWithCost[];
     feedback: EloEntryWithCost[];
-    byTag: Record<string, EloEntryWithCost[]>;
+    initialByTag: Record<string, EloEntryWithCost[]>;
+    revisedByTag: Record<string, EloEntryWithCost[]>;
   };
   eloHistory: Array<{
     runId: string;
@@ -260,6 +265,37 @@ interface RunsIndex {
   cumulativeAlternativeRatings?: AlternativeRatingsExport;
   /** Maps model display labels to models.dev family names (for logo resolution). */
   modelFamilies?: Record<string, string>;
+}
+
+function toWhrRatings(ratings: EloRating[]): WhrRating[] {
+  return ratings.map((r) => ({
+    model: r.model,
+    rating: r.rating,
+    wins: r.wins,
+    losses: r.losses,
+    ties: r.ties,
+    matchCount: r.matchCount,
+    ci95: r.ci95 ?? 0,
+  }));
+}
+
+function computeConfiguredJudgeQuality(run: RunResult, judgeLabels: string[]): JudgeQualityData | null {
+  if (!run.config.convergence.judgeQuality || judgeLabels.length < 2) {
+    return null;
+  }
+
+  const mode = run.config.convergence.judgeQualityMode;
+  const k = run.config.convergence.judgeDecay;
+  if (mode === "consensus") {
+    return computeJudgeQuality(run.judgments, judgeLabels, k);
+  }
+
+  const dimRatings = mode === "writing"
+    ? toWhrRatings(run.elo.initial.ratings)
+    : mode === "feedback"
+      ? toWhrRatings(run.elo.revised.feedbackRatings ?? [])
+      : toWhrRatings(run.elo.revised.ratings);
+  return computeEloBasedJudgeQuality(dimRatings, judgeLabels, k);
 }
 
 // ── Manifest & Content Types ─────────────────────────
@@ -307,6 +343,7 @@ interface JudgmentMeta {
  */
 export async function exportForWeb(outDir: string): Promise<number> {
   const runsDir = join(outDir, "runs");
+  const tagAlternativesPath = join(outDir, "tag-alternatives.json");
 
   // Ensure directories exist
   await mkdir(runsDir, { recursive: true });
@@ -379,18 +416,26 @@ export async function exportForWeb(outDir: string): Promise<number> {
 
     // Compute judge quality once -- reuse for both export and alternative ratings
     const perRunJudgeLabels = [...new Set(run.judgments.map((j) => j.judgeModel))];
-    const perRunQuality = perRunJudgeLabels.length >= 2
-      ? computeJudgeQuality(run.judgments, perRunJudgeLabels, DEFAULT_CONVERGENCE.judgeDecay)
-      : null;
+    const perRunJudgeDecay = run.config.convergence.judgeDecay;
+    const perRunPruneThreshold = run.config.convergence.judgePruneThreshold;
+    const perRunQuality = computeConfiguredJudgeQuality(run, perRunJudgeLabels);
     const perRunJw = perRunQuality?.active ? perRunQuality.weights : undefined;
 
     const judgeQuality = computeJudgeQualityForExport(
-      run.judgments, combinedSampleToModel, DEFAULT_CONVERGENCE.judgePruneThreshold,
+      run.judgments,
+      combinedSampleToModel,
+      perRunJudgeDecay,
+      perRunPruneThreshold,
       perRunQuality ?? undefined,
     );
 
     const alternativeRatings = computeAlternativeRatings(
-      run.judgments, sampleToModel, revisedSampleToModel, sampleToFeedbackModel, perRunJw,
+      run.judgments,
+      sampleToModel,
+      revisedSampleToModel,
+      sampleToFeedbackModel,
+      perRunJudgeDecay,
+      perRunJw,
     );
 
     // Accumulate for cumulative computations
@@ -408,7 +453,12 @@ export async function exportForWeb(outDir: string): Promise<number> {
     // ── Write manifest (Tier 1) ──
 
     const manifest = {
-      config: run.config,
+      config: {
+        ...run.config,
+        outputsPerModel: Number.isFinite(run.config.outputsPerModel)
+          ? run.config.outputsPerModel
+          : "adaptive",
+      },
       elo: run.elo,
       meta: enrichedMeta,
       modelInfo: run.modelInfo,
@@ -490,11 +540,15 @@ export async function exportForWeb(outDir: string): Promise<number> {
       timestamp: run.config.timestamp,
       models: run.config.models.map((m) => m.label),
       promptCount: run.config.prompts.length,
-      outputsPerModel: run.config.outputsPerModel,
+      outputsPerModel: Number.isFinite(run.config.outputsPerModel)
+        ? run.config.outputsPerModel
+        : "adaptive",
       totalCost: run.meta.totalCost,
       totalCostUncached: totalUncached,
-      costByModel: uncachedByModel,
-      costByModelByStage: uncachedByModelByStage,
+      costByModel: run.meta.costByModel,
+      costByModelByStage: run.meta.costByModelByStage,
+      costByModelUncached: uncachedByModel,
+      costByModelByStageUncached: uncachedByModelByStage,
       tokensByModel,
       tokensByModelByStage,
       totalTokens,
@@ -514,30 +568,17 @@ export async function exportForWeb(outDir: string): Promise<number> {
     });
   }
 
-  // Find latest run's costs for dashboard ELO enrichment
-  const latestEntry = indexEntries.length > 0
-    ? indexEntries.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
-    : null;
-
   // Build cumulative ELO data
   const cumElo = await loadCumulativeElo();
 
   function enrichEloEntry(
     r: { model: string; rating: number; matchCount: number; ci95?: number },
   ): EloEntryWithCost {
-    const costByStage = latestEntry?.costByModelByStage[r.model];
-    const totalCost = latestEntry?.costByModel[r.model];
-    const tokensByStage = latestEntry?.tokensByModelByStage[r.model];
-    const totalTokens = latestEntry?.tokensByModel[r.model];
     return {
       model: r.model,
       rating: r.rating,
       matchCount: r.matchCount,
       ci95: r.ci95,
-      costByStage,
-      totalCost,
-      tokensByStage,
-      totalTokens,
     };
   }
 
@@ -558,13 +599,18 @@ export async function exportForWeb(outDir: string): Promise<number> {
     const jw = quality?.active ? quality.weights : undefined;
 
     cumulativeJudgeQuality = computeJudgeQualityForExport(
-      allJudgments, combinedSampleToModel, DEFAULT_CONVERGENCE.judgePruneThreshold,
+      allJudgments, combinedSampleToModel, k, DEFAULT_CONVERGENCE.judgePruneThreshold,
       quality ?? undefined,
     );
     if (cumulativeJudgeQuality.length === 0) cumulativeJudgeQuality = undefined;
 
     cumulativeAlternativeRatings = computeAlternativeRatings(
-      allJudgments, allSampleToModel, allRevisedSampleToModel, allSampleToFeedbackModel, jw,
+      allJudgments,
+      allSampleToModel,
+      allRevisedSampleToModel,
+      allSampleToFeedbackModel,
+      k,
+      jw,
     );
 
     // ── Compute per-tag alternative ratings for dashboard ──
@@ -609,23 +655,50 @@ export async function exportForWeb(outDir: string): Promise<number> {
       }
 
       await writeGzipped(
-        join(outDir, "tag-alternatives.json"),
+        tagAlternativesPath,
         JSON.stringify(tagAlts),
       );
+    } else {
+      // Remove stale alternatives from previous exports when conditions no longer apply.
+      for (const path of [tagAlternativesPath, `${tagAlternativesPath}.gz`]) {
+        if (existsSync(path)) {
+          await rm(path);
+        }
+      }
+    }
+  } else {
+    // Remove stale alternatives when there is no cumulative judgment data.
+    for (const path of [tagAlternativesPath, `${tagAlternativesPath}.gz`]) {
+      if (existsSync(path)) {
+        await rm(path);
+      }
     }
   }
 
   const index: RunsIndex = {
     runs: indexEntries,
     cumulativeElo: {
-      writing: Object.values(cumElo.writing)
+      initialWriting: Object.values(cumElo.initialWriting ?? cumElo.writing)
+        .sort((a, b) => b.rating - a.rating)
+        .map(enrichEloEntry),
+      revisedWriting: Object.values(cumElo.revisedWriting ?? {})
         .sort((a, b) => b.rating - a.rating)
         .map(enrichEloEntry),
       feedback: Object.values(cumElo.feedbackGiving)
         .sort((a, b) => b.rating - a.rating)
         .map(enrichEloEntry),
-      byTag: Object.fromEntries(
-        Object.entries(cumElo.writingByTag ?? {}).map(
+      initialByTag: Object.fromEntries(
+        Object.entries(cumElo.initialWritingByTag ?? cumElo.writingByTag ?? {}).map(
+          ([cat, ratings]) => [
+            cat,
+            Object.values(ratings)
+              .sort((a, b) => b.rating - a.rating)
+              .map(enrichEloEntry),
+          ],
+        ),
+      ),
+      revisedByTag: Object.fromEntries(
+        Object.entries(cumElo.revisedWritingByTag ?? {}).map(
           ([cat, ratings]) => [
             cat,
             Object.values(ratings)

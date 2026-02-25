@@ -26,9 +26,11 @@ export function renderRunDetail(manifest: RunManifest): void {
   const runId = manifest.config.id;
 
   frag.appendChild(el("p", {}, el("a", { href: "?" }, "< back to leaderboard")));
-  const totalCost = manifest.meta.totalCostUncached ?? manifest.meta.totalCost;
+  const uncachedNote = manifest.meta.totalCostUncached != null
+    ? ` -- est uncached $${manifest.meta.totalCostUncached.toFixed(2)}`
+    : "";
   frag.appendChild(
-    el("h2", {}, `Run: ${formatDate(manifest.config.timestamp)} -- $${totalCost.toFixed(2)}`),
+    el("h2", {}, `Run: ${formatDate(manifest.config.timestamp)} -- actual $${manifest.meta.totalCost.toFixed(2)}${uncachedNote}`),
   );
 
   // Run info: writers and judges
@@ -66,39 +68,41 @@ export function renderRunDetail(manifest: RunManifest): void {
     modelFamilies,
   };
 
-  frag.appendChild(el("h2", {}, "Initial Writer ELO"));
-  frag.appendChild(sectionDesc(SECTION_DESC.initialWriterElo));
-  frag.appendChild(createRatingToggle({
-    defaultRatings: manifest.elo.initial.ratings,
-    alternativeRatings: manifest.alternativeRatings,
+  appendRunRatingSection(
+    frag,
+    "Initial Writer ELO",
+    SECTION_DESC.initialWriterElo,
+    manifest.elo.initial.ratings,
+    "initial",
+    "initial",
     manifest,
-    dimension: "initial",
-    eloTableOpts: { ...eloOpts, costStages: ["initial"] },
-  }).container);
-
-  frag.appendChild(el("h2", {}, "Revised Writer ELO"));
-  frag.appendChild(sectionDesc(SECTION_DESC.revisedElo));
-  frag.appendChild(createRatingToggle({
-    defaultRatings: manifest.elo.revised.ratings,
-    alternativeRatings: manifest.alternativeRatings,
+    eloOpts,
+  );
+  appendRunRatingSection(
+    frag,
+    "Revised Writer ELO",
+    SECTION_DESC.revisedElo,
+    manifest.elo.revised.ratings,
+    "revised",
+    "revised",
     manifest,
-    dimension: "revised",
-    eloTableOpts: { ...eloOpts, costStages: ["revised"] },
-  }).container);
+    eloOpts,
+  );
 
   if (
     manifest.elo.revised.feedbackRatings &&
     manifest.elo.revised.feedbackRatings.length > 0
   ) {
-    frag.appendChild(el("h2", {}, "Feedback Provider ELO"));
-    frag.appendChild(sectionDesc(SECTION_DESC.feedbackElo));
-    frag.appendChild(createRatingToggle({
-      defaultRatings: manifest.elo.revised.feedbackRatings,
-      alternativeRatings: manifest.alternativeRatings,
+    appendRunRatingSection(
+      frag,
+      "Feedback Provider ELO",
+      SECTION_DESC.feedbackElo,
+      manifest.elo.revised.feedbackRatings,
+      "feedback",
+      "feedback",
       manifest,
-      dimension: "feedback",
-      eloTableOpts: { ...eloOpts, costStages: ["feedback"] },
-    }).container);
+      eloOpts,
+    );
   }
 
   // Judge quality section (collapsed by default, lazy DOM on expand)
@@ -221,6 +225,34 @@ export function renderRunDetail(manifest: RunManifest): void {
   render(frag);
 }
 
+function appendRunRatingSection(
+  frag: DocumentFragment,
+  title: string,
+  description: string,
+  ratings: RunManifest["elo"]["initial"]["ratings"],
+  dimension: "initial" | "revised" | "feedback",
+  costStage: "initial" | "revised" | "feedback",
+  manifest: RunManifest,
+  eloOpts: {
+    costByModelByStage: Record<string, Record<string, number>>;
+    tokensByModelByStage: Record<string, Record<string, number>>;
+    speedByModel: RunManifest["meta"]["speedByModel"];
+    wlt: (r: { model: string; wins?: number; losses?: number; ties?: number }) => string;
+    onModelClick: (model: string) => void;
+    modelFamilies: Record<string, string>;
+  },
+): void {
+  frag.appendChild(el("h2", {}, title));
+  frag.appendChild(sectionDesc(description));
+  frag.appendChild(createRatingToggle({
+    defaultRatings: ratings,
+    alternativeRatings: manifest.alternativeRatings,
+    manifest,
+    dimension,
+    eloTableOpts: { ...eloOpts, costStages: [costStage] },
+  }).container);
+}
+
 // ── Run Detail Page (with loading state) ────────────
 
 export async function renderRunDetailPage(id: string): Promise<void> {
@@ -239,16 +271,26 @@ function renderRunMetadata(manifest: RunManifest): HTMLElement {
   const container = el("div");
 
   const costGrid = el("div", { className: "cost-grid" });
-  const displayCost = manifest.meta.totalCostUncached ?? manifest.meta.totalCost;
   costGrid.appendChild(
-    renderCostItem("Total Cost", `$${displayCost.toFixed(4)}`),
+    renderCostItem("Actual Cost", `$${manifest.meta.totalCost.toFixed(4)}`),
   );
+  if (manifest.meta.totalCostUncached != null) {
+    costGrid.appendChild(
+      renderCostItem("Estimated Uncached Cost", `$${manifest.meta.totalCostUncached.toFixed(4)}`),
+    );
+  }
   costGrid.appendChild(
     renderCostItem(
-      "Duration",
-      `${(manifest.meta.durationMs / 1000).toFixed(1)}s`,
+      "Termination",
+      manifest.meta.converged
+        ? `${manifest.meta.terminationReason} (converged)`
+        : `${manifest.meta.terminationReason} (not converged)`,
     ),
   );
+  costGrid.appendChild(
+    renderCostItem("Rounds Completed", String(manifest.meta.roundsCompleted)),
+  );
+  costGrid.appendChild(renderCostItem("Duration", `${(manifest.meta.durationMs / 1000).toFixed(1)}s`));
   costGrid.appendChild(
     renderCostItem("Total Tokens", manifest.meta.totalTokens.toLocaleString()),
   );

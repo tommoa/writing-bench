@@ -49,6 +49,8 @@ export interface ModelConfig {
   label: string;
 }
 
+export type OutputsPerModel = number | "adaptive";
+
 export interface EloRating {
   model: string;
   rating: number;
@@ -116,7 +118,7 @@ export interface RunResult {
     models: ModelConfig[];
     judges?: ModelConfig[];
     prompts: PromptConfig[];
-    outputsPerModel: number;
+    outputsPerModel: OutputsPerModel;
     reasoning: boolean;
     timestamp: string;
   };
@@ -140,6 +142,9 @@ export interface RunResult {
     tokensByModelByStage?: Record<string, Record<string, number>>;
     speedByModel: Record<string, ModelSpeed>;
     durationMs: number;
+    terminationReason: "converged" | "exhausted" | "stalled" | "max_rounds" | "unknown";
+    converged: boolean;
+    roundsCompleted: number;
   };
   modelInfo: Record<string, ModelInfo>;
 }
@@ -217,7 +222,7 @@ export interface RunManifest {
     models: ModelConfig[];
     judges?: ModelConfig[];
     prompts: PromptConfig[];
-    outputsPerModel: number;
+    outputsPerModel: OutputsPerModel;
     reasoning: boolean;
     timestamp: string;
   };
@@ -238,6 +243,9 @@ export interface RunManifest {
     tokensByModelByStage?: Record<string, Record<string, number>>;
     speedByModel: Record<string, ModelSpeed>;
     durationMs: number;
+    terminationReason: "converged" | "exhausted" | "stalled" | "max_rounds" | "unknown";
+    converged: boolean;
+    roundsCompleted: number;
   };
   modelInfo: Record<string, ModelInfo>;
   samples: SampleMeta[];
@@ -303,11 +311,13 @@ export interface RunIndexEntry {
   timestamp: string;
   models: string[];
   promptCount: number;
-  outputsPerModel: number;
+  outputsPerModel: OutputsPerModel;
   totalCost: number;
   totalCostUncached?: number;
   costByModel?: Record<string, number>;
   costByModelByStage?: Record<string, Record<string, number>>;
+  costByModelUncached?: Record<string, number>;
+  costByModelByStageUncached?: Record<string, Record<string, number>>;
   tokensByModel?: Record<string, number>;
   tokensByModelByStage?: Record<string, Record<string, number>>;
   totalTokens?: number;
@@ -321,9 +331,11 @@ export interface RunIndexEntry {
 export interface RunsIndex {
   runs: RunIndexEntry[];
   cumulativeElo: {
-    writing: EloEntry[];
+    initialWriting: EloEntry[];
+    revisedWriting: EloEntry[];
     feedback: EloEntry[];
-    byTag?: Record<string, EloEntry[]>;
+    initialByTag?: Record<string, EloEntry[]>;
+    revisedByTag?: Record<string, EloEntry[]>;
   };
   eloHistory: Array<{
     runId: string;

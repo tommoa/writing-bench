@@ -386,12 +386,10 @@ export function renderCostItem(label: string, value: string): HTMLElement {
 
 /** Shared description strings for ELO sections. */
 export const SECTION_DESC = {
-  writerElo:
-    "Cumulative head-to-head writing quality across all runs. " +
-    "Two outputs for the same prompt are compared by a judge; " +
-    "the preferred one wins. Elo (higher = better), " +
-    "\u00b1CI is the 95% confidence interval " +
-    "-- click to toggle range display.",
+  cumulativeInitialWriterElo:
+    "Cumulative head-to-head quality of initial outputs across all runs. "
+    + "Elo (higher = better), \u00b1CI is the 95% confidence interval "
+    + "-- click to toggle range display.",
   initialWriterElo:
     "Head-to-head writing quality from this run's initial outputs. " +
     "Elo (higher = better), \u00b1CI is the 95% confidence " +
