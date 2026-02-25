@@ -266,6 +266,27 @@ export function calculateCost(
 }
 
 /**
+ * Build a spec -> display-name lookup for a list of model specs.
+ * Specs are in "provider:model" format. Returns the models.dev display
+ * name when known, falling back to the raw spec otherwise.
+ */
+export async function buildModelLabelMap(
+  specs: string[],
+): Promise<Record<string, string>> {
+  const db = await fetchModelsDb();
+  const map: Record<string, string> = {};
+  for (const spec of specs) {
+    const colonIdx = spec.indexOf(":");
+    if (colonIdx < 0) continue;
+    const provider = spec.slice(0, colonIdx);
+    const model = spec.slice(colonIdx + 1).split("~")[0].split("@")[0];
+    const name = db[provider]?.models[model]?.name;
+    if (name) map[spec] = name;
+  }
+  return map;
+}
+
+/**
  * Fetch model info for all models in a run and return a lookup map.
  */
 export async function getModelInfoMap(
