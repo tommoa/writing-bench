@@ -4,16 +4,17 @@ import { EloTable } from "../EloTable.js";
 import { JudgeQualityTable } from "../JudgeQualityTable.js";
 import { CostBreakdownTable } from "../CostBreakdownTable.js";
 import { RunProgress } from "../RunProgress.js";
-import type { BenchmarkProgress, ModelSpeed, TerminalPalette } from "../../types.js";
+import type { BenchmarkProgress, ModelSpeed } from "../../types.js";
+import { usePalette } from "../PaletteContext.js";
 
 interface BenchmarkTabProps {
   progress: BenchmarkProgress;
-  complete: boolean;
   error: string | null;
   showSpeed?: boolean;
   /** Render CostBreakdownTable inline (when sidebar is hidden). */
   showCostInline: boolean;
-  palette: TerminalPalette;
+  /** Available width in columns for the main content area. */
+  contentWidth?: number;
 }
 
 // ── Helpers ─────────────────────────────────────────
@@ -46,12 +47,13 @@ function sliceAvgTimeForStage(
 
 export function BenchmarkTab({
   progress,
-  complete,
   error,
   showSpeed,
   showCostInline,
-  palette,
+  contentWidth,
 }: BenchmarkTabProps) {
+  const palette = usePalette();
+  const complete = progress.stage === "complete";
   const initialCost = useMemo(
     () => sliceCostForStage(progress.costByModelByStage, "initial"),
     [progress.costByModelByStage]
@@ -84,19 +86,15 @@ export function BenchmarkTab({
           stage={progress.stage}
           activeStages={progress.activeStages}
           currentOp={progress.currentOp}
-          totalCost={progress.totalCost}
-          totalCostUncached={progress.totalCostUncached}
-          costByStage={progress.costByStage}
           stageProgress={progress.stageProgress}
           opsDone={progress.stageDone}
-          cacheSavings={progress.cacheSavings}
           judgingRound={progress.judgingRound}
           maxCi={progress.maxCi}
           ciThreshold={progress.ciThreshold}
           needDescription={progress.needDescription}
           batchSummary={progress.batchSummary}
           suspendedModels={progress.suspendedModels}
-          palette={palette}
+          contentWidth={contentWidth}
         />
       </box>
 
@@ -104,7 +102,6 @@ export function BenchmarkTab({
         <RunProgress
           progress={progress.stageProgress}
           opsDone={progress.stageDone}
-          palette={palette}
         />
       </box>
 
@@ -126,7 +123,6 @@ export function BenchmarkTab({
             avgTimeByModel={initialTime}
             speedByModel={showSpeed ? progress.speedByModel : undefined}
             ciThreshold={progress.ciThreshold}
-            palette={palette}
           />
         )}
 
@@ -138,7 +134,6 @@ export function BenchmarkTab({
             avgTimeByModel={revisedTime}
             speedByModel={showSpeed ? progress.speedByModel : undefined}
             ciThreshold={progress.ciThreshold}
-            palette={palette}
           />
         )}
 
@@ -150,7 +145,6 @@ export function BenchmarkTab({
             avgTimeByModel={feedbackTime}
             speedByModel={showSpeed ? progress.speedByModel : undefined}
             ciThreshold={progress.ciThreshold}
-            palette={palette}
           />
         )}
 
@@ -161,7 +155,6 @@ export function BenchmarkTab({
             pruneThreshold={progress.judgePruneThreshold}
             mode={progress.judgeQualityMode}
             judgeBias={progress.judgeBias}
-            palette={palette}
           />
         )}
 
@@ -172,7 +165,6 @@ export function BenchmarkTab({
             speedByModel={progress.speedByModel}
             eloInitial={progress.elo.initial}
             eloRevised={progress.elo.revised}
-            palette={palette}
           />
         )}
       </scrollbox>
@@ -180,18 +172,23 @@ export function BenchmarkTab({
       {/* ── Status footer ─────────────────────────── */}
       {error && (
         <box marginTop={1} paddingLeft={1}>
-          <text fg={palette.red}>Error: {error}</text>
+          <text fg={palette.red}>{error}</text>
         </box>
       )}
 
       {complete && (
-        <box marginTop={1} paddingLeft={1}>
-          <text fg={palette.green} attributes={1}>
-            Benchmark complete! Total cost: ${progress.totalCost.toFixed(4)}
-            {progress.totalCostUncached > progress.totalCost + 0.00005
-              ? ` (uncached: $${progress.totalCostUncached.toFixed(4)})`
-              : ""}
-          </text>
+        <box marginTop={1} paddingLeft={1} flexDirection="column">
+          <box>
+            <text fg={palette.green} attributes={1}>
+              Benchmark complete! Total cost: ${progress.totalCost.toFixed(4)}
+              {progress.totalCostUncached > progress.totalCost + 0.00005
+                ? ` (uncached: $${progress.totalCostUncached.toFixed(4)})`
+                : ""}
+            </text>
+          </box>
+          <box marginTop={1}>
+            <text fg={palette.gray}>Press [n] for new run</text>
+          </box>
         </box>
       )}
     </box>

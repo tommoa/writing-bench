@@ -1,24 +1,27 @@
 import { useEffect, useCallback, useRef } from "react";
-import { useKeyboard } from "@opentui/react";
-import { join } from "path";
+import type { ScrollBoxRenderable } from "@opentui/core";
+import { join, dirname } from "path";
 import { rm } from "fs/promises";
 import { existsSync } from "fs";
 import { ConfirmPrompt } from "../ConfirmPrompt.js";
+import { useKeyboardScope } from "../keyboard/use-keyboard-scope.js";
+import { KEYBOARD_SCOPE_PRIORITY } from "../keyboard/types.js";
 import { computeCacheDiskSize } from "../../storage/cache-status.js";
-import { reverseModelKey } from "../../storage/cache-status.js";
-import { trimModelOutputs } from "../../storage/sample-cache.js";
-import { safeReaddir } from "../../storage/fs-utils.js";
+import { trimModelOutputs, specFromModelKey, discoverModelKeys } from "../../storage/sample-cache.js";
+import { safeReaddir, removeIfEmpty } from "../../storage/fs-utils.js";
 import type { AppAction, CacheTabState, CacheModelEntry, TabId } from "../state.js";
-import type { TerminalPalette } from "../../types.js";
+import type { Column } from "../Table.js";
+import { Table, computeTableLayout } from "../Table.js";
+import { usePalette } from "../PaletteContext.js";
+import { useLoadOnTabActivation } from "./use-load-on-tab-activation.js";
+import { scrollToTableCursor } from "../scroll-utils.js";
 
 const CACHE_DIR = join(process.cwd(), "data", "cache");
 const CATEGORIES = ["writes", "feedback", "revisions", "judgments"] as const;
-
 interface CacheTabProps {
   state: CacheTabState;
   activeTab: TabId;
   dispatch: (action: AppAction) => void;
-  palette: TerminalPalette;
 }
 
 // ── Helpers ─────────────────────────────────────────
@@ -42,8 +45,8 @@ async function countFiles(category: string, modelKey: string): Promise<number> {
 async function discoverModels(): Promise<CacheModelEntry[]> {
   const keySet = new Set<string>();
   for (const cat of CATEGORIES) {
-    const dirs = await safeReaddir(join(CACHE_DIR, cat));
-    for (const d of dirs) keySet.add(d);
+    const keys = await discoverModelKeys(join(CACHE_DIR, cat));
+    for (const k of keys) keySet.add(k);
   }
 
   const entries: CacheModelEntry[] = [];
@@ -51,7 +54,7 @@ async function discoverModels(): Promise<CacheModelEntry[]> {
     const [writes, feedback, revisions, judgments] = await Promise.all(
       CATEGORIES.map((cat) => countFiles(cat, key)),
     );
-    const displayName = reverseModelKey(key) ?? key;
+    const displayName = specFromModelKey(key) ?? key;
     entries.push({ key, displayName, writes, feedback, revisions, judgments });
   }
   return entries;
@@ -78,70 +81,91 @@ async function deleteModelCache(modelKey: string): Promise<void> {
     const dir = join(CACHE_DIR, cat, modelKey);
     if (existsSync(dir)) {
       await rm(dir, { recursive: true });
+      await removeIfEmpty(dirname(dir), join(CACHE_DIR, cat));
     }
   }
 }
 
+// ── Column Definitions ─────────────────────────────
+
+interface DiskRow {
+  label: string;
+  size: number;
+}
+
+const DISK_COLUMNS: Column<DiskRow>[] = [
+  { header: "Category", width: 12, value: (r) => r.label },
+  {
+    header: "Size",
+    width: 10,
+    align: "right",
+    value: (r) => formatBytes(r.size),
+  },
+];
+
 // ── Component ───────────────────────────────────────
 
-// Lines before the first model row in the scrollbox:
-// disk usage (title+header+sep+4rows+sep+total = 8) + marginBottom(1)
-// + model header (title+header+sep = 3) = 12
-const MODEL_LIST_OFFSET = 12;
-
-export function CacheTab({ state, activeTab, dispatch, palette }: CacheTabProps) {
+export function CacheTab({ state, activeTab, dispatch }: CacheTabProps) {
+  const palette = usePalette();
   const isActive = activeTab === "cache";
-  const scrollRef = useRef<any>(null);
+  const scrollRef = useRef<ScrollBoxRenderable | null>(null);
+  const loadData = useCallback(() => {
+    void loadCacheData(dispatch);
+  }, [dispatch]);
 
-  // Scroll to keep cursor visible when it changes
+  // Scroll to keep cursor visible when it changes.
   useEffect(() => {
     if (scrollRef.current && state.models.length > 0) {
-      scrollRef.current.scrollTo(MODEL_LIST_OFFSET + state.cursorIndex);
+      scrollToTableCursor(scrollRef.current, state.cursorIndex);
     }
   }, [state.cursorIndex]);
 
-  // Load data on first visit
-  useEffect(() => {
-    if (isActive && !state.loading && state.diskSize === null) {
-      loadCacheData(dispatch);
-    }
-  }, [isActive]);
+  useLoadOnTabActivation({
+    isActive,
+    loading: state.loading,
+    loaded: state.diskSize !== null || state.error !== null,
+    load: loadData,
+  });
 
-  // Keyboard navigation (only when this tab is active)
-  useKeyboard((key) => {
-    if (!isActive || state.confirmAction) return;
+  useKeyboardScope({
+    id: "cache-tab",
+    priority: KEYBOARD_SCOPE_PRIORITY["tab-local"],
+    enabled: isActive && state.confirmAction === null,
+    onKey: (key) => {
+      const maxIdx = Math.max(0, state.models.length - 1);
 
-    const maxIdx = Math.max(0, state.models.length - 1);
-
-    switch (key.name) {
-      case "j":
-      case "down":
-        dispatch({ type: "CACHE_CURSOR", index: Math.min(state.cursorIndex + 1, maxIdx) });
-        break;
-      case "k":
-      case "up":
-        dispatch({ type: "CACHE_CURSOR", index: Math.max(state.cursorIndex - 1, 0) });
-        break;
-      case "t":
-        if (state.models.length > 0) {
-          dispatch({
-            type: "CACHE_CONFIRM",
-            action: { type: "trim", model: state.models[state.cursorIndex].key },
-          });
-        }
-        break;
-      case "d":
-        if (state.models.length > 0) {
-          dispatch({
-            type: "CACHE_CONFIRM",
-            action: { type: "delete", model: state.models[state.cursorIndex].key },
-          });
-        }
-        break;
-      case "r":
-        loadCacheData(dispatch);
-        break;
-    }
+      switch (key.name) {
+        case "j":
+        case "down":
+          dispatch({ type: "CACHE_CURSOR", index: Math.min(state.cursorIndex + 1, maxIdx) });
+          return "handled";
+        case "k":
+        case "up":
+          dispatch({ type: "CACHE_CURSOR", index: Math.max(state.cursorIndex - 1, 0) });
+          return "handled";
+        case "t":
+          if (state.models.length > 0) {
+            dispatch({
+              type: "CACHE_CONFIRM",
+              action: { type: "trim", model: state.models[state.cursorIndex].key },
+            });
+          }
+          return "handled";
+        case "d":
+          if (state.models.length > 0) {
+            dispatch({
+              type: "CACHE_CONFIRM",
+              action: { type: "delete", model: state.models[state.cursorIndex].key },
+            });
+          }
+          return "handled";
+        case "r":
+          loadData();
+          return "handled";
+        default:
+          return "pass";
+      }
+    },
   });
 
   const handleConfirm = useCallback(async () => {
@@ -206,66 +230,66 @@ export function CacheTab({ state, activeTab, dispatch, palette }: CacheTabProps)
 
   const ds = state.diskSize;
 
-  // ── Disk usage table layout ──────────────────────
-  const catW = 12;
-  const sizeW = 10;
-  const diskSepLen = catW + sizeW;
-  const diskHeader = "Category".padEnd(catW) + "Size".padStart(sizeW);
-  const diskRows = [
+  const diskRows: DiskRow[] = [
     { label: "Writes", size: ds.writes },
     { label: "Feedback", size: ds.feedback },
     { label: "Revisions", size: ds.revisions },
     { label: "Judgments", size: ds.judgments },
   ];
 
-  // ── Model list table layout ──────────────────────
-  const nameW = Math.max(5, ...state.models.map((m) => m.displayName.length)) + 2;
-  const colW = 6;
-  const modelHeader =
-    "  " + "Model".padEnd(nameW) +
-    "Writes".padStart(colW) +
-    "  " + "Feedbk".padStart(colW) +
-    "  " + "Revise".padStart(colW) +
-    "  " + "Judge".padStart(colW);
-  const modelSepLen = 2 + nameW + colW * 4 + 6;
+  const diskLayout = computeTableLayout(DISK_COLUMNS, diskRows);
+
+  // ── Model list table columns (depend on render-time state) ──
+  const modelColumns: Column<CacheModelEntry>[] = [
+    {
+      header: "  Model",
+      computeWidth: (data) => 2 + Math.max(5, ...data.map((m) => m.displayName.length)),
+      value: (m, i) => {
+        const prefix = i === state.cursorIndex ? "> " : "  ";
+        return prefix + m.displayName;
+      },
+    },
+    { header: "Writes", width: 6, align: "right", value: (m) => String(m.writes) },
+    { header: "Feedbk", width: 6, align: "right", value: (m) => String(m.feedback) },
+    { header: "Revise", width: 6, align: "right", value: (m) => String(m.revisions) },
+    { header: "Judge", width: 6, align: "right", value: (m) => String(m.judgments) },
+  ];
 
   return (
     <box flexDirection="column" flexGrow={1} paddingLeft={1}>
-      <scrollbox ref={scrollRef} flexGrow={1} paddingTop={1}>
-        {/* ── Disk usage table ─────────────────────── */}
-        <box flexDirection="column" marginBottom={1}>
-          <text fg={palette.yellow} attributes={1}>Cache Disk Usage</text>
-          <text fg={palette.gray}>{diskHeader}</text>
-          <text fg={palette.gray}>{"\u2500".repeat(diskSepLen)}</text>
-          {diskRows.map((row) => (
-            <text key={row.label}>
-              <span fg={palette.fg}>{row.label.padEnd(catW)}</span>
-              <span fg={palette.green}>{formatBytes(row.size).padStart(sizeW)}</span>
+      {/* ── Disk usage table ───────────────────────── */}
+      <box paddingTop={1}>
+        <Table
+          title="Cache Disk Usage"
+          data={diskRows}
+          columns={DISK_COLUMNS}
+          keyFn={(r) => r.label}
+          marginBottom={1}
+        >
+          <box>
+            <text fg={palette.gray}>{"\u2500".repeat(diskLayout.sepLen)}</text>
+          </box>
+          <box>
+            <text>
+              <span fg={palette.fg} attributes={1}>{"Total".padEnd(12)}</span>
+              <span fg={palette.green} attributes={1}>{diskLayout.gap}{formatBytes(ds.total).padStart(10)}</span>
             </text>
-          ))}
-          <text fg={palette.gray}>{"\u2500".repeat(diskSepLen)}</text>
-          <text>
-            <span fg={palette.fg} attributes={1}>{"Total".padEnd(catW)}</span>
-            <span fg={palette.green} attributes={1}>{formatBytes(ds.total).padStart(sizeW)}</span>
-          </text>
-        </box>
+          </box>
+        </Table>
+      </box>
 
-        {/* ── Model list table ─────────────────────── */}
-        <box flexDirection="column" marginBottom={1}>
-          <text fg={palette.yellow} attributes={1}>Models</text>
-          <text fg={palette.gray}>{modelHeader}</text>
-          <text fg={palette.gray}>{"\u2500".repeat(modelSepLen)}</text>
-          {state.models.map((m, i) => {
-            const selected = i === state.cursorIndex;
-            const prefix = selected ? "> " : "  ";
-            const fg = selected ? palette.cyan : palette.fg;
-            return (
-              <text key={m.key} fg={fg}>
-                {prefix}{m.displayName.padEnd(nameW)}{String(m.writes).padStart(colW)}{"  "}{String(m.feedback).padStart(colW)}{"  "}{String(m.revisions).padStart(colW)}{"  "}{String(m.judgments).padStart(colW)}
-              </text>
-            );
-          })}
-        </box>
+      {/* ── Model list table ───────────────────────── */}
+      <box marginBottom={1}>
+        <text fg={palette.yellow} attributes={1}>Models</text>
+      </box>
+      <scrollbox ref={scrollRef} flexGrow={1}>
+        <Table
+          data={state.models}
+          columns={modelColumns}
+          keyFn={(m) => m.key}
+          rowFg={(_row, i) => i === state.cursorIndex ? palette.cyan : palette.fg}
+          marginBottom={0}
+        />
       </scrollbox>
 
       {/* ── Action bar / confirmation ────────────── */}
@@ -278,7 +302,6 @@ export function CacheTab({ state, activeTab, dispatch, palette }: CacheTabProps)
           }
           onConfirm={handleConfirm}
           onCancel={handleCancel}
-          palette={palette}
         />
       ) : (
         <box paddingLeft={1} marginTop={1}>
