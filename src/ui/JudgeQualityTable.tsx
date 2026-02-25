@@ -1,6 +1,9 @@
 import type { EloRating, JudgeQualityMode, BenchmarkProgress, TerminalPalette } from "../types.js";
-import type { WhrRating } from "../engine/whr.js";
+import { isWhrRating } from "../engine/whr.js";
 import { DEFAULT_CONVERGENCE } from "../types.js";
+import type { Column } from "./Table.js";
+import { Table } from "./Table.js";
+import { usePalette } from "./PaletteContext.js";
 
 interface JudgeQualityTableProps {
   ratings: EloRating[];
@@ -8,7 +11,6 @@ interface JudgeQualityTableProps {
   pruneThreshold?: number;
   mode?: JudgeQualityMode;
   judgeBias?: BenchmarkProgress["judgeBias"];
-  palette: TerminalPalette;
 }
 
 /**
@@ -33,87 +35,120 @@ function formatBias(
   return { text, color };
 }
 
-export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode, judgeBias, palette }: JudgeQualityTableProps) {
+export function JudgeQualityTable({ ratings, weights, pruneThreshold, mode, judgeBias }: JudgeQualityTableProps) {
+  const palette = usePalette();
   if (ratings.length === 0) return null;
 
-  const hasCi = ratings.some((r) => "ci95" in r && typeof (r as any).ci95 === "number");
+  const hasCi = ratings.some(isWhrRating);
   const hasBias = judgeBias != null;
+  const total = ratings.length;
+  const threshold = pruneThreshold ?? DEFAULT_CONVERGENCE.judgePruneThreshold;
 
-  // Column widths
-  const rankW = 4;
-  const modelW = Math.max(5, ...ratings.map((r) => r.model.length));
-  const ratingW = 6;
-  const ciW = 6;
-  const wltW = Math.max(7, ...ratings.map((r) => `${r.wins}/${r.losses}/${r.ties}`.length));
-  const weightW = 7;
-  const selfW = 7;
-  const posW = 7;
-  const statusW = 7;
+  const rankColor = (i: number) =>
+    i === 0 ? palette.green : i === total - 1 ? palette.red : palette.white;
 
-  const headerStr =
-    "#".padEnd(rankW) +
-    "Judge".padEnd(modelW + 2) +
-    "Rating".padStart(ratingW) +
-    (hasCi ? `  ${"\u00b1CI".padStart(ciW)}` : "") +
-    "  " + "W/L/T".padStart(wltW) +
-    "  " + "Weight".padStart(weightW) +
-    (hasBias ? `  ${"Self%".padStart(selfW)}` : "") +
-    (hasBias ? `  ${"Pos%".padStart(posW)}` : "") +
-    "  " + "Status".padStart(statusW);
-
-  const sepLen =
-    rankW + modelW + 2 + ratingW
-    + (hasCi ? 2 + ciW : 0)
-    + 2 + wltW
-    + 2 + weightW
-    + (hasBias ? 2 + selfW + 2 + posW : 0)
-    + 2 + statusW;
-
-  return (
-    <box flexDirection="column" marginBottom={1}>
-      <text fg={palette.yellow} attributes={1}>
-        Judge Quality{mode && mode !== "consensus" ? ` (${mode} ELO)` : ""}
-      </text>
-      <text fg={palette.gray}>{headerStr}</text>
-      <text fg={palette.gray}>{"\u2500".repeat(sepLen)}</text>
-      {ratings.map((r, i) => {
-        const ci95 = "ci95" in r ? (r as WhrRating).ci95 : undefined;
-        const wlt = `${r.wins}/${r.losses}/${r.ties}`;
-        const weight = weights?.[r.model] ?? 1.0;
-        const isPruned = weight < (pruneThreshold ?? DEFAULT_CONVERGENCE.judgePruneThreshold);
-        const ratingColor =
-          i === 0 ? palette.green : i === ratings.length - 1 ? palette.red : palette.white;
-
+  const columns: Column<EloRating>[] = [
+    {
+      header: "#",
+      width: 4,
+      value: (_r, i) => String(i + 1),
+      color: () => palette.gray,
+    },
+    {
+      header: "Judge",
+      computeWidth: (data) => Math.max(5, ...data.map((r) => r.model.length)),
+      value: (r) => r.model,
+    },
+    {
+      header: "Rating",
+      width: 6,
+      align: "right",
+      value: (r) => String(r.rating),
+      color: (_r, i) => rankColor(i),
+    },
+    {
+      header: "\u00b1CI",
+      width: 6,
+      align: "right",
+      when: hasCi,
+      value: (r) => {
+        const ci95 = isWhrRating(r) ? r.ci95 : undefined;
+        return ci95 != null && ci95 !== Infinity ? `\u00b1${ci95}` : "-";
+      },
+      color: () => palette.gray,
+    },
+    {
+      header: "W/L/T",
+      computeWidth: (data) => Math.max(7, ...data.map((r) => `${r.wins}/${r.losses}/${r.ties}`.length)),
+      align: "right",
+      value: (r) => `${r.wins}/${r.losses}/${r.ties}`,
+    },
+    {
+      header: "Weight",
+      width: 7,
+      align: "right",
+      value: (r) => `${(weights?.[r.model] ?? 1.0).toFixed(2)}x`,
+      color: () => palette.gray,
+    },
+    {
+      header: "Self%",
+      width: 7,
+      align: "right",
+      when: hasBias,
+      value: (r) => {
+        const selfBias = judgeBias?.selfPreference?.[r.model];
+        if (!selfBias) return "n/a";
+        return formatBias(selfBias.biasDelta, selfBias.sufficient, selfBias.selfJudgmentCount > 0, palette).text;
+      },
+      color: (r) => {
+        const selfBias = judgeBias?.selfPreference?.[r.model];
+        if (!selfBias) return palette.gray;
+        return formatBias(selfBias.biasDelta, selfBias.sufficient, selfBias.selfJudgmentCount > 0, palette).color;
+      },
+    },
+    {
+      header: "Pos%",
+      width: 7,
+      align: "right",
+      when: hasBias,
+      value: (r) => {
         const selfBias = judgeBias?.selfPreference?.[r.model];
         const posBias = judgeBias?.positionBias?.[r.model];
-        const selfFmt = selfBias
-          ? formatBias(selfBias.biasDelta, selfBias.sufficient, selfBias.selfJudgmentCount > 0, palette)
-          : { text: "n/a", color: palette.gray };
         const isWriter = selfBias != null;
-        const posFmt = posBias
-          ? formatBias(posBias.positionBiasDelta, posBias.sufficient, isWriter, palette)
-          : { text: isWriter ? "..." : "n/a", color: palette.gray };
+        if (!posBias) return isWriter ? "..." : "n/a";
+        return formatBias(posBias.positionBiasDelta, posBias.sufficient, isWriter, palette).text;
+      },
+      color: (r) => {
+        const selfBias = judgeBias?.selfPreference?.[r.model];
+        const posBias = judgeBias?.positionBias?.[r.model];
+        const isWriter = selfBias != null;
+        if (!posBias) return palette.gray;
+        return formatBias(posBias.positionBiasDelta, posBias.sufficient, isWriter, palette).color;
+      },
+    },
+    {
+      header: "Status",
+      width: 7,
+      align: "right",
+      value: (r) => {
+        const weight = weights?.[r.model] ?? 1.0;
+        return weight < threshold ? "pruned" : "active";
+      },
+      color: (r) => {
+        const weight = weights?.[r.model] ?? 1.0;
+        return weight < threshold ? palette.red : palette.green;
+      },
+    },
+  ];
 
-        return (
-          <text key={r.model}>
-            <span fg={palette.gray}>{String(i + 1).padEnd(rankW)}</span>
-            <span>{r.model.padEnd(modelW + 2)}</span>
-            <span fg={ratingColor}>{String(r.rating).padStart(ratingW)}</span>
-            {hasCi && (
-              <span fg={palette.gray}>{"  "}{(ci95 != null && ci95 !== Infinity ? `\u00b1${ci95}` : "-").padStart(ciW)}</span>
-            )}
-            <span>{"  "}{wlt.padStart(wltW)}</span>
-            <span fg={palette.gray}>{"  "}{`${weight.toFixed(2)}x`.padStart(weightW)}</span>
-            {hasBias && (
-              <span fg={selfFmt.color}>{"  "}{selfFmt.text.padStart(selfW)}</span>
-            )}
-            {hasBias && (
-              <span fg={posFmt.color}>{"  "}{posFmt.text.padStart(posW)}</span>
-            )}
-            <span fg={isPruned ? palette.red : palette.green}>{"  "}{(isPruned ? "pruned" : "active").padStart(statusW)}</span>
-          </text>
-        );
-      })}
-    </box>
+  const titleStr = `Judge Quality${mode && mode !== "consensus" ? ` (${mode} ELO)` : ""}`;
+
+  return (
+    <Table
+      title={titleStr}
+      data={ratings}
+      columns={columns}
+      keyFn={(r) => r.model}
+    />
   );
 }

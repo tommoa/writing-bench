@@ -1,13 +1,13 @@
-import type { TerminalPalette } from "../types.js";
+import { usePalette } from "./PaletteContext.js";
 
 interface RunProgressProps {
   progress: number;
   opsDone: number;
-  palette: TerminalPalette;
   width?: number;
 }
 
-export function RunProgress({ progress, opsDone, palette, width = 40 }: RunProgressProps) {
+export function RunProgress({ progress, opsDone, width = 40 }: RunProgressProps) {
+  const palette = usePalette();
   const clamped = Math.min(1, Math.max(0, progress));
   const filled = Math.round(clamped * width);
   const empty = width - filled;
@@ -15,16 +15,16 @@ export function RunProgress({ progress, opsDone, palette, width = 40 }: RunProgr
     ? Math.round(opsDone / clamped)
     : undefined;
 
+  const opsLabel = expectedOps != null
+    ? `${opsDone}/~${expectedOps} ops`
+    : `${opsDone} ops`;
+
   return (
-    <box flexDirection="row">
-      <text fg={palette.green}>{"█".repeat(filled)}</text>
-      <text fg={palette.gray}>{"░".repeat(empty)}</text>
-      <text fg={palette.gray}>
-        {"  "}
-        {Math.round(clamped * 100)}%{"  "}
-        {expectedOps != null
-          ? `${opsDone}/~${expectedOps} ops`
-          : `${opsDone} ops`}
+    <box>
+      <text>
+        <span fg={palette.green}>{"█".repeat(filled)}</span>
+        <span fg={palette.gray}>{"░".repeat(empty)}</span>
+        <span fg={palette.gray}>{"  "}{Math.round(clamped * 100)}%{"  "}{opsLabel}</span>
       </text>
     </box>
   );

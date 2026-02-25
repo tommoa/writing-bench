@@ -1,4 +1,8 @@
-import type { EloRating, ModelSpeed, RunResult, TerminalPalette } from "../types.js";
+import type { EloRating, RunResult, TerminalPalette } from "../types.js";
+import { isWhrRating } from "../engine/whr.js";
+import type { CellData, Column } from "./Table.js";
+import { computeTableLayout } from "./Table.js";
+import { fmtCost, fmtTime, computeAvgElo, STAGE_COLS } from "./format-utils.js";
 
 // ── ANSI Helpers ─────────────────────────────────────
 
@@ -18,16 +22,15 @@ function writeln(s: string): void {
   process.stdout.write(s + "\n");
 }
 
-// ── Formatters ───────────────────────────────────────
-
-function fmtCost(n: number): string {
-  if (n === 0) return "-";
-  return `$${n.toFixed(4)}`;
-}
-
-function fmtTime(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+/** Render a row of CellData as an ANSI-colored string. */
+function formatAnsiRow(cells: CellData[], gap: string): string {
+  return cells
+    .map((cell, i) => {
+      const gapStr = i > 0 ? gap : "";
+      if (cell.color) return `${gapStr}${fg(cell.color)}${cell.text}${RESET}`;
+      return `${gapStr}${cell.text}`;
+    })
+    .join("");
 }
 
 // ── ELO Table ────────────────────────────────────────
@@ -43,144 +46,180 @@ function printEloTable(
 ): void {
   if (ratings.length === 0) return;
 
-  const hasCi = ratings.some((r) => "ci95" in r && typeof (r as any).ci95 === "number");
+  const total = ratings.length;
+  const columns: Column<EloRating>[] = [
+    {
+      header: "#",
+      width: 4,
+      value: (_r, i) => String(i + 1),
+      color: () => palette.gray,
+    },
+    {
+      header: "Model",
+      computeWidth: (data) => Math.max(5, ...data.map((r) => r.model.length)),
+      value: (r) => r.model,
+      color: () => palette.gray,
+    },
+    {
+      header: "ELO",
+      width: 6,
+      align: "right",
+      value: (r) => String(r.rating),
+      color: (_r, i) =>
+        i === 0 ? palette.green : i === total - 1 ? palette.red : palette.white,
+    },
+    {
+      header: "\u00b1CI",
+      width: 6,
+      align: "right",
+      when: ratings.some(isWhrRating),
+      value: (r) => (isWhrRating(r) ? `\u00b1${r.ci95}` : "-"),
+      color: () => palette.gray,
+    },
+    {
+      header: "W/L/T",
+      width: 11,
+      align: "right",
+      value: (r) => `${r.wins}/${r.losses}/${r.ties}`,
+      color: () => palette.gray,
+    },
+  ];
 
-  // Column widths
-  const rankW = 4;
-  const modelW = Math.max(5, ...ratings.map((r) => r.model.length));
-  const ratingW = 6;
-  const ciW = 6;
-  const wltW = 11;
-
-  const headerStr =
-    "#".padEnd(rankW) +
-    "Model".padEnd(modelW + 2) +
-    "ELO".padStart(ratingW) +
-    (hasCi ? `  ${"\u00b1CI".padStart(ciW)}` : "") +
-    "  " + "W/L/T".padStart(wltW);
-
-  const sepLen =
-    rankW + modelW + 2 + ratingW
-    + (hasCi ? 2 + ciW : 0)
-    + 2 + wltW;
+  const layout = computeTableLayout(columns, ratings);
 
   writeln(`${BOLD}${fg(palette.yellow)}${title}${RESET}`);
-  writeln(`${fg(palette.gray)}${headerStr}${RESET}`);
-  writeln(`${fg(palette.gray)}${"\u2500".repeat(sepLen)}${RESET}`);
+  writeln(`${fg(palette.gray)}${layout.headerStr}${RESET}`);
+  writeln(`${fg(palette.gray)}${"\u2500".repeat(layout.sepLen)}${RESET}`);
 
   for (let i = 0; i < ratings.length; i++) {
-    const r = ratings[i];
-    const wlt = `${r.wins}/${r.losses}/${r.ties}`;
-    const ci95 = "ci95" in r ? (r as any).ci95 as number : undefined;
-
-    const ratingColor =
-      i === 0 ? palette.green : i === ratings.length - 1 ? palette.red : palette.white;
-
-    const line =
-      String(i + 1).padEnd(rankW) +
-      r.model.padEnd(modelW + 2);
-
-    const ratingStr = String(r.rating).padStart(ratingW);
-    const ciStr = hasCi ? "  " + (ci95 != null ? `\u00b1${ci95}` : "-").padStart(ciW) : "";
-    const wltStr = "  " + wlt.padStart(wltW);
-
-    writeln(
-      `${fg(palette.gray)}${line}${RESET}` +
-      `${fg(ratingColor)}${ratingStr}${RESET}` +
-      `${fg(palette.gray)}${ciStr}${wltStr}${RESET}`
-    );
+    writeln(formatAnsiRow(layout.formatRow(ratings[i], i), layout.gap));
   }
 
   writeln("");
 }
 
-// ── Cost Breakdown Table ─────────────────────────────
+/** Print a plain (non-ANSI) ELO table for CLI commands. */
+export function printEloTablePlain(title: string, ratings: EloRating[]): void {
+  if (ratings.length === 0) {
+    return;
+  }
 
-const STAGE_COLS = [
-  { key: "initial", label: "Write" },
-  { key: "initialJudging", label: "Judge" },
-  { key: "feedback", label: "Feedback" },
-  { key: "revised", label: "Revise" },
-  { key: "revisedJudging", label: "Re-Judge" },
-] as const;
+  const columns: Column<EloRating>[] = [
+    {
+      header: "#",
+      width: 4,
+      value: (_r, i) => String(i + 1),
+    },
+    {
+      header: "Model",
+      width: 25,
+      value: (r) => r.model,
+    },
+    {
+      header: "ELO",
+      width: 6,
+      align: "right",
+      value: (r) => String(r.rating),
+    },
+    {
+      header: "W/L/T",
+      width: 11,
+      align: "right",
+      value: (r) => `${r.wins}/${r.losses}/${r.ties}`,
+    },
+  ];
 
-function computeAvgElo(
-  model: string,
-  initial: EloRating[],
-  revised: EloRating[],
-): number | null {
-  const vals: number[] = [];
-  const ini = initial.find((r) => r.model === model);
-  if (ini) vals.push(ini.rating);
-  const rev = revised.find((r) => r.model === model);
-  if (rev) vals.push(rev.rating);
-  if (vals.length === 0) return null;
-  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  const layout = computeTableLayout(columns, ratings);
+  writeln(`\n${title}`);
+  writeln("-".repeat(layout.sepLen));
+  writeln(layout.headerStr);
+  writeln("-".repeat(layout.sepLen));
+  for (let i = 0; i < ratings.length; i++) {
+    writeln(layout.formatRow(ratings[i], i).map((cell, index) => `${index > 0 ? layout.gap : ""}${cell.text}`).join(""));
+  }
 }
+
+// ── Cost Breakdown Table ─────────────────────────────
 
 function printCostTable(
   result: RunResult,
   palette: TerminalPalette,
 ): void {
-  const models = Object.keys(result.meta.costByModel);
+  const { costByModelByStage, costByModel, speedByModel } = result.meta;
+  const { initial, revised } = result.elo;
+
+  const modelSet = new Set([
+    ...Object.keys(costByModel),
+    ...Object.keys(speedByModel),
+    ...initial.ratings.map((r) => r.model),
+    ...revised.ratings.map((r) => r.model),
+  ]);
+  const models = [...modelSet].sort();
   if (models.length === 0) return;
 
-  const costByModelByStage = result.meta.costByModelByStage;
   const activeStages = STAGE_COLS.filter((s) =>
-    models.some((m) => (costByModelByStage[m]?.[s.key] ?? 0) > 0)
+    models.some((m) => (costByModelByStage[m]?.[s.key] ?? 0) > 0),
   );
   if (activeStages.length === 0) return;
 
-  const hasElo = result.elo.initial.ratings.length > 0 || result.elo.revised.ratings.length > 0;
+  const hasElo = initial.ratings.length > 0 || revised.ratings.length > 0;
 
-  const modelW = Math.max(5, ...models.map((m) => m.length));
-  const colW = 9;
-  const totalW = 9;
-  const timeW = 9;
-  const eloW = 7;
-  const sep = "  ";
+  const columns: Column<string>[] = [
+    {
+      header: "Model",
+      computeWidth: (data) => Math.max(5, ...data.map((m) => m.length)),
+      value: (m) => m,
+    },
+    ...activeStages.map(
+      (s): Column<string> => ({
+        header: s.label,
+        width: 9,
+        align: "right",
+        value: (m) => fmtCost(costByModelByStage[m]?.[s.key] ?? 0),
+        color: () => palette.gray,
+      }),
+    ),
+    {
+      header: "Total",
+      width: 9,
+      align: "right",
+      value: (m) => fmtCost(costByModel[m] ?? 0),
+      color: () => palette.green,
+    },
+    {
+      header: "Avg Time",
+      width: 9,
+      align: "right",
+      value: (m) => {
+        const speed = speedByModel[m];
+        return speed ? fmtTime(speed.avgLatencyMs) : "-";
+      },
+      color: () => palette.cyan,
+    },
+    {
+      header: "Avg ELO",
+      width: 7,
+      align: "right",
+      when: hasElo,
+      value: (m) => {
+        const avg = computeAvgElo(m, initial.ratings, revised.ratings);
+        return avg != null ? String(avg) : "-";
+      },
+      color: (m) => {
+        const avg = computeAvgElo(m, initial.ratings, revised.ratings);
+        return avg != null ? palette.white : palette.gray;
+      },
+    },
+  ];
 
-  const headerStr =
-    "Model".padEnd(modelW) +
-    activeStages.map((s) => sep + s.label.padStart(colW)).join("") +
-    sep + "Total".padStart(totalW) +
-    sep + "Avg Time".padStart(timeW) +
-    (hasElo ? sep + "Avg ELO".padStart(eloW) : "");
-
-  const sepLen =
-    modelW +
-    activeStages.length * (colW + sep.length) +
-    sep.length + totalW +
-    sep.length + timeW +
-    (hasElo ? sep.length + eloW : 0);
+  const layout = computeTableLayout(columns, models);
 
   writeln(`${BOLD}${fg(palette.yellow)}Cost Breakdown${RESET}`);
-  writeln(`${fg(palette.gray)}${headerStr}${RESET}`);
-  writeln(`${fg(palette.gray)}${"\u2500".repeat(sepLen)}${RESET}`);
+  writeln(`${fg(palette.gray)}${layout.headerStr}${RESET}`);
+  writeln(`${fg(palette.gray)}${"\u2500".repeat(layout.sepLen)}${RESET}`);
 
   for (const model of models) {
-    const stages = costByModelByStage[model] ?? {};
-    const total = result.meta.costByModel[model] ?? 0;
-    const speed = result.meta.speedByModel[model];
-    const avgTime = speed ? fmtTime(speed.avgLatencyMs) : "-";
-    const avgElo = computeAvgElo(model, result.elo.initial.ratings, result.elo.revised.ratings);
-
-    const stageStr = activeStages.map((s) => {
-      const cost = stages[s.key] ?? 0;
-      return sep + fmtCost(cost).padStart(colW);
-    }).join("");
-
-    const eloStr = hasElo
-      ? `${fg(avgElo != null ? palette.white : palette.gray)}${sep}${(avgElo != null ? String(avgElo) : "-").padStart(eloW)}${RESET}`
-      : "";
-
-    writeln(
-      `${model.padEnd(modelW)}` +
-      `${fg(palette.gray)}${stageStr}${RESET}` +
-      `${fg(palette.green)}${sep}${fmtCost(total).padStart(totalW)}${RESET}` +
-      `${fg(palette.cyan)}${sep}${avgTime.padStart(timeW)}${RESET}` +
-      eloStr
-    );
+    writeln(formatAnsiRow(layout.formatRow(model, 0), layout.gap));
   }
 
   writeln("");

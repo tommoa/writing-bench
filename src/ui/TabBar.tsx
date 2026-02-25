@@ -1,9 +1,8 @@
 import type { TabId } from "./state.js";
-import type { TerminalPalette } from "../types.js";
+import { usePalette } from "./PaletteContext.js";
 
 interface TabBarProps {
   activeTab: TabId;
-  palette: TerminalPalette;
 }
 
 const TABS: Array<{ id: TabId; key: string; label: string }> = [
@@ -12,7 +11,8 @@ const TABS: Array<{ id: TabId; key: string; label: string }> = [
   { id: "runs", key: "3", label: "Runs" },
 ];
 
-export function TabBar({ activeTab, palette }: TabBarProps) {
+export function TabBar({ activeTab }: TabBarProps) {
+  const palette = usePalette();
   return (
     <box paddingLeft={1} marginBottom={1}>
       <text>
