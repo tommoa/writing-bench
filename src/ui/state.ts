@@ -51,13 +51,17 @@ export interface RunsTabState {
   error: string | null;
 }
 
+// ── Benchmark Mode ──────────────────────────────────
+
+export type BenchmarkMode = "configure" | "running" | "complete";
+
 // ── App State ───────────────────────────────────────
 
 export interface AppState {
   activeTab: TabId;
   benchmark: {
+    mode: BenchmarkMode;
     progress: BenchmarkProgress;
-    complete: boolean;
     error: string | null;
   };
   cache: CacheTabState;
@@ -91,8 +95,8 @@ const INITIAL_PROGRESS: BenchmarkProgress = {
 export const INITIAL_STATE: AppState = {
   activeTab: "benchmark",
   benchmark: {
+    mode: "configure",
     progress: INITIAL_PROGRESS,
-    complete: false,
     error: null,
   },
   cache: {
@@ -121,9 +125,12 @@ export type AppAction =
   // Tab
   | { type: "SET_TAB"; tab: TabId }
   // Benchmark
+  | { type: "BENCHMARK_START" }
   | { type: "BENCHMARK_PROGRESS"; progress: BenchmarkProgress }
   | { type: "BENCHMARK_COMPLETE" }
   | { type: "BENCHMARK_ERROR"; message: string }
+  | { type: "BENCHMARK_WARNING"; message: string }
+  | { type: "BENCHMARK_RESET" }
   // Cache
   | { type: "CACHE_LOADING" }
   | { type: "CACHE_LOADED"; diskSize: CacheDiskSize; models: CacheModelEntry[] }
@@ -157,6 +164,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     // ── Benchmark ──
+    case "BENCHMARK_START":
+      return {
+        ...state,
+        benchmark: {
+          mode: "running",
+          progress: INITIAL_PROGRESS,
+          error: null,
+        },
+      };
     case "BENCHMARK_PROGRESS":
       return {
         ...state,
@@ -167,7 +183,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         benchmark: {
           ...state.benchmark,
-          complete: true,
+          mode: "complete",
           progress: {
             ...state.benchmark.progress,
             stage: "complete",
@@ -179,7 +195,39 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "BENCHMARK_ERROR":
       return {
         ...state,
-        benchmark: { ...state.benchmark, error: action.message },
+        benchmark: {
+          ...state.benchmark,
+          // If the run hasn't started producing results yet (still in
+          // "running" with no progress), return to configure mode so
+          // the user can fix the issue and retry. Otherwise transition
+          // to complete so the user can view partial results and isn't
+          // stuck in "running" mode with no exit path.
+          mode: state.benchmark.mode === "running" && state.benchmark.progress.stageDone === 0
+            ? "configure"
+            : "complete",
+          error: action.message,
+        },
+      };
+    case "BENCHMARK_WARNING":
+      return {
+        ...state,
+        benchmark: {
+          ...state.benchmark,
+          // Append to existing warnings so multiple provider warnings
+          // (e.g. missing API keys for 3 providers) are all visible.
+          error: state.benchmark.error
+            ? state.benchmark.error + "\n" + action.message
+            : action.message,
+        },
+      };
+    case "BENCHMARK_RESET":
+      return {
+        ...state,
+        benchmark: {
+          mode: "configure",
+          progress: INITIAL_PROGRESS,
+          error: null,
+        },
       };
 
     // ── Cache ──
@@ -300,7 +348,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
  */
 export function benchmarkEventToAction(
   event: BenchmarkEvent,
-): AppAction | null {
+): AppAction {
   switch (event.type) {
     case "progress":
       return { type: "BENCHMARK_PROGRESS", progress: event.data };
@@ -308,10 +356,5 @@ export function benchmarkEventToAction(
       return { type: "BENCHMARK_COMPLETE" };
     case "error":
       return { type: "BENCHMARK_ERROR", message: event.data.message };
-    case "stageComplete":
-    case "sampleComplete":
-    case "judgmentComplete":
-    case "feedbackComplete":
-      return null;
   }
 }
