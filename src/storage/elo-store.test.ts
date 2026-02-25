@@ -10,6 +10,7 @@ import type {
   EloRating,
   CumulativeElo,
 } from "../types.js";
+import { DEFAULT_CONVERGENCE, DEFAULT_CONCURRENCY } from "../types.js";
 
 const ELO_FILE = join(process.cwd(), "data", "elo.json");
 
@@ -80,6 +81,10 @@ function makeRunResult(opts: {
       outputsPerModel: 1,
       reasoning: true,
       noCache: false,
+      cacheOnly: false,
+      skipSeeding: false,
+      concurrency: DEFAULT_CONCURRENCY,
+      convergence: DEFAULT_CONVERGENCE,
       timestamp: new Date().toISOString(),
     },
     samples: opts.samples,

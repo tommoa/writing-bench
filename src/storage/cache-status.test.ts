@@ -4,7 +4,6 @@ import { rm, mkdir, writeFile, readdir, readFile } from "fs/promises";
 import { join } from "path";
 import type { CacheStatusResult, Covering, CacheDiskSize } from "./cache-status.js";
 import {
-  reverseModelKey,
   allPairs,
   findMaximalCoverings,
   filterDominated,
@@ -14,7 +13,7 @@ import {
   formatBytes,
   computeCacheDiskSize,
 } from "./cache-status.js";
-import { hashPromptContent, modelKey, judgmentPairHash } from "./sample-cache.js";
+import { hashPromptContent, modelKey, judgmentPairHash, specFromModelKey, discoverModelKeys } from "./sample-cache.js";
 import type { PromptConfig } from "../types.js";
 
 // ── Helpers ─────────────────────────────────────────
@@ -248,70 +247,87 @@ async function populateFullCache(opts: {
   return { writeCacheIds, feedbackCacheIds, revisionCacheIds };
 }
 
-// ── reverseModelKey ─────────────────────────────────
+// ── specFromModelKey ────────────────────────────────
 
-describe("reverseModelKey", () => {
-  it("reverses simple openai model", () => {
-    expect(reverseModelKey("openai_gpt-4o")).toBe("openai:gpt-4o");
+describe("specFromModelKey", () => {
+  it("reverses simple model key", () => {
+    expect(specFromModelKey("openai_gpt-4o")).toBe("openai:gpt-4o");
   });
 
-  it("reverses anthropic model", () => {
-    expect(reverseModelKey("anthropic_claude-sonnet-4-20250514")).toBe(
-      "anthropic:claude-sonnet-4-20250514"
-    );
-  });
-
-  it("reverses google-vertex model", () => {
-    expect(reverseModelKey("google-vertex_gemini-2.5-flash")).toBe(
+  it("reverses hyphenated provider", () => {
+    expect(specFromModelKey("google-vertex_gemini-2.5-flash")).toBe(
       "google-vertex:gemini-2.5-flash"
     );
   });
 
-  it("reverses google-vertex-anthropic model", () => {
-    expect(
-      reverseModelKey("google-vertex-anthropic_claude-opus-4-6@default")
-    ).toBe("google-vertex-anthropic:claude-opus-4-6@default");
-  });
-
-  it("prefers longer provider prefix over shorter one", () => {
-    // google-vertex-anthropic should match before google-vertex or google
-    const result = reverseModelKey("google-vertex-anthropic_some-model");
-    expect(result).toBe("google-vertex-anthropic:some-model");
-  });
-
-  it("reverses openrouter model (model name may have underscores)", () => {
-    expect(reverseModelKey("openrouter_openai_gpt-oss-120b")).toBe(
-      "openrouter:openai_gpt-oss-120b"
+  it("reverses nested model key with slash", () => {
+    expect(specFromModelKey("openrouter_deepseek/deepseek-v3.2")).toBe(
+      "openrouter:deepseek/deepseek-v3.2"
     );
   });
 
-  it("reverses opencode model", () => {
-    expect(reverseModelKey("opencode_kimi-k2")).toBe("opencode:kimi-k2");
-  });
-
-  it("reverses ollama model", () => {
-    expect(reverseModelKey("ollama_gemma3")).toBe("ollama:gemma3");
-  });
-
-  it("reverses google model", () => {
-    expect(reverseModelKey("google_gemini-pro")).toBe("google:gemini-pro");
-  });
-
-  it("returns null for unknown provider", () => {
-    expect(reverseModelKey("unknown_model-x")).toBeNull();
-  });
-
   it("returns null for empty string", () => {
-    expect(reverseModelKey("")).toBeNull();
+    expect(specFromModelKey("")).toBeNull();
   });
 
   it("returns null for string with no underscore", () => {
-    expect(reverseModelKey("openai")).toBeNull();
+    expect(specFromModelKey("openai")).toBeNull();
   });
 
-  it("returns null for provider prefix with empty model part", () => {
-    // "openai_" has an empty model part -- should skip
-    expect(reverseModelKey("openai_")).toBeNull();
+  it("returns null for trailing underscore with empty model", () => {
+    expect(specFromModelKey("openai_")).toBeNull();
+  });
+});
+
+// ── discoverModelKeys ───────────────────────────────
+
+const DISCOVER_DIR = join(process.cwd(), "data", "test-discover-keys");
+
+describe("discoverModelKeys", () => {
+  beforeEach(async () => {
+    await rm(DISCOVER_DIR, { recursive: true, force: true });
+    await mkdir(DISCOVER_DIR, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(DISCOVER_DIR, { recursive: true, force: true });
+  });
+
+  it("returns empty array for empty directory", async () => {
+    expect(await discoverModelKeys(DISCOVER_DIR)).toEqual([]);
+  });
+
+  it("returns flat model key for dir containing json files", async () => {
+    await mkdir(join(DISCOVER_DIR, "openai_gpt-4o"));
+    await writeFile(join(DISCOVER_DIR, "openai_gpt-4o", "abc123.json"), "{}");
+    expect(await discoverModelKeys(DISCOVER_DIR)).toEqual(["openai_gpt-4o"]);
+  });
+
+  it("returns flat model key for dir containing prompt-hash subdirs", async () => {
+    await mkdir(join(DISCOVER_DIR, "openai_gpt-4o", "08023c2045f43c68"), { recursive: true });
+    expect(await discoverModelKeys(DISCOVER_DIR)).toEqual(["openai_gpt-4o"]);
+  });
+
+  it("returns flat model key for empty model dir", async () => {
+    await mkdir(join(DISCOVER_DIR, "openai_gpt-4o"));
+    expect(await discoverModelKeys(DISCOVER_DIR)).toEqual(["openai_gpt-4o"]);
+  });
+
+  it("descends into namespace dir for nested model keys", async () => {
+    await mkdir(join(DISCOVER_DIR, "openrouter_deepseek", "deepseek-v3.2"), { recursive: true });
+    expect(await discoverModelKeys(DISCOVER_DIR)).toEqual(["openrouter_deepseek/deepseek-v3.2"]);
+  });
+
+  it("handles mix of flat and nested model keys", async () => {
+    await mkdir(join(DISCOVER_DIR, "openai_gpt-4o"));
+    await writeFile(join(DISCOVER_DIR, "openai_gpt-4o", "abc.json"), "{}");
+    await mkdir(join(DISCOVER_DIR, "openrouter_deepseek", "deepseek-v3.2"), { recursive: true });
+    const result = (await discoverModelKeys(DISCOVER_DIR)).sort();
+    expect(result).toEqual(["openai_gpt-4o", "openrouter_deepseek/deepseek-v3.2"]);
+  });
+
+  it("returns nonexistent directory as empty array", async () => {
+    expect(await discoverModelKeys(join(DISCOVER_DIR, "nope"))).toEqual([]);
   });
 });
 

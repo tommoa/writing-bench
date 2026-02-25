@@ -1,7 +1,7 @@
 import { stat, readdir } from "fs/promises";
 import { join } from "path";
-import type { PromptConfig, ProviderName } from "../types.js";
-import { hashPromptContent, modelKey, judgmentPairHash } from "./sample-cache.js";
+import type { PromptConfig } from "../types.js";
+import { hashPromptContent, modelKey, judgmentPairHash, specFromModelKey, discoverModelKeys } from "./sample-cache.js";
 import { safeReaddir, safeReadJson } from "./fs-utils.js";
 
 // ── Types ───────────────────────────────────────────
@@ -78,48 +78,6 @@ export interface CacheStatusResult {
   coverings: Covering[];
   summary: StageMap;
   diskSize: CacheDiskSize;
-}
-
-// ── Known providers for reverse-mapping ─────────────
-
-// Record<ProviderName, true> ensures a compile error if a new provider is
-// added to the ProviderName union but omitted here.
-const ALL_PROVIDERS: Record<ProviderName, true> = {
-  openai: true,
-  anthropic: true,
-  google: true,
-  "google-vertex": true,
-  "google-vertex-anthropic": true,
-  openrouter: true,
-  opencode: true,
-  ollama: true,
-};
-
-// Sorted by length descending so longer prefixes match first
-// (e.g. "google-vertex-anthropic" before "google-vertex" before "google").
-const KNOWN_PROVIDERS = (Object.keys(ALL_PROVIDERS) as ProviderName[]).sort(
-  (a, b) => b.length - a.length
-);
-
-/**
- * Best-effort reverse-map a cache directory name back to "provider:model".
- * Returns null if no known provider prefix matches.
- *
- * Note: `modelKey()` replaces both `:` and `/` with `_`, so the round-trip
- * is lossy for models whose names contain slashes (e.g. "openrouter:openai/gpt-4o"
- * and "openrouter:openai_gpt-4o" produce the same key). Display names derived
- * from this function may not exactly match the original model spec.
- */
-export function reverseModelKey(dirName: string): string | null {
-  for (const provider of KNOWN_PROVIDERS) {
-    const prefix = provider + "_";
-    if (dirName.startsWith(prefix)) {
-      const modelPart = dirName.slice(prefix.length);
-      if (modelPart.length === 0) continue;
-      return `${provider}:${modelPart}`;
-    }
-  }
-  return null;
 }
 
 // ── Directory listing helpers ───────────────────────
@@ -221,7 +179,7 @@ export async function analyzeCacheStatus(
 
   // ── 2. Discover or filter writers ─────────────────
   const writesBase = join(cacheDir, "writes");
-  const discoveredKeys = await safeReaddir(writesBase);
+  const discoveredKeys = await discoverModelKeys(writesBase);
   const writerKeys = opts.writerKeys
     ? opts.writerKeys.filter((k) => discoveredKeys.includes(k))
     : discoveredKeys;
@@ -229,7 +187,7 @@ export async function analyzeCacheStatus(
   // ── 3. Determine judges ───────────────────────────
   const judgesFixed = !!opts.judgeKeys;
   const judgementsBase = join(cacheDir, "judgments");
-  const discoveredJudgeKeys = await safeReaddir(judgementsBase);
+  const discoveredJudgeKeys = await discoverModelKeys(judgementsBase);
 
   // When --judges is specified, use exactly those. Otherwise auto-discover
   // all potential judges from the judgments cache directory.
@@ -1000,7 +958,7 @@ export function formatCacheStatusTable(result: CacheStatusResult): string {
   lines.push("=".repeat(70));
   lines.push("");
 
-  const displayKey = (k: string) => reverseModelKey(k) ?? k;
+  const displayKey = (k: string) => specFromModelKey(k) ?? k;
 
   // ── Coverings (primary output) ────────────────
   if (coverings.length > 0) {
@@ -1118,7 +1076,7 @@ export function formatCacheStatusTable(result: CacheStatusResult): string {
  * Format cache status as JSON.
  */
 export function formatCacheStatusJson(result: CacheStatusResult): string {
-  const displayKey = (k: string) => reverseModelKey(k) ?? k;
+  const displayKey = (k: string) => specFromModelKey(k) ?? k;
 
   const matrixObj: Record<string, Record<string, object>> = {};
   for (const [wk, byPrompt] of result.matrix) {

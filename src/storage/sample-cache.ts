@@ -1,6 +1,6 @@
 import { existsSync } from "fs";
 import { readFile, writeFile, mkdir, readdir, rename, unlink, rm } from "fs/promises";
-import { join, basename } from "path";
+import { join, basename, dirname } from "path";
 import { createHash, randomBytes } from "crypto";
 import type { TokenUsage, CostBreakdown } from "../types.js";
 import { safeReaddir, safeReadJson, removeIfEmpty } from "./fs-utils.js";
@@ -63,11 +63,50 @@ export function hashPromptContent(promptText: string): string {
 }
 
 /**
- * Convert a model identity string to a filesystem-safe directory name.
- * e.g., "openai:gpt-4o" -> "openai_gpt-4o"
+ * Convert a model identity to a filesystem-safe cache path.
+ * Slashes in model names (e.g. openrouter models like "deepseek/deepseek-v3")
+ * are preserved, creating subdirectories.
+ * e.g., "openai", "gpt-4o"           -> "openai_gpt-4o"
+ *        "openrouter", "deepseek/v3"  -> "openrouter_deepseek/v3"
  */
 export function modelKey(provider: string, model: string): string {
-  return `${provider}_${model}`.replace(/[:/\\]/g, "_");
+  return `${provider}_${model}`.replace(/[:\\]/g, "_");
+}
+
+/**
+ * Reverse a modelKey path back to a "provider:model" spec.
+ * This is lossless since modelKey preserves `/` in model names.
+ * Assumes provider names never contain underscores (they use hyphens).
+ */
+export function specFromModelKey(key: string): string | null {
+  const idx = key.indexOf("_");
+  if (idx <= 0 || idx === key.length - 1) return null;
+  return key.slice(0, idx) + ":" + key.slice(idx + 1);
+}
+
+/**
+ * List all model keys in a cache category directory, handling both flat
+ * (provider_model/) and nested (provider_namespace/model/) layouts.
+ */
+export async function discoverModelKeys(categoryDir: string): Promise<string[]> {
+  const topLevel = await safeReaddir(categoryDir);
+  const discovered = await Promise.all(topLevel.map((entry) => discoverModelKeysInDir(categoryDir, entry)));
+  return discovered.flat();
+}
+
+async function discoverModelKeysInDir(categoryDir: string, relativeDir: string): Promise<string[]> {
+  const children = await safeReaddir(join(categoryDir, relativeDir));
+  if (children.length === 0) {
+    return [relativeDir];
+  }
+
+  const isModelDir = children.some((child) => child.endsWith(".json") || /^[0-9a-f]{16}$/.test(child));
+  if (isModelDir) {
+    return [relativeDir];
+  }
+
+  const discovered = await Promise.all(children.map((child) => discoverModelKeysInDir(categoryDir, `${relativeDir}/${child}`)));
+  return discovered.flat();
 }
 
 /**
@@ -449,8 +488,8 @@ export async function trimModelOutputs(
   let feedbackDeleted = 0;
   let revisionsDeleted = 0;
 
-  const feedbackModelDirs = await safeReaddir(feedbackBase);
-  const revisionModelDirs = await safeReaddir(revisionsBase);
+  const feedbackModelDirs = await discoverModelKeys(feedbackBase);
+  const revisionModelDirs = await discoverModelKeys(revisionsBase);
 
   for (const writeCacheId of deletedWriteIds) {
     for (const fbModelDir of feedbackModelDirs) {
@@ -492,7 +531,7 @@ export async function trimModelOutputs(
   ]);
 
   // Writes from OTHER models (Phase 1 only covers the trimmed model)
-  const allWriteModelDirs = await safeReaddir(join(cacheDir, "writes"));
+  const allWriteModelDirs = await discoverModelKeys(join(cacheDir, "writes"));
   for (const wModelDir of allWriteModelDirs) {
     if (wModelDir === mk) continue; // already collected
     const prompts = await safeReaddir(join(cacheDir, "writes", wModelDir));
@@ -538,7 +577,7 @@ export async function trimModelOutputs(
 
   // Scan judgment directories and delete matching files
   let judgmentsDeleted = 0;
-  const judgeModelDirs = await safeReaddir(judgmentsBase);
+  const judgeModelDirs = await discoverModelKeys(judgmentsBase);
   for (const judgeDir of judgeModelDirs) {
     const judgeDirPath = join(judgmentsBase, judgeDir);
     const files = (await safeReaddir(judgeDirPath))
@@ -550,16 +589,16 @@ export async function trimModelOutputs(
         judgmentsDeleted++;
       }
     }
-    await removeIfEmpty(judgeDirPath);
+    await removeIfEmpty(judgeDirPath, judgmentsBase);
   }
 
-  // Clean up empty directories
-  await removeIfEmpty(join(cacheDir, "writes", mk));
+  // Clean up empty directories (stopAt ensures namespace parents are removed too)
+  await removeIfEmpty(join(cacheDir, "writes", mk), join(cacheDir, "writes"));
   for (const fbDir of feedbackModelDirs) {
-    await removeIfEmpty(join(feedbackBase, fbDir));
+    await removeIfEmpty(join(feedbackBase, fbDir), feedbackBase);
   }
   for (const revDir of revisionModelDirs) {
-    await removeIfEmpty(join(revisionsBase, revDir));
+    await removeIfEmpty(join(revisionsBase, revDir), revisionsBase);
   }
   await removeIfEmpty(judgmentsBase);
 
@@ -696,7 +735,7 @@ export async function combineModelCaches(
 
   if (fbCacheIdMap.size > 0) {
     const revisionsBase = join(cacheDir, "revisions");
-    const revModelDirs = await safeReaddir(revisionsBase);
+    const revModelDirs = await discoverModelKeys(revisionsBase);
     for (const revModelDir of revModelDirs) {
       const revDirPath = join(revisionsBase, revModelDir);
       for (const [skippedId, keptId] of fbCacheIdMap) {
@@ -741,6 +780,7 @@ export async function combineModelCaches(
     const srcDir = join(cacheDir, category, sourceKey);
     if (existsSync(srcDir)) {
       await rm(srcDir, { recursive: true });
+      await removeIfEmpty(dirname(srcDir), join(cacheDir, category));
     }
   }
 
