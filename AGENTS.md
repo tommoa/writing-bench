@@ -5,6 +5,10 @@ discover that any section is outdated or encounter behavior that
 contradicts what is documented here, update this file as part of your
 change.
 
+This is a greenfield project - we should not refer to previous state in
+comments, nor should there be any concerns about backwards
+compatibility.
+
 **CRITICAL:** When considering any code change, ask the following
 questions:
 - Is it the right way to solve this issue?
@@ -26,19 +30,7 @@ responses to the user when providing your plan.
 ## Build & Run
 
 Runtime is **Bun** (not Node). The CLI entry point is `src/index.tsx`.
-
-```bash
-bun install                       # install dependencies
-bun run start run -m provider:model -m provider:model   # run benchmark
-bun run start run --cache-only                          # run from cache only (auto-discovers models)
-bun run start run --cache-only -m provider:model        # run from cache for specific models
-bun run start run --skip-seeding -m provider:model      # skip Phase 1 cache scan
-bun run start run --max-rounds 10 -m provider:model     # limit productive adaptive rounds
-bun run start cache combine provider:source provider:target  # merge cache directories
-bun run start serve               # build + export + serve web viewer
-bun run build:logos               # fetch model logos from lobe-icons (dev-time, needs run data)
-bun run build:web                 # bundle web/src/app.ts -> web/app.js
-```
+Look in the `package.json` to see available scripts.
 
 ## Testing
 
@@ -51,9 +43,7 @@ bun test src/engine/elo.test.ts   # run one test file
 bun test --test-name-pattern "returns 0.5 for equal ratings"  # one case
 ```
 
-There is no linter or formatter configured. TypeScript strict mode is
-enabled (`tsconfig.json`). There is no `tsc --noEmit` check in CI --
-Bun runs TypeScript directly.
+TypeScript strict mode is enabled (`tsconfig.json`).
 
 ## Code Style
 
@@ -122,10 +112,9 @@ judgments.filter((j) => j.stage === "improvement");
 - Single-line comments for inline explanations
 
 ### Async
-- `async/await` throughout, no `.then()` chains
+- `async/await` throughout, use `.then()` chains when obvious
 - `Promise.all()` for parallel work, `Promise.allSettled()` when partial
   failure is acceptable
-- `streamText` results: `await result.text`, `await result.usage`
 
 ## Error Handling
 
@@ -157,85 +146,23 @@ judgments.filter((j) => j.stage === "improvement");
 - `beforeEach` / `afterEach` for filesystem cleanup -- save original
   content, restore in teardown
 
-## Project Structure
-
-```
-src/
-  index.tsx          CLI dispatcher and command handlers
-  cli.ts             yargs command definitions
-  config.ts          TOML loading, model parsing
-  types.ts           ALL shared interfaces and types
-  engine/            Core benchmark logic
-    runner.ts        Pull-based adaptive benchmark orchestrator
-    judge.ts         Pairwise judging, position randomization
-    whr.ts           Whole History Rating with confidence intervals
-    need-identifier.ts  Information-gain scoring for adaptive loop
-    scheduler.ts     Inflight promise tracker
-    retry.ts         Exponential backoff retry
-  providers/         AI SDK provider resolution
-    registry.ts      Provider factory, model spec parsing
-    models.ts        models.dev API, cost calculation
-  storage/           Persistence layer
-    run-store.ts     Run result JSON persistence + deletion + summaries
-    elo-store.ts     Cumulative ELO with pairwise records + rebuild
-    sample-cache.ts  Disk cache for API outputs
-  export/
-    web-export.ts    Export tiered data for web viewer + run removal
-  ui/                OpenTUI terminal UI components (React/JSX)
-    state.ts         AppState, AppAction, appReducer (centralized state)
-    TabBar.tsx       Tab header: [1] Benchmark  [2] Cache  [3] Runs
-    ConfirmPrompt.tsx  Shared y/n confirmation component
-    tabs/
-      BenchmarkTab.tsx  Tab 1: live benchmark dashboard
-      CacheTab.tsx      Tab 2: disk usage, model list, trim/delete
-      RunsTab.tsx       Tab 3: run history, detail view, deletion
-prompts/             TOML prompt definitions
-web/                 Static SPA viewer (vanilla TS, bundled by Bun)
-  src/
-    app.ts           Entry point: router, init
-    helpers.ts       DOM helpers, formatters, render utilities
-    state.ts         Shared state, judgmentApi, prompt content cache
-    types.ts         All web viewer interfaces
-    dashboard.ts     Dashboard page, cumulative ELO tables, sparklines
-    run-detail.ts    Run detail page, run ELO tables, metadata
-    prompt-section.ts  Per-prompt output display with lazy loading
-    judgments.ts     Judgment list with filters, lazy reasoning
-    build-methodology.ts  Build-time: METHODOLOGY.md → methodology.html
-  methodology.html   Generated standalone page (no JS)
-  index.html         SPA shell for dashboard/runs/run-detail
-  style.css          All styling
-  app.js             Bundled output (gitignored)
-  data/              Exported run data (gitignored)
-    runs.json        Index: cumulative ELO, run summaries
-    runs/{id}.json   Per-run manifest (lean metadata)
-    runs/{id}/       Per-run content directory
-      prompt-{pid}.json  Text content loaded on-demand
-data/                Runtime data (gitignored)
-```
-
-Dependencies flow downward: CLI -> Engine -> Providers/Storage -> Types.
-
 ## Key Architectural Notes
 
 - ESM module (`"type": "module"` in package.json)
 - Bun is both runtime and bundler (no separate compile step for CLI)
 - The web viewer (`web/`) is a separate vanilla TypeScript SPA, built
   with `bun run build:web`. It is independent from the OpenTUI terminal UI.
-- The web viewer uses tiered data loading: a lean manifest (~350 KB
-  gzipped) loads immediately, and per-prompt content (~400 KB gzipped
-  each) loads on-demand when the user expands prompt sections or views
-  judgment reasoning.
+- The web viewer uses tiered data loading: a lean manifest loads
+  immediately, and per-prompt content loads on-demand when the user
+  expands prompt sections or views judgment reasoning.
 - The methodology page (`web/methodology.html`) is a standalone static
   HTML file generated at build time -- it has no JavaScript dependency.
-- LSP errors in `src/ui/*.tsx` files are pre-existing OpenTUI/React JSX
-  type issues -- they are harmless and unrelated to actual bugs.
 - **OpenTUI rendering rule**: `<text>` elements inside a `<box>` do NOT
   participate in flex layout -- multiple `<text>` children will render
   at position (0,0) and overlap. Wrap each `<text>` in a `<box>` to
   get block-level stacking, or combine into a single `<text>` with
   `<span>` children. `<scrollbox>` treats `<text>` children as
   block-level automatically.
-- The `ai` SDK `Intl.Segmenter` type error is a known upstream issue.
 - **Model aliasing**: The model spec format supports `~` for declaring
   endpoint equivalence: `provider:model~canonical_provider:canonical_model`.
   The canonical identity (right of `~`) is used for cache, labels, and
@@ -260,29 +187,10 @@ Three rating dimensions must converge independently: writing quality
 (initial judgments), revised writing quality (revised judgments), and
 feedback quality (improvement judgments).
 
-### Key Components
-
-- **WHR (`whr.ts`)** -- Newton's method on BT log-posterior with Gaussian
-  prior (σ²=0.25). Produces ratings and **centered** 95% CIs.
-  CIs use centered posterior variances (gauge-mode removed) so they
-  reflect distinguishability between models, not prior uncertainty.
-  Without centering, the BT gauge symmetry creates a CI floor of
-  ~1.96·√(1/(n·τ))·174 Elo regardless of game count.
-- **Need identifier (`need-identifier.ts`)** -- Scores candidate judgments
-  by information gain: `(σ²_A + σ²_B) × p × (1−p) / (1 + maxOutputIndex)`,
-  with configurable priority weights for writing (`--writing-weight`,
-  default 1.0), improvement (`--feedback-weight`, default 0.25), and
-  revised (`--revised-weight`, default 0.4) judgments. The depth penalty `1/(1+N)` ensures
-  breadth-first exploration -- all prompts are covered at a given output
-  index before advancing to the next.
-- **Ensure-cascade** -- `fulfillNeed()` calls `ensureJudgment()` which
-  calls `ensureSample()`/`ensureFeedback()`/`ensureRevision()` as needed.
-  Each returns cached data if available or generates fresh.
-
 ### Rating System
 
-Both per-run and cumulative ratings use WHR (Bayesian BT with CIs).
-Per-run ratings drive the adaptive loop's convergence criterion;
+Both per-run and cumulative ratings use World History Rankings (Bayesian BT
+with CIs). Per-run ratings drive the adaptive loop's convergence criterion;
 `--confidence N` sets the CI threshold (default 0 = overlap-based convergence).
 Cumulative ratings (`elo-store.ts`) merge pairwise records across
 runs and recompute WHR from scratch.

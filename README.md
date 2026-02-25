@@ -62,7 +62,6 @@ bun run start run -m provider:model [-m ...] [options]
 | `--prompts` | `-p` | `prompts/*.toml` | Prompt file glob |
 | `--filter` | `-f` | | Filter by prompt id or tag |
 | `--outputs` | `-n` | unlimited | Max outputs per model per prompt (adaptive) |
-| `--resume` | | | Resume an interrupted run by ID |
 | `--dry-run` | | | Preview without API calls |
 | `--no-reasoning` | | | Skip reasoning in judgments |
 | `--no-cache` | | | Skip reading cache (still writes) |
@@ -227,7 +226,7 @@ src/
     sample-cache.ts    disk cache for all API outputs
   export/
     web-export.ts      export run data for web viewer
-  ui/                  Ink terminal UI components
+  ui/                  OpenTUI terminal UI components
 prompts/               TOML prompt definitions
 web/                   static web viewer (vanilla TypeScript SPA)
 data/                  runtime data (gitignored)
