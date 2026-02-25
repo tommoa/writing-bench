@@ -5,6 +5,64 @@ import type { RunResult, EloRating } from "../types.js";
 import { DEFAULT_CONVERGENCE } from "../types.js";
 
 const DATA_DIR = join(process.cwd(), "data", "runs");
+const NUMBER_SENTINEL = "__WB_NUMBER__";
+
+function encodeSpecialNumbers(value: unknown): unknown {
+  if (typeof value === "number") {
+    if (value === Infinity) return { [NUMBER_SENTINEL]: "Infinity" };
+    if (value === -Infinity) return { [NUMBER_SENTINEL]: "-Infinity" };
+    if (Number.isNaN(value)) return { [NUMBER_SENTINEL]: "NaN" };
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => encodeSpecialNumbers(item));
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = encodeSpecialNumbers(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function decodeSpecialNumbers(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => decodeSpecialNumbers(item));
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (Object.keys(obj).length === 1 && typeof obj[NUMBER_SENTINEL] === "string") {
+      if (obj[NUMBER_SENTINEL] === "Infinity") return Infinity;
+      if (obj[NUMBER_SENTINEL] === "-Infinity") return -Infinity;
+      if (obj[NUMBER_SENTINEL] === "NaN") return NaN;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = decodeSpecialNumbers(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function validateRunResultShape(value: unknown): asserts value is RunResult {
+  if (!value || typeof value !== "object") {
+    throw new Error("Invalid run file: expected object root");
+  }
+  const run = value as Record<string, unknown>;
+  const config = run.config as Record<string, unknown> | undefined;
+  const meta = run.meta as Record<string, unknown> | undefined;
+  if (!config || typeof config !== "object") throw new Error("Invalid run file: missing config");
+  if (!meta || typeof meta !== "object") throw new Error("Invalid run file: missing meta");
+  if (!Array.isArray(run.samples)) throw new Error("Invalid run file: missing samples array");
+  if (!Array.isArray(run.feedback)) throw new Error("Invalid run file: missing feedback array");
+  if (!Array.isArray(run.judgments)) throw new Error("Invalid run file: missing judgments array");
+  if (typeof config.id !== "string") throw new Error("Invalid run file: missing config.id");
+  if (typeof config.timestamp !== "string") throw new Error("Invalid run file: missing config.timestamp");
+  if (typeof meta.totalCost !== "number") throw new Error("Invalid run file: missing meta.totalCost");
+}
 
 /**
  * Get the directory path for a run.
@@ -23,8 +81,7 @@ export async function saveRun(result: RunResult): Promise<string> {
   }
 
   const path = join(dir, "run.json");
-  await writeFile(path, JSON.stringify(result, (_key, value) =>
-    value === Infinity ? "__Infinity__" : value, 2));
+  await writeFile(path, JSON.stringify(encodeSpecialNumbers(result), null, 2));
   return path;
 }
 
@@ -38,8 +95,9 @@ export async function loadRun(runId: string): Promise<RunResult> {
   }
 
   const raw = await readFile(path, "utf-8");
-  const result = JSON.parse(raw, (_key, value) =>
-    value === "__Infinity__" ? Infinity : value) as RunResult;
+  const decoded = decodeSpecialNumbers(JSON.parse(raw));
+  validateRunResultShape(decoded);
+  const result = decoded as RunResult;
 
   // Migrate old RunConfig shape: flat ciThreshold/maxRounds → convergence object
   if (!result.config.convergence) {
@@ -49,6 +107,16 @@ export async function loadRun(runId: string): Promise<RunResult> {
       ...(legacy.ciThreshold != null && { ciThreshold: legacy.ciThreshold as number }),
       ...(legacy.maxRounds != null && { maxRounds: legacy.maxRounds as number }),
     };
+  }
+
+  if (!result.meta.terminationReason) {
+    result.meta.terminationReason = "unknown";
+  }
+  if (result.meta.converged == null) {
+    result.meta.converged = result.meta.terminationReason === "converged";
+  }
+  if (result.meta.roundsCompleted == null) {
+    result.meta.roundsCompleted = 0;
   }
 
   return result;

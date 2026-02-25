@@ -437,7 +437,7 @@ export async function parseArgs(): Promise<Command> {
             .option("latest", {
               type: "boolean",
               default: false,
-              describe: "Show most recent run",
+              describe: "Show most recent run (cannot be combined with [run-id])",
             })
             .option("format", {
               type: "string",

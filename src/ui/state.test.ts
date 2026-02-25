@@ -136,6 +136,9 @@ function makeRunResult() {
       costByModelByStage: {},
       speedByModel: {},
       durationMs: 0,
+      terminationReason: "converged" as const,
+      converged: true,
+      roundsCompleted: 0,
     },
     modelInfo: {},
   };

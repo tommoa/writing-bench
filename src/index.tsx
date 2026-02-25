@@ -175,6 +175,39 @@ function cliArgsToTuiConfig(args: Extract<Command, { command: "run" }>["args"]):
   };
 }
 
+function sanitizeForJson(value: unknown): unknown {
+  if (typeof value === "number") {
+    if (value === Infinity) return "Infinity";
+    if (value === -Infinity) return "-Infinity";
+    if (Number.isNaN(value)) return "NaN";
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeForJson(item));
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeForJson(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function runResultForJson(result: Awaited<ReturnType<typeof loadRun>>): unknown {
+  const normalized = {
+    ...result,
+    config: {
+      ...result.config,
+      outputsPerModel: Number.isFinite(result.config.outputsPerModel)
+        ? result.config.outputsPerModel
+        : "adaptive",
+    },
+  };
+  return sanitizeForJson(normalized);
+}
+
 async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
   // Handle dry-run separately (no TUI needed)
   if (args.dryRun) {
@@ -330,6 +363,10 @@ async function handleTui() {
 async function handleResults(
   args: Extract<Command, { command: "results" }>["args"]
 ) {
+  if (args.latest && args.runId) {
+    throw new Error("Use either [run-id] or --latest, not both.");
+  }
+
   let result;
   if (args.runId) {
     result = await loadRun(args.runId);
@@ -342,7 +379,7 @@ async function handleResults(
   }
 
   if (args.format === "json") {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(runResultForJson(result), null, 2));
     return;
   }
 
@@ -357,6 +394,9 @@ async function handleResults(
   console.log(`Cost: $${result.meta.totalCost.toFixed(4)}`);
   console.log(
     `Duration: ${(result.meta.durationMs / 1000).toFixed(1)}s`
+  );
+  console.log(
+    `Termination: ${result.meta.terminationReason}${result.meta.converged ? "" : " (not converged)"}`
   );
 
   printEloTablePlain("Initial Writer ELO", result.elo.initial.ratings);
@@ -390,12 +430,27 @@ async function handleElo(
     (a, b) => b.rating - a.rating
   );
 
-  if (writingRatings.length === 0) {
+  const taggedWritingRatings = args.tag
+    ? Object.values(elo.writingByTag?.[args.tag] ?? {}).sort(
+      (a, b) => b.rating - a.rating,
+    )
+    : [];
+
+  if (!args.tag && writingRatings.length === 0) {
     console.log("No cumulative ELO data yet. Run a benchmark first.");
     return;
   }
 
-  printEloTablePlain("Cumulative Writer ELO", writingRatings);
+  if (args.tag && taggedWritingRatings.length === 0) {
+    console.log(`No cumulative writer ELO data found for tag: ${args.tag}`);
+    return;
+  }
+
+  if (args.tag) {
+    printEloTablePlain(`Cumulative Writer ELO (tag: ${args.tag})`, taggedWritingRatings);
+  } else {
+    printEloTablePlain("Cumulative Writer ELO", writingRatings);
+  }
   if (feedbackRatings.length > 0) {
     printEloTablePlain("Cumulative Feedback Provider ELO", feedbackRatings);
   }
@@ -647,8 +702,10 @@ async function handleCacheCombine(
   const cacheBase = join(process.cwd(), "data", "cache");
   const result = await combineModelCaches(cacheBase, sourceKey, targetKey);
 
+  const conflicts = result.feedbackConflicts + result.revisionsConflicts + result.judgmentsConflicts;
   const total = result.writesMoved + result.feedbackMoved + result.feedbackDeduped
-    + result.revisionsMoved + result.revisionsRekeyed + result.judgmentsMoved;
+    + result.revisionsMoved + result.revisionsRekeyed + result.judgmentsMoved
+    + conflicts;
   if (total === 0) {
     console.log(`No cache data found for ${args.source}.`);
     return;
@@ -659,6 +716,12 @@ async function handleCacheCombine(
   console.log(`  ${result.feedbackMoved} feedback files moved${result.feedbackDeduped > 0 ? `, ${result.feedbackDeduped} deduplicated` : ""}`);
   console.log(`  ${result.revisionsMoved} revisions moved${result.revisionsRekeyed > 0 ? `, ${result.revisionsRekeyed} re-keyed` : ""}`);
   console.log(`  ${result.judgmentsMoved} judgments moved`);
+  if (conflicts > 0) {
+    console.log(
+      `  ${conflicts} same-key conflict${conflicts === 1 ? "" : "s"} skipped `
+      + `(feedback: ${result.feedbackConflicts}, revisions: ${result.revisionsConflicts}, judgments: ${result.judgmentsConflicts})`
+    );
+  }
 }
 
 // Main
