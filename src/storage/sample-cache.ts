@@ -64,24 +64,24 @@ export function hashPromptContent(promptText: string): string {
 
 /**
  * Convert a model identity to a filesystem-safe cache path.
- * Slashes in model names (e.g. openrouter models like "deepseek/deepseek-v3")
- * are preserved, creating subdirectories.
- * e.g., "openai", "gpt-4o"           -> "openai_gpt-4o"
- *        "openrouter", "deepseek/v3"  -> "openrouter_deepseek/v3"
+ * Uses URL encoding for a lossless round-trip.
  */
 export function modelKey(provider: string, model: string): string {
-  return `${provider}_${model}`.replace(/[:\\]/g, "_");
+  return `${encodeURIComponent(provider)}__${encodeURIComponent(model)}`;
 }
 
 /**
  * Reverse a modelKey path back to a "provider:model" spec.
- * This is lossless since modelKey preserves `/` in model names.
- * Assumes provider names never contain underscores (they use hyphens).
+ * Expects the current lossless format only.
  */
 export function specFromModelKey(key: string): string | null {
-  const idx = key.indexOf("_");
-  if (idx <= 0 || idx === key.length - 1) return null;
-  return key.slice(0, idx) + ":" + key.slice(idx + 1);
+  const sep = key.indexOf("__");
+  if (sep > 0 && sep < key.length - 2) {
+    const provider = decodeURIComponent(key.slice(0, sep));
+    const model = decodeURIComponent(key.slice(sep + 2));
+    return `${provider}:${model}`;
+  }
+  return null;
 }
 
 /**
@@ -618,9 +618,30 @@ export interface CombineResult {
   writesMoved: number;
   feedbackMoved: number;
   feedbackDeduped: number;
+  feedbackConflicts: number;
   revisionsMoved: number;
   revisionsRekeyed: number;
+  revisionsConflicts: number;
   judgmentsMoved: number;
+  judgmentsConflicts: number;
+}
+
+async function filesConflict(pathA: string, pathB: string): Promise<boolean> {
+  try {
+    const [aRaw, bRaw] = await Promise.all([
+      readFile(pathA, "utf-8"),
+      readFile(pathB, "utf-8"),
+    ]);
+    try {
+      const aJson = JSON.parse(aRaw);
+      const bJson = JSON.parse(bRaw);
+      return JSON.stringify(aJson) !== JSON.stringify(bJson);
+    } catch {
+      return aRaw !== bRaw;
+    }
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -634,7 +655,17 @@ export async function combineModelCaches(
   sourceKey: string,
   targetKey: string,
 ): Promise<CombineResult> {
-  const result: CombineResult = { writesMoved: 0, feedbackMoved: 0, feedbackDeduped: 0, revisionsMoved: 0, revisionsRekeyed: 0, judgmentsMoved: 0 };
+  const result: CombineResult = {
+    writesMoved: 0,
+    feedbackMoved: 0,
+    feedbackDeduped: 0,
+    feedbackConflicts: 0,
+    revisionsMoved: 0,
+    revisionsRekeyed: 0,
+    revisionsConflicts: 0,
+    judgmentsMoved: 0,
+    judgmentsConflicts: 0,
+  };
 
   // ── Writes ──────────────────────────────────────────
   const srcWritesBase = join(cacheDir, "writes", sourceKey);
@@ -696,6 +727,9 @@ export async function combineModelCaches(
       if (!f.endsWith(".json")) continue;
       const tgtPath = join(tgtFbBase, f);
       if (existsSync(tgtPath)) {
+        if (await filesConflict(join(srcFbBase, f), tgtPath)) {
+          result.feedbackConflicts++;
+        }
         // Duplicate: both endpoints gave feedback on the same write.
         // Keep target's copy, but record the cacheId mapping for revisions.
         const srcEntry = await safeReadJson<{ cacheId: string }>(join(srcFbBase, f));
@@ -726,7 +760,12 @@ export async function combineModelCaches(
     for (const f of srcRevFiles) {
       if (!f.endsWith(".json")) continue;
       const tgtPath = join(tgtRevBase, f);
-      if (existsSync(tgtPath)) continue;
+      if (existsSync(tgtPath)) {
+        if (await filesConflict(join(srcRevBase, f), tgtPath)) {
+          result.revisionsConflicts++;
+        }
+        continue;
+      }
       const content = await readFile(join(srcRevBase, f), "utf-8");
       await writeFile(tgtPath, content);
       result.revisionsMoved++;
@@ -768,7 +807,12 @@ export async function combineModelCaches(
     for (const f of srcJudgFiles) {
       if (!f.endsWith(".json")) continue;
       const tgtPath = join(tgtJudgBase, f);
-      if (existsSync(tgtPath)) continue;
+      if (existsSync(tgtPath)) {
+        if (await filesConflict(join(srcJudgBase, f), tgtPath)) {
+          result.judgmentsConflicts++;
+        }
+        continue;
+      }
       const content = await readFile(join(srcJudgBase, f), "utf-8");
       await writeFile(tgtPath, content);
       result.judgmentsMoved++;

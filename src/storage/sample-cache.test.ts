@@ -10,6 +10,7 @@ import {
   combineModelCaches,
   judgmentPairHash,
   modelKey,
+  specFromModelKey,
   type CachedWrite,
   type CachedFeedback,
   type CachedRevision,
@@ -129,6 +130,13 @@ describe("randomSample", () => {
 
   it("returns empty array for empty input", () => {
     expect(randomSample([], 3)).toEqual([]);
+  });
+});
+
+describe("modelKey/specFromModelKey", () => {
+  it("round-trips model IDs containing colons", () => {
+    const key = modelKey("ollama", "llama3.1:8b");
+    expect(specFromModelKey(key)).toBe("ollama:llama3.1:8b");
   });
 });
 
@@ -976,6 +984,40 @@ describe("combineModelCaches", () => {
     expect(result.feedbackMoved).toBe(0);
     expect(result.revisionsMoved).toBe(0);
     expect(result.judgmentsMoved).toBe(0);
+    expect(result.feedbackConflicts).toBe(0);
+    expect(result.revisionsConflicts).toBe(0);
+    expect(result.judgmentsConflicts).toBe(0);
+  });
+
+  it("counts conflicts when same-key feedback payloads differ", async () => {
+    const srcFbDir = join(COMBINE_CACHE_DIR, "feedback", SOURCE_KEY);
+    const tgtFbDir = join(COMBINE_CACHE_DIR, "feedback", TARGET_KEY);
+    await writeJsonFile(srcFbDir, "write-1.json", makeCachedFeedback({ cacheId: "fb-src", text: "src" }));
+    await writeJsonFile(tgtFbDir, "write-1.json", makeCachedFeedback({ cacheId: "fb-tgt", text: "tgt" }));
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.feedbackDeduped).toBe(1);
+    expect(result.feedbackConflicts).toBe(1);
+  });
+
+  it("counts conflicts for same-key revisions and judgments", async () => {
+    const srcRevDir = join(COMBINE_CACHE_DIR, "revisions", SOURCE_KEY);
+    const tgtRevDir = join(COMBINE_CACHE_DIR, "revisions", TARGET_KEY);
+    await writeJsonFile(srcRevDir, "fb-1.json", makeCachedRevision({ cacheId: "rev-src", text: "src" }));
+    await writeJsonFile(tgtRevDir, "fb-1.json", makeCachedRevision({ cacheId: "rev-tgt", text: "tgt" }));
+
+    const srcJudgDir = join(COMBINE_CACHE_DIR, "judgments", SOURCE_KEY);
+    const tgtJudgDir = join(COMBINE_CACHE_DIR, "judgments", TARGET_KEY);
+    await writeJsonFile(srcJudgDir, "hash-1.json", { winner: "A", reasoning: "src" });
+    await writeJsonFile(tgtJudgDir, "hash-1.json", { winner: "B", reasoning: "tgt" });
+
+    const result = await combineModelCaches(COMBINE_CACHE_DIR, SOURCE_KEY, TARGET_KEY);
+
+    expect(result.revisionsMoved).toBe(0);
+    expect(result.judgmentsMoved).toBe(0);
+    expect(result.revisionsConflicts).toBe(1);
+    expect(result.judgmentsConflicts).toBe(1);
   });
 
   it("creates target directory when only source exists", async () => {

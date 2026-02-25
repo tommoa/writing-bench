@@ -190,9 +190,11 @@ export async function analyzeCacheStatus(
   const discoveredJudgeKeys = await discoverModelKeys(judgementsBase);
 
   // When --judges is specified, use exactly those. Otherwise auto-discover
-  // all potential judges from the judgments cache directory.
-  const judgeKeys = opts.judgeKeys ?? discoveredJudgeKeys;
-  const judgesDefaultToWriters = !opts.judgeKeys && judgeKeys.length === 0;
+  // all potential judges from the judgments cache directory. If none are
+  // present, fall back to writers to match run-time default behavior.
+  const judgesDefaultToWriters = !opts.judgeKeys && discoveredJudgeKeys.length === 0;
+  const judgeKeys = opts.judgeKeys
+    ?? (discoveredJudgeKeys.length > 0 ? discoveredJudgeKeys : writerKeys);
 
   // ── 4. Pre-load directory listings for perf ───────
   // Instead of thousands of existsSync calls, read each model dir once.

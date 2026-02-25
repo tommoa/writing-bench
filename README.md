@@ -94,10 +94,23 @@ bun run start export [--out web/data]
 bun run start serve [--port 3000] [--no-open]
 ```
 
-### `clear-cache` -- Clear cached outputs
+### `cache status` -- Analyze cache coverage
 
 ```
-bun run start clear-cache provider:model [--judgments-only]
+bun run start cache status [--prompts "prompts/*.toml"] [--outputs N] [--format table|json]
+```
+
+### `cache clear` -- Clear or trim cached outputs
+
+```
+bun run start cache clear provider:model [--judgments-only]
+bun run start cache clear provider:model --outputs N
+```
+
+### `cache combine` -- Merge one model cache into another
+
+```
+bun run start cache combine source-provider:model target-provider:model
 ```
 
 ## How It Works

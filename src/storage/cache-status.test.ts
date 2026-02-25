@@ -251,19 +251,23 @@ async function populateFullCache(opts: {
 
 describe("specFromModelKey", () => {
   it("reverses simple model key", () => {
-    expect(specFromModelKey("openai_gpt-4o")).toBe("openai:gpt-4o");
+    expect(specFromModelKey("openai__gpt-4o")).toBe("openai:gpt-4o");
   });
 
   it("reverses hyphenated provider", () => {
-    expect(specFromModelKey("google-vertex_gemini-2.5-flash")).toBe(
+    expect(specFromModelKey("google-vertex__gemini-2.5-flash")).toBe(
       "google-vertex:gemini-2.5-flash"
     );
   });
 
   it("reverses nested model key with slash", () => {
-    expect(specFromModelKey("openrouter_deepseek/deepseek-v3.2")).toBe(
+    expect(specFromModelKey("openrouter__deepseek%2Fdeepseek-v3.2")).toBe(
       "openrouter:deepseek/deepseek-v3.2"
     );
+  });
+
+  it("returns null for legacy key format", () => {
+    expect(specFromModelKey("openai_gpt-4o")).toBeNull();
   });
 
   it("returns null for empty string", () => {
@@ -586,7 +590,7 @@ describe("analyzeCacheStatus", () => {
     });
 
     expect(result.writerKeys.sort()).toEqual(
-      ["anthropic_claude", "openai_gpt-4o"].sort()
+      ["anthropic__claude", "openai__gpt-4o"].sort()
     );
   });
 
@@ -608,11 +612,11 @@ describe("analyzeCacheStatus", () => {
     const result = await analyzeCacheStatus({
       prompts,
       outputsPerModel: 1,
-      writerKeys: ["openai_gpt-4o"],
+      writerKeys: ["openai__gpt-4o"],
       cacheDir: TEST_CACHE_DIR,
     });
 
-    expect(result.writerKeys).toEqual(["openai_gpt-4o"]);
+    expect(result.writerKeys).toEqual(["openai__gpt-4o"]);
   });
 
   it("correctly reports write coverage", async () => {
@@ -719,7 +723,7 @@ describe("analyzeCacheStatus", () => {
 
     expect(result.coverings.length).toBeGreaterThanOrEqual(1);
     expect(result.coverings[0].writerKeys.sort()).toEqual(
-      ["anthropic_claude", "openai_gpt-4o"].sort()
+      ["anthropic__claude", "openai__gpt-4o"].sort()
     );
     expect(result.coverings[0].promptIds).toEqual(["p1"]);
   });
@@ -836,9 +840,39 @@ describe("analyzeCacheStatus", () => {
     });
 
     expect(result.judgesDefaultToWriters).toBe(false);
-    expect(result.judgeKeys).toEqual(["openai_gpt-4o"]);
+    expect(result.judgeKeys).toEqual(["openai__gpt-4o"]);
     // With only 1 judge, fewer judgment files needed
     expect(result.summary.initialJudgments.need).toBe(1); // C(2,2)=1 pair * 1 judge
+  });
+
+  it("defaults judges to writers when no judgment dirs exist", async () => {
+    const writers = [
+      { provider: "openai", model: "gpt-4o" },
+      { provider: "anthropic", model: "claude" },
+    ];
+    const prompts = [makePrompt("p1")];
+
+    const mk1 = modelKey("openai", "gpt-4o");
+    const mk2 = modelKey("anthropic", "claude");
+    const hash = hashPromptContent(prompts[0].prompt);
+    await writeJson(
+      join(TEST_CACHE_DIR, "writes", mk1, hash, "sample_0.json"),
+      { cacheId: "w1", text: "t", usage: { inputTokens: 1, outputTokens: 1 }, cost: { input: 0, output: 0, total: 0, totalUncached: 0 }, latencyMs: 0, createdAt: "" }
+    );
+    await writeJson(
+      join(TEST_CACHE_DIR, "writes", mk2, hash, "sample_0.json"),
+      { cacheId: "w2", text: "t", usage: { inputTokens: 1, outputTokens: 1 }, cost: { input: 0, output: 0, total: 0, totalUncached: 0 }, latencyMs: 0, createdAt: "" }
+    );
+
+    const result = await analyzeCacheStatus({
+      prompts,
+      outputsPerModel: 1,
+      cacheDir: TEST_CACHE_DIR,
+    });
+
+    expect(result.judgesDefaultToWriters).toBe(true);
+    expect(result.judgeKeys.sort()).toEqual([mk1, mk2].sort());
+    expect(result.summary.initialJudgments.need).toBe(2); // C(2,2)=1 pair * 2 judges
   });
 });
 
@@ -936,8 +970,8 @@ describe("formatCacheStatusJson", () => {
     ];
     const parsed = JSON.parse(formatCacheStatusJson(result));
     expect(parsed.coverings).toHaveLength(1);
-    expect(parsed.coverings[0].writers).toContain("openai:gpt-4o");
-    expect(parsed.coverings[0].judges).toContain("openai:gpt-4o");
+    expect(parsed.coverings[0].writers).toContain("openai_gpt-4o");
+    expect(parsed.coverings[0].judges).toContain("openai_gpt-4o");
     expect(parsed.coverings[0].outputsPerModel).toBe(1);
     expect(parsed.coverings[0].cells).toBe(2);
   });
