@@ -57,7 +57,17 @@ const CUSTOM_LOADERS: Record<
       process.env.GOOGLE_CLOUD_LOCATION ??
       process.env.VERTEX_LOCATION ??
       "us-central1";
-    return { options: { project, location } };
+    return {
+      options: {
+        project,
+        location,
+        googleAuthOptions: {
+          clientOptions: {
+            transporterOptions: { fetchImplementation: globalThis.fetch },
+          },
+        },
+      },
+    };
   },
 
   "google-vertex-anthropic": () => {
@@ -69,7 +79,17 @@ const CUSTOM_LOADERS: Record<
       process.env.GOOGLE_CLOUD_LOCATION ??
       process.env.VERTEX_LOCATION ??
       "global";
-    return { options: { project, location } };
+    return {
+      options: {
+        project,
+        location,
+        googleAuthOptions: {
+          clientOptions: {
+            transporterOptions: { fetchImplementation: globalThis.fetch },
+          },
+        },
+      },
+    };
   },
 
   "openrouter": (meta) => ({

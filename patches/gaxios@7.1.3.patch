@@ -1,0 +1,26 @@
+diff --git a/build/cjs/src/gaxios.js b/build/cjs/src/gaxios.js
+index 84ddd4a40cfff0e2869e14f2c1029f21ffc4e602..28ece281e5451239011829c9f95d2f112d633c51 100644
+--- a/build/cjs/src/gaxios.js
++++ b/build/cjs/src/gaxios.js
+@@ -527,7 +527,7 @@ class Gaxios {
+         const hasWindow = typeof window !== 'undefined' && !!window;
+         this.#fetch ||= hasWindow
+             ? window.fetch
+-            : (await import('node-fetch')).default;
++            : globalThis.fetch ?? (await import('node-fetch')).default;
+         return this.#fetch;
+     }
+     /**
+diff --git a/build/esm/src/gaxios.js b/build/esm/src/gaxios.js
+index 4c0708e8366a2c3ddcfbf13d5fa8018985aee339..4032d2887d53d7055dc90516aad34f93d4dca747 100644
+--- a/build/esm/src/gaxios.js
++++ b/build/esm/src/gaxios.js
+@@ -521,7 +521,7 @@ export class Gaxios {
+         const hasWindow = typeof window !== 'undefined' && !!window;
+         this.#fetch ||= hasWindow
+             ? window.fetch
+-            : (await import('node-fetch')).default;
++            : globalThis.fetch ?? (await import('node-fetch')).default;
+         return this.#fetch;
+     }
+     /**
