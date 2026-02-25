@@ -139,6 +139,62 @@ export const JUDGE_PRESETS: Record<"low" | "medium" | "high", { judgeDecay: numb
   high:   { judgeDecay: DEFAULT_CONVERGENCE.judgeDecay, judgePruneThreshold: DEFAULT_CONVERGENCE.judgePruneThreshold },
 };
 
+// ── TUI Run Configuration ───────────────────────────
+
+/** Sensitivity preset names for judge quality. */
+export type JudgeSensitivity = "low" | "medium" | "high";
+
+/** Configuration collected from the TUI form before RunConfig assembly. */
+export interface TuiRunConfig {
+  models: string[];
+  judges: string[];
+  prompts: string;
+  filter: string[];
+  outputs: number | undefined;
+  reasoning: boolean;
+  noCache: boolean;
+  cacheOnly: boolean;
+  skipSeeding: boolean;
+  speed: boolean;
+  dryRun: boolean;
+  concurrency: number;
+  confidence: number;
+  maxRounds: number;
+  writingWeight: number;
+  feedbackWeight: number;
+  revisedWeight: number;
+  judgeQuality: boolean;
+  judgeQualityMode: JudgeQualityMode;
+  judgeSensitivity: JudgeSensitivity;
+  judgeDecay: number | undefined;
+  judgePruneThreshold: number | undefined;
+}
+
+export const DEFAULT_TUI_RUN_CONFIG: TuiRunConfig = {
+  models: [],
+  judges: [],
+  prompts: "prompts/*.toml",
+  filter: [],
+  outputs: undefined,
+  reasoning: true,
+  noCache: false,
+  cacheOnly: false,
+  skipSeeding: false,
+  speed: false,
+  dryRun: false,
+  concurrency: DEFAULT_CONCURRENCY,
+  confidence: DEFAULT_CONVERGENCE.ciThreshold,
+  maxRounds: DEFAULT_CONVERGENCE.maxRounds,
+  writingWeight: DEFAULT_CONVERGENCE.writingWeight,
+  feedbackWeight: DEFAULT_CONVERGENCE.feedbackWeight,
+  revisedWeight: DEFAULT_CONVERGENCE.revisedWeight,
+  judgeQuality: DEFAULT_CONVERGENCE.judgeQuality,
+  judgeQualityMode: DEFAULT_CONVERGENCE.judgeQualityMode,
+  judgeSensitivity: "high",
+  judgeDecay: undefined,
+  judgePruneThreshold: undefined,
+};
+
 // ── Run Data ────────────────────────────────────────
 
 export interface RunConfig {
@@ -472,13 +528,11 @@ export interface TerminalPalette {
   brightCyan: string;
   brightMagenta: string;
   fg: string;
+  /** Terminal background color (for opaque dialog panels). */
+  bg: string;
 }
 
 export type BenchmarkEvent =
   | { type: "progress"; data: BenchmarkProgress }
-  | { type: "sampleComplete"; data: WritingSample }
-  | { type: "judgmentComplete"; data: PairwiseJudgment }
-  | { type: "feedbackComplete"; data: Feedback }
-  | { type: "stageComplete"; data: { stage: BenchmarkStage } }
   | { type: "error"; data: TaskError }
   | { type: "complete"; data: RunResult };
