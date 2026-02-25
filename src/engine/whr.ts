@@ -773,6 +773,7 @@ export function gamesToRecords(games: WhrGame[]): PairwiseRecord[] {
   for (const g of games) {
     const [first, second, key] = pairKey(g.playerWhite, g.playerBlack);
     const flipped = first !== g.playerWhite;
+    const weight = g.weight ?? 1.0;
 
     let rec = map.get(key);
     if (!rec) {
@@ -781,11 +782,11 @@ export function gamesToRecords(games: WhrGame[]): PairwiseRecord[] {
     }
 
     if (g.result === 0.5) {
-      rec.ties++;
+      rec.ties += weight;
     } else if ((g.result === 1.0 && !flipped) || (g.result === 0.0 && flipped)) {
-      rec.winsA++;
+      rec.winsA += weight;
     } else {
-      rec.winsB++;
+      rec.winsB += weight;
     }
   }
   return Array.from(map.values());
@@ -820,4 +821,3 @@ export function mergeRecords(
   for (const r of incoming) addToRecordMap(map, r);
   return Array.from(map.values());
 }
-

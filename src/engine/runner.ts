@@ -42,6 +42,7 @@ import {
   feedbackKey,
   revisionKey,
   judgmentGroupKey,
+  improvementJudgmentGroupKey,
   emptyCompletedWork,
   formatNeedDescription,
   formatBatchSummary,
@@ -226,6 +227,7 @@ export class BenchmarkRunner {
   private currentNeedDescription?: string;
   private currentBatchSummary?: string;
   private currentRatingMap = new Map<string, WhrRating>();
+  private needFairCursor = 0;
 
   // ── Cache provenance tracking ─────────────────────
   private cache = new SampleCache();
@@ -276,10 +278,15 @@ export class BenchmarkRunner {
         if (count < minCount) minCount = count;
       }
 
-      // A model is settled when it has enough games AND its CI doesn't
-      // overlap any neighbor (or meets the CI threshold in threshold mode).
-      const r = this.writingWhr.ratings.find((r) => r.model === model.label);
-      const settled = r && isModelSettled(r, this.writingWhr.ratings, convergence);
+      const writingRating = this.writingWhr.ratings.find((r) => r.model === model.label);
+      const revisedRating = this.revisedWhr.ratings.find((r) => r.model === model.label);
+      const feedbackRating = this.feedbackWhr.ratings.find((r) => r.model === model.label);
+
+      const writingSettled = !!writingRating && isModelSettled(writingRating, this.writingWhr.ratings, convergence);
+      const revisedSettled = !!revisedRating && isModelSettled(revisedRating, this.revisedWhr.ratings, convergence);
+      const feedbackSettled = !!feedbackRating && isModelSettled(feedbackRating, this.feedbackWhr.ratings, convergence);
+
+      const settled = writingSettled && revisedSettled && feedbackSettled;
 
       // Floor at 1: with --skip-seeding, sampleCounts is lazily populated
       // so minCount can be 0 even after the model has been used at some
@@ -645,6 +652,7 @@ export class BenchmarkRunner {
           const sample: WritingSample = {
             id: nanoid(),
             model: modelCfg.label,
+            registryId: modelCfg.registryId,
             promptId: prompt.id,
             outputIndex,
             text: cs.text,
@@ -733,6 +741,7 @@ export class BenchmarkRunner {
           const feedback: Feedback = {
             id: nanoid(),
             sourceModel: sourceModel.label,
+            sourceRegistryId: sourceModel.registryId,
             targetSampleId: targetSample.id,
             text: cached.text,
             fromCache: true,
@@ -822,6 +831,7 @@ export class BenchmarkRunner {
           const revised: WritingSample = {
             id: nanoid(),
             model: writerCfg.label,
+            registryId: writerCfg.registryId,
             promptId: prompt.id,
             outputIndex: original.outputIndex,
             text: cached.text,
@@ -829,6 +839,7 @@ export class BenchmarkRunner {
             originalSampleId: original.id,
             feedbackUsed: feedback.id,
             feedbackModel: feedback.sourceModel,
+            feedbackRegistryId: feedback.sourceRegistryId,
             fromCache: true,
             usage: cached.usage,
             cost: ZERO_COST,
@@ -917,6 +928,7 @@ export class BenchmarkRunner {
           const judgment: PairwiseJudgment = {
             id: nanoid(),
             judgeModel: judgeCfg.label,
+            judgeRegistryId: judgeCfg.registryId,
             promptId: prompt.id,
             sampleA: sampleA.id,
             sampleB: sampleB.id,
@@ -924,6 +936,7 @@ export class BenchmarkRunner {
             reasoning: cached.reasoning,
             stage,
             positionSwapped: cached.positionSwapped,
+            fromCache: true,
             usage: cached.usage,
             cost: ZERO_COST,
             latencyMs: 0,
@@ -1250,21 +1263,18 @@ export class BenchmarkRunner {
       need.outputIdxA, need.outputIdxB,
     );
 
-    try {
-      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, cacheOnly);
-      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, cacheOnly);
-      if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA, need.promptId, need.outputIdxA));
-      if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB, need.promptId, need.outputIdxB));
-      if (!sampleA || !sampleB) return;
+    const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, cacheOnly);
+    const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, cacheOnly);
+    if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA, need.promptId, need.outputIdxA));
+    if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB, need.promptId, need.outputIdxB));
+    if (!sampleA || !sampleB) return;
 
-      const tk = judgmentGroupKey(need.modelA, need.modelB, need.promptId, need.outputIdxA, need.outputIdxB);
-      const result = await this.ensureJudgment(
-        need.judgeModel, prompt, sampleA, sampleB, "initial", cacheOnly,
-      );
-      this.recordTripleResult(tripleResults, tk, result);
-    } finally {
-      this.completedWork.judgments.add(key);
-    }
+    const tk = judgmentGroupKey(need.modelA, need.modelB, need.promptId, need.outputIdxA, need.outputIdxB);
+    const result = await this.ensureJudgment(
+      need.judgeModel, prompt, sampleA, sampleB, "initial", cacheOnly,
+    );
+    this.recordTripleResult(tripleResults, tk, result);
+    if (result) this.completedWork.judgments.add(key);
   }
 
   private async fulfillImprovement(
@@ -1280,34 +1290,36 @@ export class BenchmarkRunner {
       need.promptId, need.judgeModel.label, need.outputIdx,
     );
 
-    try {
-      // Cascade: sample → feedback → revision → judge
-      const sample = await this.ensureSample(writerCfg, prompt, need.outputIdx, cacheOnly);
-      if (!sample) {
-        this.completedWork.missingSamples.add(sampleKey(need.writer, need.promptId, need.outputIdx));
-        return;
-      }
-
-      const feedback = await this.ensureFeedback(fbModelCfg, sample, prompt, cacheOnly);
-      if (!feedback) {
-        this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.writer, need.promptId, need.outputIdx));
-        return;
-      }
-
-      const revision = await this.ensureRevision(writerCfg, sample, feedback, prompt, cacheOnly);
-      if (!revision) {
-        this.completedWork.missingRevisions.add(revisionKey(need.writer, need.feedbackModel, need.promptId, need.outputIdx));
-        return;
-      }
-
-      const tk = judgmentGroupKey(need.writer, need.feedbackModel, need.promptId, need.outputIdx, 0);
-      const result = await this.ensureJudgment(
-        need.judgeModel, prompt, sample, revision, "improvement", cacheOnly,
-      );
-      this.recordTripleResult(tripleResults, tk, result);
-    } finally {
-      this.completedWork.judgments.add(key);
+    // Cascade: sample → feedback → revision → judge
+    const sample = await this.ensureSample(writerCfg, prompt, need.outputIdx, cacheOnly);
+    if (!sample) {
+      this.completedWork.missingSamples.add(sampleKey(need.writer, need.promptId, need.outputIdx));
+      return;
     }
+
+    const feedback = await this.ensureFeedback(fbModelCfg, sample, prompt, cacheOnly);
+    if (!feedback) {
+      this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.writer, need.promptId, need.outputIdx));
+      return;
+    }
+
+    const revision = await this.ensureRevision(writerCfg, sample, feedback, prompt, cacheOnly);
+    if (!revision) {
+      this.completedWork.missingRevisions.add(revisionKey(need.writer, need.feedbackModel, need.promptId, need.outputIdx));
+      return;
+    }
+
+    const tk = improvementJudgmentGroupKey(
+      need.writer,
+      need.feedbackModel,
+      need.promptId,
+      need.outputIdx,
+    );
+    const result = await this.ensureJudgment(
+      need.judgeModel, prompt, sample, revision, "improvement", cacheOnly,
+    );
+    this.recordTripleResult(tripleResults, tk, result);
+    if (result) this.completedWork.judgments.add(key);
   }
 
   private async fulfillRevised(
@@ -1325,34 +1337,31 @@ export class BenchmarkRunner {
       need.outputIdxA, need.outputIdxB,
     );
 
-    try {
-      // Cascade: sampleA + sampleB → feedbackA + feedbackB → revisionA + revisionB → judge
-      const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, cacheOnly);
-      const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, cacheOnly);
-      if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA, need.promptId, need.outputIdxA));
-      if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB, need.promptId, need.outputIdxB));
-      if (!sampleA || !sampleB) return;
+    // Cascade: sampleA + sampleB → feedbackA + feedbackB → revisionA + revisionB → judge
+    const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, cacheOnly);
+    const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, cacheOnly);
+    if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA, need.promptId, need.outputIdxA));
+    if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB, need.promptId, need.outputIdxB));
+    if (!sampleA || !sampleB) return;
 
-      const fbA = await this.ensureFeedback(fbModelCfg, sampleA, prompt, cacheOnly);
-      const fbB = await this.ensureFeedback(fbModelCfg, sampleB, prompt, cacheOnly);
-      if (!fbA) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.modelA, need.promptId, need.outputIdxA));
-      if (!fbB) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.modelB, need.promptId, need.outputIdxB));
-      if (!fbA || !fbB) return;
+    const fbA = await this.ensureFeedback(fbModelCfg, sampleA, prompt, cacheOnly);
+    const fbB = await this.ensureFeedback(fbModelCfg, sampleB, prompt, cacheOnly);
+    if (!fbA) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.modelA, need.promptId, need.outputIdxA));
+    if (!fbB) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.modelB, need.promptId, need.outputIdxB));
+    if (!fbA || !fbB) return;
 
-      const revA = await this.ensureRevision(modelACfg, sampleA, fbA, prompt, cacheOnly);
-      const revB = await this.ensureRevision(modelBCfg, sampleB, fbB, prompt, cacheOnly);
-      if (!revA) this.completedWork.missingRevisions.add(revisionKey(need.modelA, need.feedbackModel, need.promptId, need.outputIdxA));
-      if (!revB) this.completedWork.missingRevisions.add(revisionKey(need.modelB, need.feedbackModel, need.promptId, need.outputIdxB));
-      if (!revA || !revB) return;
+    const revA = await this.ensureRevision(modelACfg, sampleA, fbA, prompt, cacheOnly);
+    const revB = await this.ensureRevision(modelBCfg, sampleB, fbB, prompt, cacheOnly);
+    if (!revA) this.completedWork.missingRevisions.add(revisionKey(need.modelA, need.feedbackModel, need.promptId, need.outputIdxA));
+    if (!revB) this.completedWork.missingRevisions.add(revisionKey(need.modelB, need.feedbackModel, need.promptId, need.outputIdxB));
+    if (!revA || !revB) return;
 
-      const tk = judgmentGroupKey(need.modelA, need.modelB, `${need.promptId}:${need.feedbackModel}`, need.outputIdxA, need.outputIdxB);
-      const result = await this.ensureJudgment(
-        need.judgeModel, prompt, revA, revB, "revised", cacheOnly,
-      );
-      this.recordTripleResult(tripleResults, tk, result);
-    } finally {
-      this.completedWork.judgments.add(key);
-    }
+    const tk = judgmentGroupKey(need.modelA, need.modelB, `${need.promptId}:${need.feedbackModel}`, need.outputIdxA, need.outputIdxB);
+    const result = await this.ensureJudgment(
+      need.judgeModel, prompt, revA, revB, "revised", cacheOnly,
+    );
+    this.recordTripleResult(tripleResults, tk, result);
+    if (result) this.completedWork.judgments.add(key);
   }
 
   // ── Main Entry Point ──────────────────────────────
@@ -1363,6 +1372,8 @@ export class BenchmarkRunner {
   async run(): Promise<RunResult> {
     const startTime = Date.now();
     const convergence = this.config.convergence;
+    let terminationReason: RunResult["meta"]["terminationReason"] = "max_rounds";
+    this.needFairCursor = 0;
 
     // Fetch model metadata for all models (writers + judges, deduplicated)
     const allModelConfigs = new Map<string, { provider: string; model: string; label: string }>();
@@ -1397,6 +1408,8 @@ export class BenchmarkRunner {
       const J = this.judgeModels.length;
       const P = this.config.prompts.length;
       const batchSize = Math.max(W * J * P, W * W);
+      const stallPassesRequired = this.config.skipSeeding ? 2 : 1;
+      let consecutiveNoProgressRounds = 0;
 
       this.judgingRound = 0;
       while (this.judgingRound < convergence.maxRounds) {
@@ -1407,6 +1420,7 @@ export class BenchmarkRunner {
           convergence,
           this.config.models.length,
         )) {
+          terminationReason = "converged";
           break;
         }
 
@@ -1416,7 +1430,7 @@ export class BenchmarkRunner {
         // outputsPerModel is passed only as a fallback ceiling.
         const modelOutputCaps = this.computeModelOutputCaps();
 
-        const { needs, ratingMap } = identifyNeeds(
+        const { needs, ratingMap, fairCursor } = identifyNeeds(
           this.writingWhr.ratings,
           this.revisedWhr.ratings,
           this.feedbackWhr.ratings,
@@ -1429,9 +1443,14 @@ export class BenchmarkRunner {
           this.config.outputsPerModel,
           this.judgeQuality,
           modelOutputCaps,
+          this.needFairCursor,
         );
+        this.needFairCursor = fairCursor;
 
-        if (needs.length === 0) break; // exhausted all possible work
+        if (needs.length === 0) {
+          terminationReason = "exhausted";
+          break;
+        }
 
         this.currentRatingMap = ratingMap;
         this.currentBatchSummary = formatBatchSummary(needs);
@@ -1472,6 +1491,9 @@ export class BenchmarkRunner {
                 this.emitProgress(`${model}: ${reason}`);
               }
               this.suspendedModels.add(model);
+              const taskError = extractTaskError(err, model);
+              this.taskErrors.push(taskError);
+              this.emit({ type: "error", data: taskError });
             } else {
               // Other errors: record as TaskError with full details
               const taskError = extractTaskError(err, primary);
@@ -1498,6 +1520,7 @@ export class BenchmarkRunner {
         // Cache-miss-only rounds are free -- just pruning the candidate space.
         // Include ops from both batch fulfillment and opportunistic discovery.
         if (this.opsDone > opsBefore) {
+          consecutiveNoProgressRounds = 0;
           this.judgingRound++;
           try {
             this.recomputeJudgeQuality();
@@ -1517,7 +1540,18 @@ export class BenchmarkRunner {
         // unproductive round proves nothing remains. With --skip-seeding,
         // lazy discovery in fulfillNeed finds what it can on the first
         // pass; a second unproductive round confirms exhaustion.
-        if (this.opsDone === opsBefore) break;
+        if (this.opsDone === opsBefore) {
+          consecutiveNoProgressRounds++;
+          if (consecutiveNoProgressRounds >= stallPassesRequired) {
+            terminationReason = "stalled";
+            break;
+          }
+        }
+      }
+
+      if (terminationReason === "max_rounds"
+        && this.judgingRound >= convergence.maxRounds) {
+        terminationReason = "max_rounds";
       }
     }
 
@@ -1607,6 +1641,9 @@ export class BenchmarkRunner {
         costByModelByStage: structuredClone(this.costByModelByStage),
         speedByModel: this.computeSpeedByModel(),
         durationMs,
+        terminationReason,
+        converged: terminationReason === "converged",
+        roundsCompleted: this.judgingRound,
         errors: this.taskErrors.length > 0 ? [...this.taskErrors] : undefined,
       },
       modelInfo: this.modelInfoMap,
@@ -1701,6 +1738,7 @@ export class BenchmarkRunner {
     return {
       id: nanoid(),
       model: modelCfg.label,
+      registryId: modelCfg.registryId,
       promptId: prompt.id,
       outputIndex,
       text,
@@ -1764,6 +1802,7 @@ Please provide your detailed feedback.`;
     return {
       id: nanoid(),
       sourceModel: feedbackModelCfg.label,
+      sourceRegistryId: feedbackModelCfg.registryId,
       targetSampleId: sample.id,
       text,
       usage,
@@ -1827,6 +1866,7 @@ Please write an improved version incorporating this feedback.`;
     return {
       id: nanoid(),
       model: writerCfg.label,
+      registryId: writerCfg.registryId,
       promptId: prompt.id,
       outputIndex: original.outputIndex,
       text,
@@ -1834,6 +1874,7 @@ Please write an improved version incorporating this feedback.`;
       originalSampleId: original.id,
       feedbackUsed: feedback.id,
       feedbackModel: feedback.sourceModel,
+      feedbackRegistryId: feedback.sourceRegistryId,
       usage,
       cost,
       latencyMs,

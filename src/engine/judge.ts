@@ -2,7 +2,7 @@ import { generateObject, streamText } from "ai";
 import { z } from "zod";
 import { resolveModel } from "../providers/registry.js";
 import { apiModelId } from "../config.js";
-import { withRetry, isRetryable, isProviderError, MalformedOutputError, safeStreamText } from "./retry.js";
+import { withRetry, isRetryable, isProviderError, MalformedOutputError, OutputTruncatedError, safeStreamText } from "./retry.js";
 import { resolveTemperature } from "./model-utils.js";
 import {
   extractUsage,
@@ -189,6 +189,9 @@ export async function judgePair(
         maxRetries: 0,
         ...handler,
       }));
+      if ((await result.finishReason) === "length") {
+        throw new OutputTruncatedError();
+      }
       usage = extractUsage(await result.usage);
       cost = calculateCost(modelInfo, usage);
 
@@ -223,6 +226,7 @@ export async function judgePair(
   return {
     id: nanoid(),
     judgeModel: judgeConfig.label,
+    judgeRegistryId: judgeConfig.registryId,
     promptId: prompt.id,
     sampleA: sampleA.id,
     sampleB: sampleB.id,

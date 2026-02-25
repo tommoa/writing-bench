@@ -20,7 +20,7 @@ Before making any API calls, the runner exhaustively scans the disk cache and lo
 
 ### Phase 2: Adaptive Pull Loop
 
-The system iterates: compute [Whole History Rating](https://www.remi-coulom.fr/WHR/WHR.pdf) with confidence intervals → identify the model pair and judgment type whose data would most reduce uncertainty → generate only that work → repeat until convergence. By default, convergence requires that no model's CI overlaps any other model's CI across all three rating dimensions. Use `--confidence N` to instead converge when all CIs are below $\pm N$ Elo points.
+The system iterates: compute [Whole History Rating](https://www.remi-coulom.fr/WHR/WHR.pdf) with confidence intervals → identify the model pair and judgment type whose data would most reduce uncertainty → generate only that work → repeat until convergence. By default, convergence requires that no model's CI overlaps any other model's CI across all three rating dimensions. With `--confidence N`, a model is also considered settled when its CI is below $\pm N$ Elo points; overlap-free models can still settle early.
 
 When a judgment is needed, the system cascades through dependencies automatically. For example, requesting an improvement judgment triggers writing the initial sample, generating feedback, and producing the revision if any of those are missing. This ensure-cascade pattern means the system only creates artifacts that are actually needed to reduce rating uncertainty.
 
@@ -36,7 +36,7 @@ The need identifier scores candidate judgments by expected information gain:
 
 $$\text{score} = \frac{(\sigma_A^2 + \sigma_B^2) \cdot p \cdot (1-p)}{1+N}$$
 
-where $\sigma$ is each model's CI half-width, $p$ is the predicted win probability, and $N$ is the maximum output index in the comparison. Pairs with high uncertainty and close predicted strength score highest. Improvement and revised judgments receive cascade cost discounts (0.25 and 0.2 respectively) since they require additional prerequisite API calls. The depth penalty $\frac{1}{1+N}$ ensures breadth-first exploration: all prompts are covered at each output index before the system generates additional outputs for any single prompt.
+where $\sigma$ is each model's CI half-width, $p$ is the predicted win probability, and $N$ is the maximum output index in the comparison. Pairs with high uncertainty and close predicted strength score highest. Improvement and revised judgments are divided by dynamic cascade costs (feedback and revision prerequisite work) scaled by configurable dimension weights (`--feedback-weight`, `--revised-weight`). The depth penalty $\frac{1}{1+N}$ ensures breadth-first exploration: all prompts are covered at each output index before the system generates additional outputs for any single prompt.
 
 ## Whole History Rating System
 
@@ -93,6 +93,8 @@ Each prompt has genre tags (e.g. "speech", "theological", "creative"). Per-tag r
 ## Cumulative Ratings
 
 Ratings accumulate across multiple benchmark runs. The cumulative system uses the same WHR algorithm as per-run ratings, storing pairwise records: for each pair of models, the total number of wins for each side and ties.
+
+To avoid double-counting cached replays while still preserving genuinely new evidence, cumulative ingestion deduplicates judgments using stable identities (judge registry identity + stage + semantic sample identity) where each sample identity includes model identity, prompt, stage, output index, and a hash of sample text. This means rerunning the same cached artifacts does not inflate ratings, but fresh generations at the same output slot are still counted when the text differs.
 
 When a new run completes, its pairwise outcomes are merged with the existing accumulated records. Ratings are then recomputed from scratch using WHR on the full merged dataset. This means the order in which runs are processed does not affect the final ratings.
 

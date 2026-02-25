@@ -51,7 +51,11 @@ export interface CompletedWork {
   missingFeedback: Set<string>;
   /** Missing revisions: "writerModel:fbModel:promptId:outputIndex" */
   missingRevisions: Set<string>;
-  /** Missing judgments: "modelA:modelB:promptId:idxA:idxB" (models sorted). All judges missed. */
+  /** Missing judgments:
+   *  - initial/revised: "modelA:modelB:promptId:idxA:idxB" (models sorted)
+   *  - improvement: "writer:feedbackModel:promptId:outputIdx" (asymmetric)
+   *  All judges missed.
+   */
   missingJudgments: Set<string>;
   /** Existing feedback artifacts (feedbackKey format). Used for cascade cost estimation. */
   existingFeedback: Set<string>;
@@ -200,6 +204,16 @@ export function judgmentGroupKey(modelA: string, modelB: string, promptId: strin
     : `${modelB}:${modelA}:${promptId}:${outputIdxB}:${outputIdxA}`;
 }
 
+/** Build an asymmetric improvement judgment group key. */
+export function improvementJudgmentGroupKey(
+  writerModel: string,
+  feedbackModel: string,
+  promptId: string,
+  outputIdx: number,
+): string {
+  return `${writerModel}:${feedbackModel}:${promptId}:${outputIdx}`;
+}
+
 /**
  * Check whether a model's cascade (sample → feedback → revision) is
  * known-broken for a given prompt and output index.
@@ -345,7 +359,8 @@ export function identifyNeeds(
   outputsPerModel: number,
   judgeQuality?: JudgeQualityData,
   modelOutputCaps?: Map<string, number>,
-): { needs: Need[]; ratingMap: Map<string, WhrRating> } {
+  fairCursor?: number,
+): { needs: Need[]; ratingMap: Map<string, WhrRating>; fairCursor: number } {
   const candidates: Need[] = [];
   const ratingMap = buildRatingMap(writingRatings, revisedRatings, feedbackRatings);
 
@@ -438,10 +453,20 @@ export function identifyNeeds(
             // isCascadeBroken checks sample, feedback, and revision for each side.
             const sideAMissing =
               isCascadeBroken(completedWork, writer.label, models[i].label, prompt.id, oi)
-              || completedWork.missingJudgments.has(judgmentGroupKey(writer.label, models[i].label, prompt.id, oi, 0));
+              || completedWork.missingJudgments.has(improvementJudgmentGroupKey(
+                writer.label,
+                models[i].label,
+                prompt.id,
+                oi,
+              ));
             const sideBMissing =
               isCascadeBroken(completedWork, writer.label, models[j].label, prompt.id, oi)
-              || completedWork.missingJudgments.has(judgmentGroupKey(writer.label, models[j].label, prompt.id, oi, 0));
+              || completedWork.missingJudgments.has(improvementJudgmentGroupKey(
+                writer.label,
+                models[j].label,
+                prompt.id,
+                oi,
+              ));
             if (sideAMissing && sideBMissing) continue;
 
             // Cascade cost: 1 (judgment) + uncached intermediate steps.
@@ -542,10 +567,9 @@ export function identifyNeeds(
   }
 
   // ── Dimension-proportional batch selection ─────────
-  // Split candidates by dimension, allocate batch slots proportionally
-  // to cascade weights, then select top candidates per dimension with
-  // per-pair diversification. This guarantees every unconverged dimension
-  // gets batch representation regardless of relative score magnitudes.
+  // Split candidates by dimension, allocate exact quotas fairly, then
+  // select top candidates per dimension with per-pair diversification.
+  // Output size is bounded by construction; no post-hoc truncation.
   const initialCandidates: Need[] = [];
   const improvementCandidates: Need[] = [];
   const revisedCandidates: Need[] = [];
@@ -556,55 +580,68 @@ export function identifyNeeds(
     else revisedCandidates.push(c);
   }
 
-  // Allocate slots proportionally to cascade weights, with a minimum
-  // guarantee so no dimension starves.
   const groups = [
     { candidates: initialCandidates, weight: convergence.writingWeight },
     { candidates: improvementCandidates, weight: convergence.feedbackWeight },
     { candidates: revisedCandidates, weight: convergence.revisedWeight },
   ];
   for (const g of groups) g.candidates.sort((a, b) => b.score - a.score);
-  const activeGroups = groups.filter((g) => g.candidates.length > 0);
-  const totalWeight = activeGroups.reduce((s, g) => s + g.weight, 0);
-  const minSlots = Math.min(Math.max(judgeModels.length, 2), batchSize);
+  const allocations = groups.map(() => 0);
+  const activeIndices = groups
+    .map((g, i) => (g.candidates.length > 0 ? i : -1))
+    .filter((i) => i >= 0);
+  const availableTotal = activeIndices.reduce((s, gi) => s + groups[gi].candidates.length, 0);
+  const targetTotal = Math.min(Math.max(batchSize, 0), availableTotal);
 
-  // First pass: proportional allocation capped by available candidates
-  // and the total batch size.
-  const allocations = groups.map((g) => {
-    if (g.candidates.length === 0) return 0;
-    const proportional = Math.max(
-      minSlots,
-      Math.round(batchSize * g.weight / totalWeight),
-    );
-    return Math.min(proportional, g.candidates.length);
-  });
+  let nextFairCursor = fairCursor ?? 0;
 
-  // Trim if total exceeds batchSize (can happen when minSlots pushes
-  // small groups above their proportional share).
-  let total = allocations.reduce((s, a) => s + a, 0);
-  if (total > batchSize) {
-    // Trim proportionally from the largest groups first
-    const sortedIdx = allocations
-      .map((a, i) => ({ a, i }))
-      .sort((x, y) => y.a - x.a);
-    for (const { i } of sortedIdx) {
-      if (total <= batchSize) break;
-      const trim = Math.min(allocations[i] - minSlots, total - batchSize);
-      if (trim > 0) {
-        allocations[i] -= trim;
-        total -= trim;
+  if (targetTotal > 0 && activeIndices.length > 0) {
+    if (targetTotal < activeIndices.length) {
+      const start = ((nextFairCursor % activeIndices.length) + activeIndices.length) % activeIndices.length;
+      for (let k = 0; k < targetTotal; k++) {
+        const gi = activeIndices[(start + k) % activeIndices.length];
+        allocations[gi] = 1;
       }
-    }
-  }
+      nextFairCursor += targetTotal;
+    } else {
+      for (const gi of activeIndices) allocations[gi] = 1;
 
-  // Second pass: redistribute surplus to groups that can use more
-  let surplus = batchSize - allocations.reduce((s, a) => s + a, 0);
-  if (surplus > 0) {
-    for (let gi = 0; gi < groups.length && surplus > 0; gi++) {
-      const extra = Math.min(surplus, groups[gi].candidates.length - allocations[gi]);
-      if (extra > 0) {
-        allocations[gi] += extra;
-        surplus -= extra;
+      let remaining = targetTotal - activeIndices.length;
+      const rooms = groups.map((g, gi) => g.candidates.length - allocations[gi]);
+
+      const rawWeights = activeIndices.map((gi) => Math.max(0, groups[gi].weight));
+      const totalWeight = rawWeights.reduce((s, w) => s + w, 0);
+      const normalizedWeights = totalWeight > 0
+        ? rawWeights.map((w) => w / totalWeight)
+        : rawWeights.map(() => 1 / activeIndices.length);
+
+      const remainders = new Map<number, number>();
+      for (let i = 0; i < activeIndices.length; i++) {
+        const gi = activeIndices[i];
+        const raw = remaining * normalizedWeights[i];
+        const base = Math.min(Math.floor(raw), rooms[gi]);
+        allocations[gi] += base;
+        rooms[gi] -= base;
+        remainders.set(gi, raw - Math.floor(raw));
+      }
+
+      remaining = targetTotal - allocations.reduce((s, a) => s + a, 0);
+      while (remaining > 0) {
+        const candidatesWithRoom = activeIndices.filter((gi) => rooms[gi] > 0);
+        if (candidatesWithRoom.length === 0) break;
+
+        candidatesWithRoom.sort((a, b) => {
+          const ra = remainders.get(a) ?? 0;
+          const rb = remainders.get(b) ?? 0;
+          if (rb !== ra) return rb - ra;
+          return a - b;
+        });
+
+        const pick = candidatesWithRoom[0];
+        allocations[pick]++;
+        rooms[pick]--;
+        remainders.set(pick, -1);
+        remaining--;
       }
     }
   }
@@ -618,6 +655,8 @@ export function identifyNeeds(
   // multiple player pairs instead of concentrating on one.
   const selected: Need[] = [];
   for (let gi = 0; gi < groups.length; gi++) {
+    if (allocations[gi] <= 0) continue;
+
     // Compute per-group maxPerPair based on unique player pairs
     const pairKeys = new Set<string>();
     for (const c of groups[gi].candidates) {
@@ -641,6 +680,16 @@ export function identifyNeeds(
       pairCount.set(pk, count + 1);
       groupSelected++;
     }
+
+    // Backfill if diversification limits prevented filling the quota.
+    if (groupSelected < allocations[gi]) {
+      for (const candidate of groups[gi].candidates) {
+        if (groupSelected >= allocations[gi]) break;
+        if (selected.includes(candidate)) continue;
+        selected.push(candidate);
+        groupSelected++;
+      }
+    }
   }
 
   // ── Interleave by model for load spreading ────────
@@ -649,7 +698,7 @@ export function identifyNeeds(
   // needs retain their score-descending order. This ensures the batch
   // hits different models early instead of saturating one model's
   // concurrency gate before touching others.
-  return { needs: interleaveByModel(selected), ratingMap };
+  return { needs: interleaveByModel(selected), ratingMap, fairCursor: nextFairCursor };
 }
 
 /**

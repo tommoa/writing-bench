@@ -4,6 +4,7 @@ import {
   isConverged,
   judgmentKey,
   judgmentGroupKey,
+  improvementJudgmentGroupKey,
   emptyCompletedWork,
   formatNeedDescription,
   formatBatchSummary,
@@ -23,6 +24,12 @@ function identifyNeeds(
   ...args: Parameters<typeof identifyNeedsRaw>
 ): Need[] {
   return identifyNeedsRaw(...args).needs;
+}
+
+function identifyNeedsWithState(
+  ...args: Parameters<typeof identifyNeedsRaw>
+): ReturnType<typeof identifyNeedsRaw> {
+  return identifyNeedsRaw(...args);
 }
 
 describe("identifyNeeds", () => {
@@ -569,7 +576,7 @@ describe("missing-artifact pruning", () => {
     ];
     // Missing judgment group for writer=modelA, feedbackModel=modelA on p1
     const work = workWith({
-      missingJudgments: new Set([judgmentGroupKey("modelA", "modelA", "p1", 0, 0)]),
+      missingJudgments: new Set([improvementJudgmentGroupKey("modelA", "modelA", "p1", 0)]),
     });
     const needs = identifyNeeds(
       convergedRatings(2), convergedRatings(2), ratings,
@@ -582,6 +589,26 @@ describe("missing-artifact pruning", () => {
         && n.writer === "modelA" && n.feedbackModel === "modelA",
     );
     expect(pruned).toHaveLength(0);
+  });
+
+  it("does not prune opposite writer-feedback direction for improvement", () => {
+    const ratings = [
+      makeWhrRating("modelA", 1500, 200, 3),
+      makeWhrRating("modelB", 1500, 200, 3),
+    ];
+    const work = workWith({
+      missingJudgments: new Set([improvementJudgmentGroupKey("modelA", "modelB", "p1", 0)]),
+    });
+    const needs = identifyNeeds(
+      convergedRatings(2), convergedRatings(2), ratings,
+      work, twoModels(), oneJudge(), onePrompt(),
+      DEFAULT_CONVERGENCE, 100, 1,
+    );
+    const opposite = needs.filter(
+      (n) => n.type === "improvement_judgment"
+        && n.writer === "modelB" && n.feedbackModel === "modelA",
+    );
+    expect(opposite.length).toBeGreaterThan(0);
   });
 
   it("skips revised judgments when all judges missed the judgment group", () => {
@@ -1236,6 +1263,149 @@ describe("batch dimension coverage", () => {
     expect(initialCount).toBeGreaterThan(improvementCount);
     // Writing (1.0) should get more slots than revised (0.4)
     expect(initialCount).toBeGreaterThan(revisedCount);
+  });
+
+  it("never returns more needs than batch size", () => {
+    const emptyRatings: WhrRating[] = [];
+    const models = Array.from({ length: 6 }, (_, i) =>
+      makeModel(`model${String.fromCharCode(65 + i)}`),
+    );
+    const judges = Array.from({ length: 5 }, (_, i) => makeModel(`judge${i}`));
+    const prompts = [makePrompt("p1"), makePrompt("p2")];
+    const batchSize = 7;
+
+    const needs = identifyNeeds(
+      emptyRatings,
+      emptyRatings,
+      emptyRatings,
+      workWith(),
+      models,
+      judges,
+      prompts,
+      DEFAULT_CONVERGENCE,
+      batchSize,
+      1,
+    );
+
+    expect(needs.length).toBeLessThanOrEqual(batchSize);
+  });
+
+  it("rotates dimensions across rounds when batch is smaller than active dimensions", () => {
+    const emptyRatings: WhrRating[] = [];
+    const models = threeModels();
+    const judges = oneJudge();
+    const prompts = onePrompt();
+
+    let fairCursor = 0;
+    const seen = new Set<Need["type"]>();
+    for (let round = 0; round < 3; round++) {
+      const result = identifyNeedsWithState(
+        emptyRatings,
+        emptyRatings,
+        emptyRatings,
+        workWith(),
+        models,
+        judges,
+        prompts,
+        DEFAULT_CONVERGENCE,
+        1,
+        1,
+        undefined,
+        undefined,
+        fairCursor,
+      );
+      expect(result.needs).toHaveLength(1);
+      seen.add(result.needs[0].type);
+      fairCursor = result.fairCursor;
+    }
+
+    expect(seen.has("initial_judgment")).toBe(true);
+    expect(seen.has("improvement_judgment")).toBe(true);
+    expect(seen.has("revised_judgment")).toBe(true);
+  });
+
+  it("redistributes surplus slots when one dimension has limited candidates", () => {
+    const emptyRatings: WhrRating[] = [];
+    const models = threeModels();
+    const judges = oneJudge();
+    const prompts = onePrompt();
+
+    const allImprovementGroups = new Set<string>();
+    for (const writer of models) {
+      for (const feedback of models) {
+        if (writer.label === feedback.label) continue;
+        allImprovementGroups.add(
+          improvementJudgmentGroupKey(writer.label, feedback.label, "p1", 0),
+        );
+      }
+    }
+
+    // Leave exactly one improvement group available.
+    const keep = improvementJudgmentGroupKey("modelA", "modelB", "p1", 0);
+    allImprovementGroups.delete(keep);
+
+    const needs = identifyNeeds(
+      emptyRatings,
+      emptyRatings,
+      emptyRatings,
+      workWith({ missingJudgments: allImprovementGroups }),
+      models,
+      judges,
+      prompts,
+      DEFAULT_CONVERGENCE,
+      8,
+      1,
+    );
+
+    const improvementCount = needs.filter((n) => n.type === "improvement_judgment").length;
+    const initialCount = needs.filter((n) => n.type === "initial_judgment").length;
+    const revisedCount = needs.filter((n) => n.type === "revised_judgment").length;
+
+    expect(improvementCount).toBe(2);
+    expect(initialCount).toBe(3);
+    expect(revisedCount).toBe(3);
+    expect(needs.length).toBe(8);
+  });
+
+  it("maintains weighted ordering over repeated rounds", () => {
+    const emptyRatings: WhrRating[] = [];
+    const models = Array.from({ length: 5 }, (_, i) =>
+      makeModel(`model${String.fromCharCode(65 + i)}`),
+    );
+    const judges = [makeModel("judge0")];
+    const prompts = [makePrompt("p1"), makePrompt("p2")];
+
+    let fairCursor = 0;
+    let initialCount = 0;
+    let improvementCount = 0;
+    let revisedCount = 0;
+
+    for (let round = 0; round < 6; round++) {
+      const result = identifyNeedsWithState(
+        emptyRatings,
+        emptyRatings,
+        emptyRatings,
+        workWith(),
+        models,
+        judges,
+        prompts,
+        DEFAULT_CONVERGENCE,
+        12,
+        1,
+        undefined,
+        undefined,
+        fairCursor,
+      );
+      fairCursor = result.fairCursor;
+      for (const n of result.needs) {
+        if (n.type === "initial_judgment") initialCount++;
+        else if (n.type === "improvement_judgment") improvementCount++;
+        else revisedCount++;
+      }
+    }
+
+    expect(initialCount).toBeGreaterThan(revisedCount);
+    expect(revisedCount).toBeGreaterThan(improvementCount);
   });
 
   it("covers multiple feedback model pairs in improvement needs", () => {
