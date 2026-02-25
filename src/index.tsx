@@ -1,24 +1,21 @@
 #!/usr/bin/env bun
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { join } from "path";
+import { join, dirname } from "path";
 import { rm } from "fs/promises";
 import { existsSync } from "fs";
 import { parseArgs, type Command } from "./cli.js";
-import { loadPrompts, parseModelConfigs, mergeModelEndpoints, createRunConfig, filterPrompts, resolveModelLabels } from "./config.js";
-import { BenchmarkRunner } from "./engine/runner.js";
-import { saveRun, loadRun, loadLatestRun, listRuns, deleteRunFull, listRunSummaries } from "./storage/run-store.js";
-import { updateCumulativeElo, loadCumulativeElo, rebuildCumulativeElo } from "./storage/elo-store.js";
+import { executeRun, resolveRunInputs, loadAndFilterPrompts, RunValidationError } from "./engine/run-manager.js";
+import { loadRun, loadLatestRun, listRuns, deleteRunFull, listRunSummaries } from "./storage/run-store.js";
+import { loadCumulativeElo, rebuildCumulativeElo } from "./storage/elo-store.js";
 import { exportForWeb } from "./export/web-export.js";
-import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson, reverseModelKey } from "./storage/cache-status.js";
+import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson } from "./storage/cache-status.js";
 import { modelKey, trimModelOutputs, combineModelCaches } from "./storage/sample-cache.js";
-import { safeReaddir } from "./storage/fs-utils.js";
+import { removeIfEmpty } from "./storage/fs-utils.js";
 import { parseModelSpec } from "./providers/registry.js";
-import { checkProviderEnv } from "./providers/models.js";
 import { App } from "./ui/App.js";
-import { printFinalTables } from "./ui/print-tables.js";
-import type { BenchmarkEvent, EloRating, PromptConfig, TaskError, TerminalPalette } from "./types.js";
-import { DEFAULT_CONVERGENCE, JUDGE_PRESETS } from "./types.js";
+import { printFinalTables, printEloTablePlain } from "./ui/print-tables.js";
+import type { BenchmarkEvent, TaskError, TerminalPalette, TuiRunConfig } from "./types.js";
 import { formatConvergenceTarget, formatConvergenceDescription } from "./engine/need-identifier.js";
 
 // ── TUI Setup ───────────────────────────────────────
@@ -28,6 +25,7 @@ const DEFAULT_PALETTE: TerminalPalette = {
   magenta: "#AA00AA", cyan: "#00AAAA", white: "#AAAAAA", gray: "#555555",
   brightRed: "#FF5555", brightGreen: "#55FF55", brightYellow: "#FFFF55",
   brightMagenta: "#FF55FF", brightCyan: "#55FFFF", fg: "#FFFFFF",
+  bg: "#000000",
 };
 
 /**
@@ -37,10 +35,16 @@ const DEFAULT_PALETTE: TerminalPalette = {
  */
 async function createTui() {
   const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
+    exitOnCtrlC: false,
     useAlternateScreen: true,
     useMouse: true,
     useConsole: false,
+  });
+
+  // Handle Ctrl+C: destroy the renderer (exits alternate screen) then exit.
+  process.on("SIGINT", () => {
+    renderer.destroy();
+    process.exit(0);
   });
 
   let palette: TerminalPalette;
@@ -61,6 +65,7 @@ async function createTui() {
       brightMagenta: termColors.palette[13] ?? DEFAULT_PALETTE.brightMagenta,
       brightCyan:    termColors.palette[14] ?? DEFAULT_PALETTE.brightCyan,
       fg:            termColors.defaultForeground ?? DEFAULT_PALETTE.fg,
+      bg:            termColors.defaultBackground ?? DEFAULT_PALETTE.bg,
     };
   } catch {
     palette = DEFAULT_PALETTE;
@@ -86,6 +91,54 @@ async function destroyTui(
   }
 }
 
+interface BenchmarkEventBridge {
+  subscribe: (handler: (event: BenchmarkEvent) => void) => void;
+  subscribeWarning: (handler: (message: string) => void) => void;
+  onEvent: (event: BenchmarkEvent) => void;
+  onWarning: (message: string) => void;
+}
+
+function createBenchmarkEventBridge(): BenchmarkEventBridge {
+  let eventHandler: ((event: BenchmarkEvent) => void) | null = null;
+  let warningHandler: ((message: string) => void) | null = null;
+  const pendingWarnings: string[] = [];
+
+  function subscribe(handler: (event: BenchmarkEvent) => void) {
+    eventHandler = handler;
+  }
+
+  function subscribeWarning(handler: (message: string) => void) {
+    warningHandler = handler;
+    while (pendingWarnings.length > 0) {
+      const warning = pendingWarnings.shift();
+      if (warning) {
+        warningHandler(warning);
+      }
+    }
+  }
+
+  function onEvent(event: BenchmarkEvent) {
+    if (eventHandler) {
+      eventHandler(event);
+    }
+  }
+
+  function onWarning(message: string) {
+    if (warningHandler) {
+      warningHandler(message);
+      return;
+    }
+    pendingWarnings.push(message);
+  }
+
+  return {
+    subscribe,
+    subscribeWarning,
+    onEvent,
+    onWarning,
+  };
+}
+
 // ── Helpers ─────────────────────────────────────────
 
 /** Convert a CLI model spec ("provider:model") to a cache-safe key. */
@@ -94,93 +147,52 @@ function specToKey(spec: string): string {
   return modelKey(provider, model);
 }
 
-/** Load prompts from a glob, optionally filter, and exit if none match. */
-async function loadAndFilterPrompts(
-  glob: string,
-  filter?: string[]
-): Promise<PromptConfig[]> {
-  let prompts = await loadPrompts(glob);
-  if (filter && filter.length > 0) {
-    const before = prompts.length;
-    prompts = filterPrompts(prompts, filter);
-    if (prompts.length === 0) {
-      console.error(`No prompts matched filter: ${filter.join(", ")}`);
-      process.exit(1);
-    }
-    if (prompts.length < before) {
-      console.log(
-        `Filtered to ${prompts.length} prompt(s): ${prompts.map((p) => p.name).join(", ")}`
-      );
-    }
-  }
-  return prompts;
-}
-
-/** Discover model specs from the cache writes directory. */
-async function discoverModelsFromCache(): Promise<string[]> {
-  const dirs = await safeReaddir(join(process.cwd(), "data", "cache", "writes"));
-  return dirs.map(reverseModelKey).filter((s): s is string => s !== null);
+/** Convert CLI run args into a TuiRunConfig for executeRun(). */
+function cliArgsToTuiConfig(args: Extract<Command, { command: "run" }>["args"]): TuiRunConfig {
+  return {
+    models: args.models ?? [],
+    judges: args.judges ?? [],
+    prompts: args.prompts,
+    filter: args.filter ?? [],
+    outputs: args.outputs,
+    reasoning: args.reasoning,
+    noCache: args.noCache,
+    cacheOnly: args.cacheOnly,
+    skipSeeding: args.skipSeeding,
+    speed: args.speed,
+    dryRun: args.dryRun,
+    concurrency: args.concurrency,
+    confidence: args.confidence,
+    maxRounds: args.maxRounds,
+    writingWeight: args.writingWeight,
+    feedbackWeight: args.feedbackWeight,
+    revisedWeight: args.revisedWeight,
+    judgeQuality: args.judgeQuality,
+    judgeQualityMode: args.judgeQualityMode,
+    judgeSensitivity: args.judgeSensitivity,
+    judgeDecay: args.judgeDecay,
+    judgePruneThreshold: args.judgePruneThreshold,
+  };
 }
 
 async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
-  let modelSpecs = args.models;
-
-  // In cache-only mode, auto-discover models from cache if not specified
-  if (args.cacheOnly && (!modelSpecs || modelSpecs.length === 0)) {
-    modelSpecs = await discoverModelsFromCache();
-    if (modelSpecs.length === 0) {
-      console.error("No cached model data found. Nothing to analyze.");
-      process.exit(1);
-    }
-    console.log(
-      `Auto-discovered ${modelSpecs.length} model(s) from cache: ${modelSpecs.join(", ")}`
-    );
-  }
-
-  let models = parseModelConfigs(modelSpecs!);
-  let judges = args.judges?.length
-    ? parseModelConfigs(args.judges)
-    : undefined;
-
-  // Merge endpoints that alias to the same canonical model (via ~)
-  models = mergeModelEndpoints(models);
-  if (judges) judges = mergeModelEndpoints(judges);
-
-  // Resolve display names from models.dev (best-effort in cache-only mode)
-  try {
-    await resolveModelLabels(models);
-    if (judges) await resolveModelLabels(judges);
-  } catch (err) {
-    if (!args.cacheOnly) throw err; // In normal mode, propagate the error
-    // In cache-only mode, silently fall back to raw model IDs as labels
-  }
-
-  const prompts = await loadAndFilterPrompts(args.prompts, args.filter);
-
-  // Check provider env vars -- skip in cache-only mode (no API calls needed)
-  // When aliases are used, check the API provider (not the canonical one)
-  if (!args.cacheOnly) {
-    const apiProviders = new Set<string>();
-    for (const m of [...models, ...(judges ?? [])]) {
-      if (m.apiModelIds?.length) {
-        for (const apiId of m.apiModelIds) {
-          apiProviders.add(parseModelSpec(apiId).provider);
-        }
-      } else {
-        apiProviders.add(m.provider);
-      }
-    }
-    const envWarnings = await checkProviderEnv([...apiProviders]);
-    for (const warn of envWarnings) {
-      console.warn(`Warning: ${warn}`);
-    }
-  }
-
+  // Handle dry-run separately (no TUI needed)
   if (args.dryRun) {
+    const tuiConfig = cliArgsToTuiConfig(args);
+    let resolved;
+    try {
+      resolved = await resolveRunInputs(tuiConfig);
+    } catch (err: unknown) {
+      if (err instanceof RunValidationError) {
+        console.error(err.message);
+        process.exit(1);
+      }
+      throw err;
+    }
+    const { models, judges, prompts } = resolved;
     const outputsCap = args.outputs != null ? args.outputs : Infinity;
     const outputsDesc = outputsCap === Infinity ? "unlimited (adaptive)" : String(outputsCap);
     const ciThreshold = args.confidence;
-
     console.log("Dry run -- would execute:");
     console.log(`  Writers: ${models.map((m) => m.label).join(", ")}`);
     if (judges) {
@@ -192,47 +204,15 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
       console.log(`  Mode: cache-only (no API calls)`);
     } else {
       console.log(`  Convergence target: ${formatConvergenceTarget(ciThreshold)}`);
-      console.log(
-        `\n  The adaptive loop will generate outputs and judgments as needed`
-      );
+      console.log(`\n  The adaptive loop will generate outputs and judgments as needed`);
       console.log(`  until ${formatConvergenceDescription(ciThreshold)}.`);
     }
     return;
   }
 
-  // Resolve judge sensitivity preset, then allow explicit overrides.
-  const judgePreset = JUDGE_PRESETS[args.judgeSensitivity];
+  const tuiConfig = cliArgsToTuiConfig(args);
 
-  const config = createRunConfig({
-    models,
-    judges,
-    prompts,
-    outputsPerModel: args.outputs,
-    reasoning: args.reasoning,
-    noCache: args.noCache,
-    cacheOnly: args.cacheOnly,
-    skipSeeding: args.skipSeeding,
-    concurrency: args.concurrency,
-    convergence: {
-      ciThreshold: args.confidence,
-      maxRounds: args.maxRounds,
-      writingWeight: args.writingWeight,
-      feedbackWeight: args.feedbackWeight,
-      revisedWeight: args.revisedWeight,
-      judgeQuality: args.judgeQuality,
-      judgeQualityMode: args.judgeQualityMode,
-      judgeDecay: args.judgeDecay ?? judgePreset.judgeDecay,
-      judgePruneThreshold: args.judgePruneThreshold ?? judgePreset.judgePruneThreshold,
-    },
-  });
-
-  const runner = new BenchmarkRunner(config);
-
-  // Set up OpenTUI
-  let eventHandler: ((event: BenchmarkEvent) => void) | null = null;
-  const subscribe = (handler: (event: BenchmarkEvent) => void) => {
-    eventHandler = handler;
-  };
+  const bridge = createBenchmarkEventBridge();
 
   const { renderer, palette, root } = await createTui();
 
@@ -242,21 +222,21 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
   const onExit = () => { resolveExit(); };
 
   root.render(
-    <App subscribe={subscribe} showSpeed={args.speed} palette={palette} onExit={onExit} />
+    <App
+      subscribe={bridge.subscribe}
+      subscribeWarning={bridge.subscribeWarning}
+      initialBenchmarkMode="running"
+      showSpeed={args.speed}
+      palette={palette}
+      onExit={onExit}
+    />
   );
 
-  runner.on((event) => {
-    if (eventHandler) eventHandler(event);
-  });
-
   try {
-    const result = await runner.run();
-
-    // Save run
-    const path = await saveRun(result);
-
-    // Update cumulative ELO
-    await updateCumulativeElo(result);
+    const { result, savePath } = await executeRun(tuiConfig, {
+      onEvent: bridge.onEvent,
+      onWarning: bridge.onWarning,
+    });
 
     // Wait for user to press q
     await exitPromise;
@@ -264,7 +244,7 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
     await destroyTui(root, renderer);
     printFinalTables(result, palette);
 
-    console.log(`Results saved to: ${path}`);
+    console.log(`Results saved to: ${savePath}`);
     console.log(
       `Total cost: $${result.meta.totalCost.toFixed(4)}`
     );
@@ -298,7 +278,6 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
           console.log(`${pad}body: ${example.responseBody}`);
         }
         if (example.stack) {
-          // Print the first few frames after the error line
           const frames = example.stack
             .split("\n")
             .filter((l) => l.trimStart().startsWith("at "))
@@ -320,12 +299,29 @@ async function handleRun(args: Extract<Command, { command: "run" }>["args"]) {
 
 async function handleTui() {
   const { renderer, palette, root } = await createTui();
+  const bridge = createBenchmarkEventBridge();
+
+  async function startRun(tuiConfig: TuiRunConfig): Promise<void> {
+    await executeRun(tuiConfig, {
+      onEvent: bridge.onEvent,
+      onWarning: bridge.onWarning,
+    });
+  }
 
   let resolveExit: () => void;
   const exitPromise = new Promise<void>((r) => { resolveExit = r; });
   const onExit = () => { resolveExit(); };
 
-  root.render(<App subscribe={null} palette={palette} onExit={onExit} />);
+  root.render(
+    <App
+      subscribe={bridge.subscribe}
+      subscribeWarning={bridge.subscribeWarning}
+      onStartRun={startRun}
+      initialBenchmarkMode="configure"
+      palette={palette}
+      onExit={onExit}
+    />,
+  );
 
   await exitPromise;
   await destroyTui(root, renderer);
@@ -363,10 +359,10 @@ async function handleResults(
     `Duration: ${(result.meta.durationMs / 1000).toFixed(1)}s`
   );
 
-  printEloTable("Initial Writer ELO", result.elo.initial.ratings);
-  printEloTable("Revised Writer ELO", result.elo.revised.ratings);
+  printEloTablePlain("Initial Writer ELO", result.elo.initial.ratings);
+  printEloTablePlain("Revised Writer ELO", result.elo.revised.ratings);
   if (result.elo.revised.feedbackRatings) {
-    printEloTable(
+    printEloTablePlain(
       "Feedback Provider ELO",
       result.elo.revised.feedbackRatings
     );
@@ -399,9 +395,9 @@ async function handleElo(
     return;
   }
 
-  printEloTable("Cumulative Writer ELO", writingRatings);
+  printEloTablePlain("Cumulative Writer ELO", writingRatings);
   if (feedbackRatings.length > 0) {
-    printEloTable("Cumulative Feedback Provider ELO", feedbackRatings);
+    printEloTablePlain("Cumulative Feedback Provider ELO", feedbackRatings);
   }
 
   console.log(`\nLast updated: ${elo.lastUpdated}`);
@@ -547,22 +543,6 @@ async function handleServe(
   }
 }
 
-function printEloTable(title: string, ratings: EloRating[]) {
-  console.log(`\n${title}`);
-  console.log("─".repeat(50));
-  console.log(
-    `${"#".padEnd(4)}${"Model".padEnd(25)}${"ELO".padStart(6)}  ${"W/L/T".padStart(11)}`
-  );
-  console.log("─".repeat(50));
-  for (let i = 0; i < ratings.length; i++) {
-    const r = ratings[i];
-    const wlt = `${r.wins}/${r.losses}/${r.ties}`;
-    console.log(
-      `${String(i + 1).padEnd(4)}${r.model.padEnd(25)}${String(r.rating).padStart(6)}  ${wlt.padStart(11)}`
-    );
-  }
-}
-
 async function handleCacheStatus(
   args: Extract<Command, { command: "cache-status" }>["args"]
 ) {
@@ -629,6 +609,7 @@ async function handleClearCache(
       const dir = join(cacheBase, category, mk);
       if (existsSync(dir)) {
         await rm(dir, { recursive: true });
+        await removeIfEmpty(dirname(dir), join(cacheBase, category));
         console.log(`  Removed ${category}/${mk}/`);
         totalRemoved++;
       }
