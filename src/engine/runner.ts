@@ -661,7 +661,6 @@ export class BenchmarkRunner {
           this.sampleStore.set(storeKey, sample);
           this.trackOutputCount(modelCfg.label, prompt.id, outputIndex);
           this.opsDone++;
-          this.emit({ type: "sampleComplete", data: sample });
           return sample;
         }
       }
@@ -702,7 +701,6 @@ export class BenchmarkRunner {
         this.sampleStore.set(storeKey, sample);
         this.trackOutputCount(modelCfg.label, prompt.id, outputIndex);
         this.opsDone++;
-        this.emit({ type: "sampleComplete", data: sample });
         return sample;
       } finally {
         this.endStage("initialWriting");
@@ -751,7 +749,6 @@ export class BenchmarkRunner {
             feedbackKey(sourceModel.label, targetSample.model, prompt.id, targetSample.outputIndex),
           );
           this.opsDone++;
-          this.emit({ type: "feedbackComplete", data: feedback });
           return feedback;
         }
       }
@@ -792,7 +789,6 @@ export class BenchmarkRunner {
           feedbackKey(sourceModel.label, targetSample.model, prompt.id, targetSample.outputIndex),
         );
         this.opsDone++;
-        this.emit({ type: "feedbackComplete", data: feedback });
         return feedback;
       } finally {
         this.endStage("feedback");
@@ -847,7 +843,6 @@ export class BenchmarkRunner {
             revisionKey(writerCfg.label, feedback.sourceModel, prompt.id, original.outputIndex),
           );
           this.opsDone++;
-          this.emit({ type: "sampleComplete", data: revised });
           return revised;
         }
       }
@@ -889,7 +884,6 @@ export class BenchmarkRunner {
           revisionKey(writerCfg.label, feedback.sourceModel, prompt.id, original.outputIndex),
         );
         this.opsDone++;
-        this.emit({ type: "sampleComplete", data: revised });
         return revised;
       } finally {
         this.endStage("revisedWriting");
@@ -938,7 +932,6 @@ export class BenchmarkRunner {
           this.cacheStats.judgments.savedCost += cached.cost.total;
           this.addJudgment(judgment);
           this.opsDone++;
-          this.emit({ type: "judgmentComplete", data: judgment });
           this.maybeRecomputeRatings();
           this.emitProgress(`[cached] ${judgeCfg.label} judged "${prompt.name}" (${stage})`);
           return judgment;
@@ -978,7 +971,6 @@ export class BenchmarkRunner {
         this.cacheStats.judgments.fresh++;
         this.addJudgment(judgment);
         this.opsDone++;
-        this.emit({ type: "judgmentComplete", data: judgment });
         this.maybeRecomputeRatings();
         this.emitProgress(`${judgeCfg.label} judged "${prompt.name}" (${stage})`);
         return judgment;

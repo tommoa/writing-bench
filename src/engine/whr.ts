@@ -39,6 +39,11 @@ export interface WhrRating extends EloRating {
   ci95: number;
 }
 
+/** Type guard for EloRating instances that carry a ci95 field. */
+export function isWhrRating(r: EloRating): r is WhrRating {
+  return "ci95" in r && typeof (r as unknown as WhrRating).ci95 === "number";
+}
+
 /** Result of a WHR computation. */
 export interface WhrResult {
   ratings: WhrRating[];
