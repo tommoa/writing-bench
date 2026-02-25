@@ -10,7 +10,6 @@ export interface RunArgs {
   prompts: string;
   filter?: string[];
   outputs?: number;
-  resume?: string;
   dryRun: boolean;
   speed: boolean;
   reasoning: boolean;
@@ -274,10 +273,6 @@ export async function parseArgs(): Promise<Command> {
               describe:
                 "Max outputs per model per prompt (default: unlimited, adaptive)",
             })
-            .option("resume", {
-              type: "string",
-              describe: "Resume an interrupted run by ID",
-            })
             .option("dry-run", {
               type: "boolean",
               default: false,
@@ -409,7 +404,6 @@ export async function parseArgs(): Promise<Command> {
               prompts: argv.prompts,
               filter: argv.filter,
               outputs: argv.outputs != null ? Math.max(argv.outputs, 1) : undefined,
-              resume: argv.resume,
               dryRun: argv.dryRun,
               speed: argv.speed,
               reasoning: argv.reasoning,
