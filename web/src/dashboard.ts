@@ -52,6 +52,7 @@ export function renderDashboard(index: RunsIndex): void {
     "revised",
     index,
     commonEloOpts,
+    "No cumulative revised-writer judgments are available yet.",
   );
   appendCumulativeSection(
     frag,
@@ -147,13 +148,18 @@ function appendCumulativeSection(
   costStage: "initial" | "revised" | "feedback",
   index: RunsIndex,
   commonEloOpts: {
-    sortableElo: true;
+    sortableElo: boolean;
     modelFamilies: RunsIndex["modelFamilies"];
   },
+  emptyMessage?: string,
 ): void {
-  if (ratings.length === 0) return;
+  if (ratings.length === 0 && !emptyMessage) return;
   frag.appendChild(el("h2", {}, title));
   frag.appendChild(sectionDesc(description));
+  if (ratings.length === 0) {
+    frag.appendChild(el("p", { className: "muted mt-2" }, emptyMessage ?? "No ratings available."));
+    return;
+  }
   frag.appendChild(createRatingToggle({
     defaultRatings: ratings,
     alternativeRatings: index.cumulativeAlternativeRatings,
@@ -172,7 +178,7 @@ function appendTagSection(
   dimension: "initial" | "revised",
   costStage: "initial" | "revised",
   commonEloOpts: {
-    sortableElo: true;
+    sortableElo: boolean;
     modelFamilies: RunsIndex["modelFamilies"];
   },
   loadTagAlternatives: () => Promise<TagAlternatives | undefined>,

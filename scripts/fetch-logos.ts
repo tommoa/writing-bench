@@ -35,7 +35,7 @@ const FAMILY_TO_LOBE: Record<string, string> = {
   "gemini": "gemini",
   "gpt": "openai",
   "kimi": "kimi",
-  "glm": "zhipu",
+  "glm": "zai",
   "minimax": "minimax",
   "deepseek": "deepseek",
   "mistral": "mistral",

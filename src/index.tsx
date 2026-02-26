@@ -523,11 +523,22 @@ async function handleRunsDelete(
 async function handleExport(
   args: Extract<Command, { command: "export" }>["args"]
 ) {
+  console.log("Rebuilding cumulative ELO from stored runs...");
+  await rebuildCumulativeElo();
   const count = await exportForWeb(args.out);
   console.log(`Exported ${count} run(s) to ${args.out}/`);
 }
 
 async function buildWeb() {
+  // Refresh model logo asset map
+  const logosProc = Bun.spawn(
+    ["bun", "scripts/fetch-logos.ts"],
+    { stdout: "inherit", stderr: "inherit" },
+  );
+  if (await logosProc.exited !== 0) {
+    throw new Error("Logo build failed");
+  }
+
   // Generate standalone methodology.html
   const methodologyProc = Bun.spawn(
     ["bun", "web/src/build-methodology.ts"],
@@ -558,6 +569,9 @@ async function handleServe(
   // Build web viewer from TypeScript
   await buildWeb();
   console.log("Built web viewer");
+
+  console.log("Rebuilding cumulative ELO from stored runs...");
+  await rebuildCumulativeElo();
 
   // Export latest data
   const count = await exportForWeb("web/data");
