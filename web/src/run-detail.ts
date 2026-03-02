@@ -1,17 +1,15 @@
 import type { RunManifest } from "./types.js";
 import { el, $$, render, renderError, renderCostItem, formatDate, sectionDesc, SECTION_DESC } from "./helpers.js";
-import { modelLogo, buildModelFamilies } from "./model-logos.js";
-import { renderPromptSection } from "./prompt-section.js";
-import { renderJudgmentsSection } from "./judgments.js";
-import { renderJudgeQualitySection } from "./judge-quality.js";
 import { createRatingToggle } from "./rating-toggle.js";
 import { createRatingSettings } from "./rating-settings.js";
-import { clearRatingSubscribers, getJudgmentApi } from "./state.js";
+import { clearRatingSubscribers, focusJudgmentsForModel, getPromptLoadPromise, registerPromptLoadPromise, setJudgmentsSectionLoader } from "./state.js";
+
+const RUN_DETAIL_STYLESHEET_PATH = "style-run-detail.css";
 
 // ── Data fetching ───────────────────────────────────
 
-async function fetchManifest(id: string): Promise<RunManifest> {
-  const res = await fetch(`data/runs/${id}.json`);
+async function fetchManifest(id: string, signal?: AbortSignal): Promise<RunManifest> {
+  const res = await fetch(`data/runs/${id}.json`, { signal });
   if (!res.ok) throw new Error(`Run ${id} not found`);
   return res.json();
 }
@@ -47,25 +45,29 @@ export function renderRunDetail(manifest: RunManifest): void {
   }
 
   // Unified rating settings (sticky tab bar + custom panel)
-  frag.appendChild(createRatingSettings({
+  const ratingSettings = createRatingSettings({
     alternativeRatings: manifest.alternativeRatings,
     manifest,
-  }));
+  });
+  ratingSettings.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.classList.contains("tab") && target.textContent === "custom") {
+      ensureRunDetailStyles();
+    }
+  });
+  frag.appendChild(ratingSettings);
 
   // ELO tables -- per-run ratings have W/L/T instead of just match count
   const wlt = (r: { model: string; wins?: number; losses?: number; ties?: number }) =>
     r.wins != null ? `${r.wins}/${r.losses}/${r.ties}` : "-";
-
-  // Build label -> family map for logo resolution
-  const modelFamilies = buildModelFamilies(manifest.modelInfo);
 
   const eloOpts = {
     costByModelByStage: manifest.meta.costByModelByStageUncached ?? {},
     tokensByModelByStage: manifest.meta.tokensByModelByStage ?? {},
     speedByModel: manifest.meta.speedByModel,
     wlt,
-    onModelClick: (model: string) => getJudgmentApi()?.focusModel(model),
-    modelFamilies,
+    onModelClick: focusJudgmentsForModel,
   };
 
   appendRunRatingSection(
@@ -115,11 +117,21 @@ export function renderRunDetail(manifest: RunManifest): void {
     jqDetails.appendChild(jqInner);
 
     let jqLoaded = false;
-    jqDetails.addEventListener("toggle", () => {
+    jqDetails.addEventListener("toggle", async () => {
       if (!(jqDetails as HTMLDetailsElement).open || jqLoaded) return;
       jqLoaded = true;
-      const jqSection = renderJudgeQualitySection(manifest.judgeQuality!, "Judge Quality", manifest);
-      if (jqSection) jqInner.appendChild(jqSection);
+      ensureRunDetailStyles();
+
+      try {
+        const { renderJudgeQualitySection } = await import("./judge-quality.js");
+        const jqSection = renderJudgeQualitySection(manifest.judgeQuality!, "Judge Quality", manifest);
+        if (jqSection) jqInner.appendChild(jqSection);
+      } catch (e) {
+        jqLoaded = false;
+        jqInner.appendChild(
+          el("p", { className: "muted" }, `Load failed: ${errorMessage(e)}`),
+        );
+      }
     });
 
     frag.appendChild(jqDetails);
@@ -142,6 +154,7 @@ export function renderRunDetail(manifest: RunManifest): void {
       d.addEventListener("toggle", () => {
         if (!(d as HTMLDetailsElement).open || loaded) return;
         loaded = true;
+        ensureRunDetailStyles();
 
         inner.appendChild(el("h4", {}, "Initial"));
         inner.appendChild(createRatingToggle({
@@ -189,7 +202,7 @@ export function renderRunDetail(manifest: RunManifest): void {
 
   const promptSections = el("div", { id: "prompt-sections" });
   for (const prompt of manifest.config.prompts) {
-    const section = renderPromptSection(manifest, prompt, runId);
+    const section = createLazyPromptSection(manifest, prompt, runId);
     section.setAttribute("data-prompt-id", prompt.id);
     section.setAttribute("data-prompt-tags", prompt.tags.join(","));
     promptSections.appendChild(section);
@@ -216,11 +229,11 @@ export function renderRunDetail(manifest: RunManifest): void {
 
   // Judgments section
   frag.appendChild(el("h2", {}, "Judgments"));
-  frag.appendChild(renderJudgmentsSection(manifest));
+  frag.appendChild(createLazyJudgmentsSection(manifest));
 
   // Run metadata
   frag.appendChild(el("h2", {}, "Run Metadata"));
-  frag.appendChild(renderRunMetadata(manifest));
+  frag.appendChild(createLazyRunMetadataSection(manifest));
 
   render(frag);
 }
@@ -239,7 +252,6 @@ function appendRunRatingSection(
     speedByModel: RunManifest["meta"]["speedByModel"];
     wlt: (r: { model: string; wins?: number; losses?: number; ties?: number }) => string;
     onModelClick: (model: string) => void;
-    modelFamilies: Record<string, string>;
   },
 ): void {
   frag.appendChild(el("h2", {}, title));
@@ -253,21 +265,159 @@ function appendRunRatingSection(
   }).container);
 }
 
+function createLazyPromptSection(
+  manifest: RunManifest,
+  prompt: RunManifest["config"]["prompts"][number],
+  runId: string,
+): HTMLDetailsElement {
+  const details = document.createElement("details");
+  details.appendChild(el("summary", {}, `${prompt.name} (${prompt.tags.join(", ")})`));
+
+  const inner = el("div", { className: "details-content" });
+  inner.appendChild(el("p", { className: "muted small" }, prompt.description));
+  inner.appendChild(el("p", { className: "muted" }, "Expand to load."));
+  details.appendChild(inner);
+
+  let loaded = false;
+  details.addEventListener("toggle", () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+
+    const loadPromise = (async () => {
+      ensureRunDetailStyles();
+
+      try {
+        const { renderPromptSection } = await import("./prompt-section.js");
+        const fullSection = renderPromptSection(manifest, prompt, runId);
+        fullSection.setAttribute("data-prompt-id", prompt.id);
+        fullSection.setAttribute("data-prompt-tags", prompt.tags.join(","));
+        details.replaceWith(fullSection);
+
+        const fullDetails = fullSection as HTMLDetailsElement;
+        fullDetails.open = true;
+        fullDetails.dispatchEvent(new Event("toggle"));
+
+        const promptLoadPromise = getPromptLoadPromise(prompt.id);
+        if (promptLoadPromise) {
+          await promptLoadPromise;
+        }
+      } catch (e) {
+        loaded = false;
+        inner.appendChild(
+          el("p", { className: "muted" }, `Load failed: ${errorMessage(e)}`),
+        );
+      }
+    })();
+
+    registerPromptLoadPromise(prompt.id, loadPromise);
+  });
+
+  return details;
+}
+
+function createLazyJudgmentsSection(manifest: RunManifest): HTMLElement {
+  const details = el("details");
+  details.appendChild(el("summary", {}, "Judgments"));
+
+  const inner = el("div", { className: "details-content" });
+  inner.appendChild(el("p", { className: "muted" }, "Expand to load."));
+  details.appendChild(inner);
+
+  let loaded = false;
+  let loadPromise: Promise<void> | undefined;
+  setJudgmentsSectionLoader({
+    open: () => {
+      if (!(details as HTMLDetailsElement).open) {
+        (details as HTMLDetailsElement).open = true;
+        details.dispatchEvent(new Event("toggle"));
+      }
+    },
+    getLoadPromise: () => loadPromise,
+  });
+  details.addEventListener("toggle", () => {
+    if (!(details as HTMLDetailsElement).open || loaded) return;
+    loaded = true;
+    ensureRunDetailStyles();
+
+    loadPromise = (async () => {
+      inner.replaceChildren(el("p", { className: "muted" }, "Loading..."));
+      try {
+        const { renderJudgmentsSection } = await import("./judgments.js");
+        inner.replaceChildren(renderJudgmentsSection(manifest));
+      } catch (e) {
+        loaded = false;
+        inner.replaceChildren(
+          el("p", { className: "muted" }, `Load failed: ${errorMessage(e)}`),
+        );
+      }
+    })();
+
+  });
+
+  return details;
+}
+
+function createLazyRunMetadataSection(manifest: RunManifest): HTMLElement {
+  const details = el("details");
+  details.appendChild(el("summary", {}, "Metadata"));
+
+  const inner = el("div", { className: "details-content" });
+  inner.appendChild(el("p", { className: "muted" }, "Expand to load."));
+  details.appendChild(inner);
+
+  let loaded = false;
+  details.addEventListener("toggle", async () => {
+    if (!(details as HTMLDetailsElement).open || loaded) return;
+    loaded = true;
+    ensureRunDetailStyles();
+    inner.replaceChildren(el("p", { className: "muted" }, "Loading..."));
+    try {
+      const { modelLogo } = await import("./model-logos.js");
+      inner.replaceChildren(renderRunMetadata(manifest, modelLogo));
+    } catch (e) {
+      loaded = false;
+      inner.replaceChildren(
+        el("p", { className: "muted" }, `Load failed: ${errorMessage(e)}`),
+      );
+    }
+  });
+
+  return details;
+}
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+function ensureRunDetailStyles(): void {
+  if (document.getElementById("run-detail-css")) return;
+  const link = document.createElement("link");
+  link.id = "run-detail-css";
+  link.rel = "stylesheet";
+  link.href = RUN_DETAIL_STYLESHEET_PATH;
+  document.head.appendChild(link);
+}
+
 // ── Run Detail Page (with loading state) ────────────
 
-export async function renderRunDetailPage(id: string): Promise<void> {
+export async function renderRunDetailPage(id: string, signal?: AbortSignal): Promise<void> {
   render(`<div id="loading">loading run...</div>`);
   try {
-    const manifest = await fetchManifest(id);
+    const manifest = await fetchManifest(id, signal);
+    if (signal?.aborted) return;
     renderRunDetail(manifest);
   } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") return;
     renderError(e instanceof Error ? e.message : String(e));
   }
 }
 
 // ── Run Metadata ────────────────────────────────────
 
-function renderRunMetadata(manifest: RunManifest): HTMLElement {
+function renderRunMetadata(
+  manifest: RunManifest,
+  modelLogoFn: (family: string | undefined, size?: number) => HTMLElement | null,
+): HTMLElement {
   const container = el("div");
 
   const costGrid = el("div", { className: "cost-grid" });
@@ -300,7 +450,7 @@ function renderRunMetadata(manifest: RunManifest): HTMLElement {
     container.appendChild(el("h3", {}, "Models"));
     const cards = el("div", { className: "model-cards" });
     for (const [label, info] of Object.entries(manifest.modelInfo)) {
-      const logo = modelLogo(info.family, 24);
+      const logo = modelLogoFn(info.family, 24);
       cards.appendChild(
         el(
           "div",

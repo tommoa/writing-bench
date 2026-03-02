@@ -6,6 +6,12 @@ data/elo.json
 data/models-cache.json
 
 web/app.js
+web/dashboard.js
+web/run-detail.js
+web/chunk-*.js
+web/style-base.css
+web/style-run-detail.css
+web/style-methodology.css
 web/methodology.html
 web/data/**/*.gz
 

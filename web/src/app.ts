@@ -1,9 +1,6 @@
 import type { RunsIndex } from "./types.js";
 import { $$, renderError } from "./helpers.js";
 import { state, setJudgmentApi } from "./state.js";
-import { renderDashboard, renderRunsPage } from "./dashboard.js";
-import { renderRunDetailPage } from "./run-detail.js";
-import { resetLogoUids } from "./model-logos.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -31,10 +28,17 @@ async function fetchIndex(): Promise<RunsIndex> {
 
 // ── Routing ─────────────────────────────────────────
 
-function route(): void {
+let currentRouteToken = 0;
+let currentAbort: AbortController | null = null;
+
+async function route(): Promise<void> {
+  const token = ++currentRouteToken;
+  currentAbort?.abort();
+  currentAbort = new AbortController();
+  const signal = currentAbort.signal;
+
   const { page, id } = getPage();
   setJudgmentApi(null);
-  resetLogoUids();
 
   $$(".nav a").forEach((a) => {
     const dataPage = a.getAttribute("data-page");
@@ -44,15 +48,25 @@ function route(): void {
   });
 
   switch (page) {
-    case "dashboard":
+    case "dashboard": {
+      const { renderDashboard } = await import("./dashboard.js");
+      if (token !== currentRouteToken) return;
       renderDashboard(state.index!);
       break;
-    case "runs":
+    }
+    case "runs": {
+      const { renderRunsPage } = await import("./dashboard.js");
+      if (token !== currentRouteToken) return;
       renderRunsPage(state.index!);
       break;
-    case "run":
-      renderRunDetailPage(id!);
+    }
+    case "run": {
+      const { renderRunDetailPage } = await import("./run-detail.js");
+      if (token !== currentRouteToken) return;
+      await renderRunDetailPage(id!, signal);
+      if (token !== currentRouteToken) return;
       break;
+    }
   }
 }
 
@@ -63,10 +77,12 @@ async function init(): Promise<void> {
     a.addEventListener("click", (e) => {
       e.preventDefault();
       history.pushState(null, "", a.getAttribute("href"));
-      route();
+      void route();
     });
   });
-  window.addEventListener("popstate", route);
+  window.addEventListener("popstate", () => {
+    void route();
+  });
 
   try {
     state.index = await fetchIndex();
@@ -75,7 +91,7 @@ async function init(): Promise<void> {
     return;
   }
 
-  route();
+  await route();
 }
 
 init();

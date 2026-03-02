@@ -11,7 +11,7 @@
     "test": "bun test",
     "export": "bun run src/index.tsx export",
     "build:logos": "bun scripts/fetch-logos.ts",
-    "build:web": "bun web/src/build-methodology.ts && bun build web/src/app.ts --outdir web --target browser --minify"
+    "build:web": "bun web/src/build-methodology.ts && bun build web/src/app.ts web/src/dashboard.ts web/src/run-detail.ts --outdir web --target browser --minify --splitting --format esm --entry-naming [name].js --chunk-naming chunk-[hash].js && bun build web/src/style-base.css web/src/style-methodology.css web/src/style-run-detail.css --outdir web --target browser --minify"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.44",

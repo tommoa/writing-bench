@@ -1,8 +1,8 @@
 import type { RunsIndex, RunIndexEntry, TagAlternatives } from "./types.js";
 import { el, render, formatDate, sectionDesc, SECTION_DESC } from "./helpers.js";
 import { modelLogo } from "./model-logos.js";
-import { renderJudgeQualitySection } from "./judge-quality.js";
-import { createRatingToggle } from "./rating-toggle.js";
+import { renderDashboardJudgeQualitySection } from "./judge-quality-dashboard.js";
+import { createDashboardRatingToggle } from "./rating-toggle-dashboard.js";
 import { createRatingSettings } from "./rating-settings.js";
 import { clearRatingSubscribers, fetchTagAlternatives } from "./state.js";
 
@@ -31,6 +31,7 @@ export function renderDashboard(index: RunsIndex): void {
   const commonEloOpts = {
     sortableElo: true,
     modelFamilies: index.modelFamilies,
+    renderModelLogo: modelLogo,
   };
 
   appendCumulativeSection(
@@ -78,7 +79,7 @@ export function renderDashboard(index: RunsIndex): void {
     jqDetails.addEventListener("toggle", () => {
       if (!(jqDetails as HTMLDetailsElement).open || jqLoaded) return;
       jqLoaded = true;
-      const jqSection = renderJudgeQualitySection(
+      const jqSection = renderDashboardJudgeQualitySection(
         index.cumulativeJudgeQuality!, "Cumulative Judge Quality",
       );
       if (jqSection) jqInner.appendChild(jqSection);
@@ -150,6 +151,7 @@ function appendCumulativeSection(
   commonEloOpts: {
     sortableElo: boolean;
     modelFamilies: RunsIndex["modelFamilies"];
+    renderModelLogo: typeof modelLogo;
   },
   emptyMessage?: string,
 ): void {
@@ -160,7 +162,7 @@ function appendCumulativeSection(
     frag.appendChild(el("p", { className: "muted mt-2" }, emptyMessage ?? "No ratings available."));
     return;
   }
-  frag.appendChild(createRatingToggle({
+  frag.appendChild(createDashboardRatingToggle({
     defaultRatings: ratings,
     alternativeRatings: index.cumulativeAlternativeRatings,
     dimension,
@@ -180,6 +182,7 @@ function appendTagSection(
   commonEloOpts: {
     sortableElo: boolean;
     modelFamilies: RunsIndex["modelFamilies"];
+    renderModelLogo: typeof modelLogo;
   },
   loadTagAlternatives: () => Promise<TagAlternatives | undefined>,
 ): void {
@@ -198,7 +201,7 @@ function appendTagSection(
       if (!(details as HTMLDetailsElement).open || loaded) return;
       loaded = true;
       const tagAlts = await loadTagAlternatives();
-      inner.appendChild(createRatingToggle({
+      inner.appendChild(createDashboardRatingToggle({
         defaultRatings: ratings,
         dimension,
         tagFilter: cat,

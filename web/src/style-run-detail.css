@@ -1,0 +1,519 @@
+.output-text {
+  background: var(--surface);
+  white-space: pre-wrap;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-height: 500px;
+  padding: 1.5em;
+  font-size: 0.95em;
+  line-height: 1.8;
+}
+.feedback-text {
+  background: var(--surface);
+  border-left: 3px solid var(--header);
+  white-space: pre-wrap;
+  border-radius: 4px;
+  margin: 0.5em 0;
+  padding: 1em;
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+.feedback-source {
+  color: var(--header);
+  margin-bottom: 0.5em;
+  font-weight: 700;
+}
+.judgment-filters {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em;
+  margin-bottom: 1em;
+  padding: 0.75em;
+}
+.revision-nested {
+  border-left: 3px solid var(--blue);
+  background: var(--bg);
+  border-radius: 0 4px 4px 0;
+  margin-top: 0.75em;
+  padding: 0.75em;
+}
+.view-judgments-btn {
+  display: inline-block;
+  color: var(--blue);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: 0 0;
+  border-radius: 3px;
+  margin-top: 0.5em;
+  padding: 0.3em 0.8em;
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+  font-family: inherit;
+  font-size: 0.85em;
+}
+.view-judgments-btn:hover {
+  border-color: var(--blue);
+  color: var(--accent);
+}
+.sample-filter-badge {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--blue);
+  border-radius: 4px;
+  align-items: center;
+  gap: 0.75em;
+  margin-bottom: 0.75em;
+  padding: 0.5em 0.75em;
+  font-size: 0.9em;
+}
+.badge-clear {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--comment);
+  cursor: pointer;
+  background: 0 0;
+  border: none;
+  padding: 0.2em 0.4em;
+}
+.badge-clear:hover {
+  color: var(--accent);
+}
+.h2h-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 1em;
+  padding: 0.75em 1em;
+}
+.h2h-record {
+  font-size: 1.1em;
+}
+.h2h-model {
+  color: var(--accent);
+  font-weight: 700;
+}
+.h2h-wins {
+  color: var(--green);
+  font-weight: 700;
+}
+.h2h-losses {
+  color: var(--accent);
+  font-weight: 700;
+}
+.h2h-ties {
+  color: var(--comment);
+  font-weight: 700;
+}
+.judgment {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--comment);
+  border-radius: 4px;
+  margin: 0.5em 0;
+  padding: 0.75em;
+}
+.judgment-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5em;
+  margin-bottom: 0.3em;
+  font-size: 0.85em;
+}
+.judgment-stage {
+  color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 15%, transparent);
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+  font-size: 0.9em;
+  font-weight: 700;
+}
+.judgment-judge {
+  color: var(--comment);
+  margin-left: auto;
+  font-size: 0.9em;
+}
+.judgment-filter-link {
+  display: inline-flex;
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--comment);
+  cursor: pointer;
+  align-items: center;
+  transition:
+    border-bottom-color 0.35s,
+    color 0.35s;
+}
+.judgment-filter-link:hover {
+  border-bottom-color: var(--accent);
+}
+.judgment-filter-link.side-a {
+  color: var(--side-a);
+}
+.judgment-filter-link.side-b {
+  color: var(--side-b);
+}
+.judgment-matchup {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  padding-left: 0.25em;
+}
+.judgment-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1em;
+}
+.judgment-body-right {
+  text-align: right;
+  flex-shrink: 0;
+}
+.judgment-result {
+  margin-top: 0;
+}
+.judgment-winner {
+  font-weight: 700;
+}
+.judgment-winner.a {
+  color: var(--side-a);
+}
+.judgment-winner.b {
+  color: var(--side-b);
+}
+.judgment-winner.tie {
+  color: var(--comment);
+}
+.judgment-reasoning {
+  color: var(--comment);
+  margin-top: 0.25em;
+  font-size: 0.9em;
+}
+.judgment-reasoning.hidden {
+  display: none;
+}
+.judgment-action {
+  color: var(--comment);
+  cursor: pointer;
+  background: 0 0;
+  border: none;
+  padding: 0;
+  transition: color 0.35s;
+  font-family: inherit;
+  font-size: 0.75em;
+}
+.judgment-matchup-item {
+  display: inline-flex;
+  flex-direction: column;
+}
+.judgment-vs {
+  align-items: center;
+}
+.view-output-link {
+  color: var(--comment);
+  text-decoration: none;
+  cursor: pointer;
+  border-bottom: 1px dashed #0000;
+  align-self: start;
+  transition:
+    border-bottom-color 0.35s,
+    color 0.35s;
+  font-size: 0.75em;
+}
+.view-output-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.judgment-action:hover {
+  color: var(--accent);
+}
+.judgment.winner-a {
+  border-left-color: var(--side-a);
+}
+.judgment.winner-b {
+  border-left-color: var(--side-b);
+}
+.judgment-model-name {
+  font-weight: 600;
+}
+.judgment-output-idx {
+  opacity: 0.7;
+  font-size: 0.9em;
+  font-weight: 400;
+}
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 1em 0;
+}
+.pagination button {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  padding: 0.3em 0.8em;
+  font-size: 0.85em;
+}
+.pagination button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pagination button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.page-size-select {
+  margin-left: auto;
+}
+.scroll-highlight {
+  animation: highlight-fade 2s ease-out;
+}
+@keyframes highlight-fade {
+  0% {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+  }
+  to {
+    outline: 2px solid #0000;
+    outline-offset: 4px;
+  }
+}
+.model-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1em;
+  margin: 1em 0;
+}
+.model-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1em;
+}
+.model-card .name {
+  color: var(--accent);
+  font-weight: 700;
+}
+.model-card .detail {
+  color: var(--comment);
+  font-size: 0.85em;
+}
+.cost-breakdown-table td.total {
+  color: var(--green);
+  font-weight: 700;
+}
+.cost-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.75em;
+  margin: 1em 0;
+}
+.cost-item {
+  background: var(--surface);
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.75em;
+}
+.cost-item .label {
+  color: var(--comment);
+  text-transform: uppercase;
+  font-size: 0.8em;
+}
+.cost-item .value {
+  color: var(--green);
+  font-size: 1.3em;
+  font-weight: 700;
+}
+.cost-item.speed .value {
+  color: var(--cyan);
+}
+.section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1em;
+}
+.section-header h2 {
+  margin-bottom: 0;
+}
+.tabs-dropdown {
+  border-bottom: none;
+  margin-bottom: 0.5em;
+}
+.custom-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin: 0.5em 0;
+  padding: 0.75em 1em;
+}
+.custom-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 0.6em;
+  margin-bottom: 0.4em;
+}
+.custom-header:first-child {
+  margin-top: 0;
+}
+.custom-header .label {
+  color: var(--header);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.85em;
+  font-weight: 700;
+}
+.custom-header .quick-toggle {
+  color: var(--comment);
+  cursor: pointer;
+  background: 0 0;
+  border: none;
+  padding: 0;
+  transition: color 0.2s;
+  font-family: inherit;
+  font-size: 0.8em;
+}
+.custom-header .quick-toggle:hover {
+  color: var(--accent);
+}
+.custom-header .separator {
+  color: var(--border);
+  margin: 0 0.3em;
+}
+.judge-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
+  margin-bottom: 0.3em;
+}
+.judge-pill {
+  display: inline-block;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 0.2em 0.65em;
+  transition:
+    border-color 0.2s,
+    opacity 0.2s;
+  font-family: inherit;
+  font-size: 0.8em;
+}
+.judge-pill:hover {
+  border-color: var(--accent);
+}
+.judge-pill.excluded {
+  opacity: 0.4;
+  text-decoration: line-through;
+  background: 0 0;
+}
+.mode-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
+  margin-bottom: 0.3em;
+}
+.mode-pill {
+  display: inline-block;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  color: var(--comment);
+  background: 0 0;
+  border-radius: 12px;
+  padding: 0.2em 0.65em;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+  font-family: inherit;
+  font-size: 0.8em;
+}
+.mode-pill:hover {
+  border-color: var(--accent);
+}
+.mode-pill.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.decay-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  margin: 0.25em 0;
+}
+.decay-value {
+  color: var(--comment);
+  white-space: nowrap;
+  font-size: 0.85em;
+}
+.decay-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+  border-radius: 2px;
+  flex: 1;
+  height: 4px;
+}
+.decay-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--accent);
+  cursor: pointer;
+  border: none;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+}
+.decay-row input[type="range"]::-moz-range-thumb {
+  background: var(--accent);
+  cursor: pointer;
+  border: none;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+}
+.decay-row input[type="range"]::-moz-range-track {
+  background: var(--border);
+  border-radius: 2px;
+  height: 4px;
+}
+.bias-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75em;
+  margin-top: 0.6em;
+}
+.bias-pill {
+  display: inline-block;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  color: var(--comment);
+  background: 0 0;
+  border-radius: 12px;
+  padding: 0.2em 0.65em;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+  font-family: inherit;
+  font-size: 0.8em;
+}
+.bias-pill:hover {
+  border-color: var(--accent);
+}
+.bias-pill.active {
+  border-color: var(--green);
+  color: var(--green);
+}

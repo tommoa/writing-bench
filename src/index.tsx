@@ -548,18 +548,47 @@ async function buildWeb() {
     throw new Error("Methodology build failed");
   }
 
-  // Bundle app.ts → web/app.js
+  // Bundle route JS entrypoints
   const result = await Bun.build({
-    entrypoints: ["web/src/app.ts"],
+    entrypoints: [
+      "web/src/app.ts",
+      "web/src/dashboard.ts",
+      "web/src/run-detail.ts",
+    ],
     outdir: "web",
     target: "browser",
     minify: true,
+    splitting: true,
+    format: "esm",
+    naming: {
+      entry: "[name].js",
+      chunk: "chunk-[hash].js",
+      asset: "asset-[hash].[ext]",
+    },
   });
   if (!result.success) {
     for (const log of result.logs) {
       console.error(log);
     }
     throw new Error("Web build failed");
+  }
+
+  // Minify static CSS files used by the web viewer
+  const cssResult = await Bun.build({
+    entrypoints: [
+      "web/src/style-base.css",
+      "web/src/style-methodology.css",
+      "web/src/style-run-detail.css",
+    ],
+    outdir: "web",
+    target: "browser",
+    minify: true,
+  });
+  if (!cssResult.success) {
+    for (const log of cssResult.logs) {
+      console.error(log);
+    }
+    throw new Error("Web CSS minification failed");
   }
 }
 

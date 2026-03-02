@@ -3,9 +3,6 @@ import type { EloTableOpts } from "./helpers.js";
 import { el, renderEloTable, judgmentMetaToPairwise, buildSampleMaps } from "./helpers.js";
 import { getRatingState, subscribeRating } from "./state.js";
 import type { RatingMode } from "./state.js";
-import { computeJudgeQuality, computeEloBasedJudgeQuality } from "../../src/engine/judge-quality.js";
-import { computeJudgeBias, computeBiasCorrections, composeWeights } from "../../src/engine/judge-bias.js";
-import { judgmentsToGames, improvementJudgmentsToGames, whrRatings } from "../../src/engine/whr.js";
 import type { PairwiseJudgment } from "../../src/types.js";
 import { DEFAULT_CONVERGENCE } from "../../src/types.js";
 
@@ -42,6 +39,40 @@ export interface RatingToggleResult {
   container: HTMLElement;
 }
 
+interface EngineApi {
+  computeJudgeQuality: typeof import("../../src/engine/judge-quality.js").computeJudgeQuality;
+  computeEloBasedJudgeQuality: typeof import("../../src/engine/judge-quality.js").computeEloBasedJudgeQuality;
+  computeJudgeBias: typeof import("../../src/engine/judge-bias.js").computeJudgeBias;
+  computeBiasCorrections: typeof import("../../src/engine/judge-bias.js").computeBiasCorrections;
+  composeWeights: typeof import("../../src/engine/judge-bias.js").composeWeights;
+  judgmentsToGames: typeof import("../../src/engine/whr.js").judgmentsToGames;
+  improvementJudgmentsToGames: typeof import("../../src/engine/whr.js").improvementJudgmentsToGames;
+  whrRatings: typeof import("../../src/engine/whr.js").whrRatings;
+}
+
+let engineApiPromise: Promise<EngineApi> | null = null;
+
+function loadEngineApi(): Promise<EngineApi> {
+  if (engineApiPromise) return engineApiPromise;
+
+  engineApiPromise = Promise.all([
+    import("../../src/engine/judge-quality.js"),
+    import("../../src/engine/judge-bias.js"),
+    import("../../src/engine/whr.js"),
+  ]).then(([judgeQuality, judgeBias, whr]) => ({
+    computeJudgeQuality: judgeQuality.computeJudgeQuality,
+    computeEloBasedJudgeQuality: judgeQuality.computeEloBasedJudgeQuality,
+    computeJudgeBias: judgeBias.computeJudgeBias,
+    computeBiasCorrections: judgeBias.computeBiasCorrections,
+    composeWeights: judgeBias.composeWeights,
+    judgmentsToGames: whr.judgmentsToGames,
+    improvementJudgmentsToGames: whr.improvementJudgmentsToGames,
+    whrRatings: whr.whrRatings,
+  }));
+
+  return engineApiPromise;
+}
+
 // ── Rating Toggle (managed table) ───────────────────
 
 /**
@@ -69,6 +100,7 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
   }
 
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let renderSeq = 0;
 
   // ── Build a model -> default rating lookup for metadata carry-over ──
   // Cost/token data is per-model and independent of rating weights, so
@@ -95,7 +127,7 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
 
   // ── Get ratings for current mode ──
 
-  function getRatings(): RatingLike[] {
+  async function getRatings(): Promise<RatingLike[]> {
     const state = getRatingState();
 
     if (state.ratingMode === "default") {
@@ -105,7 +137,7 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
     // Per-tag tables: client-side computation (run-detail) or
     // pre-computed lookup (dashboard)
     if (config.tagFilter) {
-      return enrichRatings(getTagRatings(state.ratingMode));
+      return enrichRatings(await getTagRatings(state.ratingMode));
     }
 
     // Main tables: pre-computed alternatives
@@ -118,13 +150,13 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
       case "noBiasCorrection":
         return enrichRatings(alt.noBiasCorrection[dim] ?? config.defaultRatings);
       case "custom":
-        return enrichRatings(computeClientSideRatings("custom"));
+        return enrichRatings(await computeClientSideRatings("custom"));
     }
   }
 
   // ── Per-tag ratings ──
 
-  function getTagRatings(mode: RatingMode): RatingLike[] {
+  async function getTagRatings(mode: RatingMode): Promise<RatingLike[]> {
     // Dashboard path: look up pre-computed tag alternatives
     if (config.tagAlternatives && !config.manifest) {
       const tag = config.tagFilter!;
@@ -148,9 +180,11 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
   // ── Client-side computation (shared engine code) ──
   // Handles custom, equalWeight, and noBiasCorrection modes.
 
-  function computeClientSideRatings(mode: RatingMode): RatingLike[] {
+  async function computeClientSideRatings(mode: RatingMode): Promise<RatingLike[]> {
     const manifest = config.manifest;
     if (!manifest) return config.defaultRatings;
+
+    const engine = await loadEngineApi();
 
     const state = getRatingState();
 
@@ -193,9 +227,9 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
       jmw = undefined;
     } else {
       // Both noBiasCorrection and custom use quality weights
-      let quality;
-      if (!isCustom || state.qualityMode === "consensus") {
-        quality = computeJudgeQuality(filteredJudgments, judgeLabels,
+        let quality;
+        if (!isCustom || state.qualityMode === "consensus") {
+        quality = engine.computeJudgeQuality(filteredJudgments, judgeLabels,
           isCustom ? state.judgeDecay : DEFAULT_CONVERGENCE.judgeDecay);
       } else {
         const rawRatings =
@@ -211,7 +245,7 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
           matchCount: r.matchCount,
           ci95: r.ci95 ?? 0,
         }));
-        quality = computeEloBasedJudgeQuality(dimRatings, judgeLabels, state.judgeDecay);
+        quality = engine.computeEloBasedJudgeQuality(dimRatings, judgeLabels, state.judgeDecay);
       }
 
       jw = quality.active ? quality.weights : undefined;
@@ -219,10 +253,10 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
       // Bias corrections: custom mode respects the toggle, noBiasCorrection skips
       if (mode === "custom" && state.applyBiasCorrection && quality.active) {
         const allSampleToModel = new Map([...sampleToModel, ...revisedSampleToModel]);
-        const biasData = computeJudgeBias(filteredJudgments, allSampleToModel, judgeLabels);
-        const corrections = computeBiasCorrections(filteredJudgments, allSampleToModel, biasData);
+        const biasData = engine.computeJudgeBias(filteredJudgments, allSampleToModel, judgeLabels);
+        const corrections = engine.computeBiasCorrections(filteredJudgments, allSampleToModel, biasData);
         if (corrections.size > 0) {
-          jmw = composeWeights(filteredJudgments, jw, corrections);
+          jmw = engine.composeWeights(filteredJudgments, jw, corrections);
         }
       }
     }
@@ -231,27 +265,39 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
     const dim = config.dimension;
     if (dim === "initial") {
       const initial = filteredJudgments.filter((j) => j.stage === "initial");
-      return whrRatings(judgmentsToGames(initial, sampleToModel, jw, jmw));
+      return engine.whrRatings(engine.judgmentsToGames(initial, sampleToModel, jw, jmw));
     } else if (dim === "revised") {
       const revised = filteredJudgments.filter((j) => j.stage === "revised");
-      return whrRatings(judgmentsToGames(revised, revisedSampleToModel, jw, jmw));
+      return engine.whrRatings(engine.judgmentsToGames(revised, revisedSampleToModel, jw, jmw));
     } else {
       const improvement = filteredJudgments.filter((j) => j.stage === "improvement");
-      return whrRatings(improvementJudgmentsToGames(improvement, sampleToFeedbackModel, jw, jmw));
+      return engine.whrRatings(engine.improvementJudgmentsToGames(improvement, sampleToFeedbackModel, jw, jmw));
     }
   }
 
   // ── Render table ──
 
-  function renderTable(): void {
-    tableContainer.innerHTML = "";
-    const ratings = getRatings();
-    tableContainer.appendChild(renderEloTable(ratings, config.eloTableOpts));
+  async function renderTable(): Promise<void> {
+    const seq = ++renderSeq;
+    try {
+      const ratings = await getRatings();
+      if (seq !== renderSeq) return;
+      tableContainer.innerHTML = "";
+      tableContainer.appendChild(renderEloTable(ratings, config.eloTableOpts));
+    } catch (e) {
+      if (seq !== renderSeq) return;
+      tableContainer.innerHTML = "";
+      tableContainer.appendChild(
+        el("p", { className: "muted" }, `Failed to compute ratings: ${e instanceof Error ? e.message : String(e)}`),
+      );
+    }
   }
 
   function debouncedRender(): void {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(renderTable, 200);
+    debounceTimer = setTimeout(() => {
+      void renderTable();
+    }, 200);
   }
 
   // ── Subscribe to shared state ──
@@ -260,10 +306,9 @@ export function createRatingToggle(config: RatingToggleConfig): RatingToggleResu
 
   // ── Initial render ──
 
-  renderTable();
+  void renderTable();
   container.appendChild(tableContainer);
 
   return { container };
 }
-
 

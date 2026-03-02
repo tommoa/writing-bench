@@ -1,5 +1,7 @@
 import type { RunsIndex, PromptContent, TagAlternatives } from "./types.js";
-import { DEFAULT_CONVERGENCE } from "../../src/types.js";
+import type { SectionLoader } from "./ensure-section-loaded.js";
+import { DEFAULT_CONVERGENCE, JudgeQualityMode } from "../../src/types.js";
+import { ensureSectionLoaded } from "./ensure-section-loaded.js";
 
 // ── App state ───────────────────────────────────────
 
@@ -12,11 +14,10 @@ export const state: AppState = { index: null };
 // ── Rating settings state ───────────────────────────
 
 export type RatingMode = "default" | "equalWeight" | "noBiasCorrection" | "custom";
-export type QualityMode = "consensus" | "writing" | "feedback" | "revised";
 
 export interface RatingState {
   ratingMode: RatingMode;
-  qualityMode: QualityMode;
+  qualityMode: JudgeQualityMode;
   judgeDecay: number;
   excludedJudges: Set<string>;
   applyBiasCorrection: boolean;
@@ -24,7 +25,7 @@ export interface RatingState {
 
 const DEFAULT_RATING_STATE: RatingState = {
   ratingMode: "default",
-  qualityMode: "consensus",
+  qualityMode: DEFAULT_CONVERGENCE.judgeQualityMode,
   judgeDecay: DEFAULT_CONVERGENCE.judgeDecay,
   excludedJudges: new Set(),
   applyBiasCorrection: true,
@@ -47,7 +48,7 @@ export function setRatingMode(mode: RatingMode): void {
   notifyRating();
 }
 
-export function setQualityMode(mode: QualityMode): void {
+export function setQualityMode(mode: JudgeQualityMode): void {
   if (ratingState.qualityMode === mode) return;
   ratingState.qualityMode = mode;
   notifyRating();
@@ -103,13 +104,49 @@ export interface JudgmentApi {
 }
 
 let _judgmentApi: JudgmentApi | null = null;
-
-export function getJudgmentApi(): JudgmentApi | null {
-  return _judgmentApi;
-}
+let _judgmentsSectionLoader: SectionLoader | null = null;
 
 export function setJudgmentApi(api: JudgmentApi | null): void {
   _judgmentApi = api;
+  if (!api) {
+    _judgmentsSectionLoader = null;
+  }
+}
+
+export function setJudgmentsSectionLoader(loader: SectionLoader | null): void {
+  _judgmentsSectionLoader = loader;
+}
+
+async function ensureJudgmentsLoaded(): Promise<void> {
+  if (!_judgmentsSectionLoader) return;
+  await ensureSectionLoaded(_judgmentsSectionLoader);
+}
+
+export async function focusJudgmentsForSample(sampleId: string): Promise<void> {
+  await ensureJudgmentsLoaded();
+  _judgmentApi?.focusSample(sampleId);
+}
+
+export async function focusJudgmentsForModel(model: string): Promise<void> {
+  await ensureJudgmentsLoaded();
+  _judgmentApi?.focusModel(model);
+}
+
+// ── Prompt section load state ───────────────────────
+
+const promptLoadPromises = new Map<string, Promise<void>>();
+
+export function registerPromptLoadPromise(promptId: string, loadPromise: Promise<void>): void {
+  promptLoadPromises.set(promptId, loadPromise);
+  void loadPromise.finally(() => {
+    if (promptLoadPromises.get(promptId) === loadPromise) {
+      promptLoadPromises.delete(promptId);
+    }
+  });
+}
+
+export function getPromptLoadPromise(promptId: string): Promise<void> | undefined {
+  return promptLoadPromises.get(promptId);
 }
 
 // ── Tag alternatives cache ──────────────────────────
@@ -145,5 +182,3 @@ export async function fetchPromptContent(
   promptContentCache.set(key, content);
   return content;
 }
-
-

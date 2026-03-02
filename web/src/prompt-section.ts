@@ -1,7 +1,8 @@
 import type { RunManifest, PromptConfig, SampleMeta, PromptContent } from "./types.js";
 import { el, $, $$ } from "./helpers.js";
+import { ensureSectionLoaded } from "./ensure-section-loaded.js";
 import { sampleMetaEl, feedbackMetaEl } from "./helpers.js";
-import { getJudgmentApi, fetchPromptContent } from "./state.js";
+import { fetchPromptContent, focusJudgmentsForSample, getPromptLoadPromise, registerPromptLoadPromise } from "./state.js";
 
 // ── Prompt Section ──────────────────────────────────
 // Tabs select which model's output to view. The active tab shows the
@@ -11,10 +12,6 @@ import { getJudgmentApi, fetchPromptContent } from "./state.js";
 // Content is loaded lazily (Tier 2) when the user expands the prompt
 // <details> element. The collapsed view renders from manifest metadata
 // only.
-
-// Map from prompt <details> element to its load promise, so
-// scrollToSample can await content before scrolling.
-const promptLoadPromises = new WeakMap<HTMLElement, Promise<void>>();
 
 export function renderPromptSection(
   manifest: RunManifest,
@@ -60,7 +57,7 @@ export function renderPromptSection(
       }
     })();
 
-    promptLoadPromises.set(outerDetails, loadPromise);
+    registerPromptLoadPromise(prompt.id, loadPromise);
   });
 
   return outerDetails;
@@ -158,7 +155,7 @@ function renderPromptContent(
           "button",
           {
             className: "view-judgments-btn",
-            onClick: () => getJudgmentApi()?.focusSample(sample.id),
+            onClick: () => void focusJudgmentsForSample(sample.id),
           },
           `view ${initJudgmentCount} judgments \u2192`,
         ),
@@ -216,7 +213,7 @@ function renderPromptContent(
               "button",
               {
                 className: "view-judgments-btn",
-                onClick: () => getJudgmentApi()?.focusSample(revision.id),
+                onClick: () => void focusJudgmentsForSample(revision.id),
               },
               `view ${revJudgmentCount} judgments \u2192`,
             ),
@@ -272,9 +269,15 @@ export async function scrollToSample(
   // Find the prompt <details> and ensure it's open (which triggers lazy load)
   const promptDetails = $(`[data-prompt-id="${sample.promptId}"]`) as HTMLDetailsElement | null;
   if (promptDetails) {
-    if (!promptDetails.open) promptDetails.open = true;
-    const loadPromise = promptLoadPromises.get(promptDetails);
-    if (loadPromise) await loadPromise;
+    await ensureSectionLoaded({
+      open: () => {
+        if (!promptDetails.open) {
+          promptDetails.open = true;
+          promptDetails.dispatchEvent(new Event("toggle"));
+        }
+      },
+      getLoadPromise: () => getPromptLoadPromise(sample.promptId),
+    });
   }
 
   let target: Element | null = null;
