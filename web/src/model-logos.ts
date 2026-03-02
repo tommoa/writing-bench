@@ -2,14 +2,9 @@ import type { IconData } from "./model-logos.generated.js";
 import type { ModelInfo } from "./types.js";
 import { ICONS, FAMILY_TO_ICON } from "./model-logos.generated.js";
 
+const MODEL_LOGO_SPRITE_PATH = "model-logos.svg";
+
 // ── Model Logo Helper ───────────────────────────────
-
-let logoUid = 0;
-
-/** Reset the SVG ID counter. Call on page navigation to prevent unbounded growth. */
-export function resetLogoUids(): void {
-  logoUid = 0;
-}
 
 /** Build a label -> family map from a modelInfo record. */
 export function buildModelFamilies(
@@ -23,27 +18,17 @@ export function buildModelFamilies(
   return families;
 }
 
-/**
- * Uniquify SVG id/url(#id) references so that multiple instances of
- * the same logo on a page don't share gradient/mask IDs.
- */
-function uniquifySvgIds(svg: string): string {
-  // Collect all id="..." values
-  const ids = new Set<string>();
-  svg.replace(/\bid="([^"]+)"/g, (_, id) => { ids.add(id); return _; });
-  if (ids.size === 0) return svg;
+function createSpriteSvg(symbolId: string, viewBox: string): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", viewBox);
 
-  const suffix = `_${logoUid++}`;
-  let result = svg;
-  for (const id of ids) {
-    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // Replace id="X" and all url(#X) / href="#X" references
-    result = result.replace(
-      new RegExp(`(id="|url\\(#|href="#)${escaped}(?="|\\))`, "g"),
-      `$1${id}${suffix}`,
-    );
-  }
-  return result;
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  const href = `${MODEL_LOGO_SPRITE_PATH}#${symbolId}`;
+  use.setAttribute("href", href);
+  use.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", href);
+  svg.appendChild(use);
+
+  return svg;
 }
 
 /**
@@ -74,14 +59,16 @@ export function modelLogo(
   // Brand-color icon (fades in on hover in leaderboard rows; always visible in cards)
   const lightEl = document.createElement("span");
   lightEl.className = "model-logo-light";
-  lightEl.innerHTML = uniquifySvgIds(icon.light);
+  lightEl.appendChild(createSpriteSvg(icon.lightId, icon.lightViewBox));
   container.appendChild(lightEl);
 
   // Mono icon (currentColor; visible by default, brand-color overlays on hover)
-  if (icon.dark) {
+  if (icon.darkId) {
     const darkEl = document.createElement("span");
     darkEl.className = "model-logo-dark";
-    darkEl.innerHTML = uniquifySvgIds(icon.dark);
+    darkEl.appendChild(
+      createSpriteSvg(icon.darkId, icon.darkViewBox ?? icon.lightViewBox),
+    );
     container.appendChild(darkEl);
   }
 
