@@ -207,7 +207,10 @@ async function measureRoute(
       requestBytes: measured.requestBytes,
       headerBytes: measured.headerBytes,
       bodyBytes: measured.bodyBytes,
-      wireBytes: measured.requestBytes + measured.headerBytes + measured.bodyBytes,
+      // Request bytes vary significantly by curl build and HTTP/2
+      // implementation details. Keep them in the report, but budget only
+      // the response path users pay to receive.
+      wireBytes: measured.headerBytes + measured.bodyBytes,
     });
   }
 
