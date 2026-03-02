@@ -37,6 +37,12 @@ jobs:
       - name: Build web assets
         run: bun run build:web
 
+      - name: Check web size budget
+        run: bun run check:web-budget
+
+      - name: Check web flight budget
+        run: bun run check:web-flight --route=all
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
