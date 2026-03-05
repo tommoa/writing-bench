@@ -5,7 +5,7 @@ import { usePalette } from "./PaletteContext.js";
 
 // ── Spinner ──────────────────────────────────────────
 
-const SPINNER_FRAMES = ["\u28cb", "\u28d9", "\u28f9", "\u28f8", "\u28fc", "\u28f4", "\u28e6", "\u28e7", "\u28c7", "\u28cf"];
+const SPINNER_FRAMES = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"];
 
 function Spinner({ color }: { color: string }) {
   const [frame, setFrame] = useState(0);
@@ -13,7 +13,7 @@ function Spinner({ color }: { color: string }) {
     const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
     return () => clearInterval(id);
   }, []);
-  return <span fg={color}>{SPINNER_FRAMES[frame]}</span>;
+  return <text fg={color}>{SPINNER_FRAMES[frame]}</text>;
 }
 
 // ── Constants ────────────────────────────────────────
@@ -33,6 +33,15 @@ const STAGE_LABELS: Record<BenchmarkStage, string> = {
 // ── Component ────────────────────────────────────────
 
 import { truncate } from "./format-utils.js";
+
+function fitStatusLine(text: string, maxWidth: number): string {
+  if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
+    return text;
+  }
+
+  const clipped = truncate(text, maxWidth);
+  return clipped.padEnd(maxWidth, " ");
+}
 
 interface StatusBarProps {
   stage: BenchmarkStage;
@@ -59,7 +68,6 @@ export function StatusBar({
   judgingRound,
   maxCi,
   ciThreshold,
-  needDescription,
   batchSummary,
   suspendedModels,
   contentWidth,
@@ -84,47 +92,56 @@ export function StatusBar({
   if (judgingRound != null && judgingRound > 0) {
     let roundText = `Round ${judgingRound}`;
     if (batchSummary) roundText += ` | ${batchSummary}`;
-    if (maxCi != null) roundText += ` | CI \u00b1${maxCi}`;
-    if (ciThreshold != null) roundText += ` \u2192 target ${formatConvergenceTarget(ciThreshold)}`;
-    details.push({ text: roundText, color: palette.magenta });
+    if (maxCi != null) roundText += ` | CI +/-${maxCi}`;
+    if (ciThreshold != null) roundText += ` -> target ${formatConvergenceTarget(ciThreshold)}`;
+    details.push({ text: fitStatusLine(roundText, lineMax), color: palette.magenta });
   }
   if (suspendedModels && suspendedModels.length > 0) {
-    details.push({ text: `Suspended: ${suspendedModels.join(", ")}`, color: palette.yellow });
+    details.push({
+      text: fitStatusLine(`Suspended: ${suspendedModels.join(", ")}`, lineMax),
+      color: palette.yellow,
+    });
   }
   if (!isComplete && currentOp) {
     details.push({
-      text: truncate(
-        (needDescription ? `${needDescription} \u2014 ` : "") + currentOp,
-        lineMax,
-      ),
+      text: fitStatusLine(currentOp, lineMax),
       color: palette.gray,
     });
   }
 
   return (
-    <box flexDirection="column" marginBottom={1} live={!isComplete}>
-      <box>
-        <text>
+    <box flexDirection="column" marginBottom={1}>
+      <box height={1}>
+        <box flexDirection="row">
           {!isComplete && (
             <>
-              <Spinner color={palette.cyan} />
-              {"  "}
+              <box width={1} backgroundColor={palette.bg}>
+                <Spinner color={palette.cyan} />
+              </box>
+              <box width={2}>
+                <text>{"  "}</text>
+              </box>
             </>
           )}
-          <b><span fg={isComplete ? palette.green : palette.yellow}>{stageLabel}</span></b>
-          <span fg={palette.gray}>{"  "}{pct}%  ({opsDone} ops)</span>
-        </text>
+          <box>
+            <text>
+              <b><span fg={isComplete ? palette.green : palette.yellow}>{stageLabel}</span></b>
+              <span fg={palette.gray}>{"  "}{pct}%  ({opsDone} ops)</span>
+            </text>
+          </box>
+        </box>
       </box>
       {details.length > 0 && (
-        <box marginLeft={3}>
-          <text>
-            {details.map((d, i) => (
-              <span key={i}>
-                {i > 0 && "\n"}
-                <span fg={d.color}>{d.text}</span>
-              </span>
-            ))}
-          </text>
+        <box
+          marginLeft={3}
+          flexDirection="column"
+          {...(Number.isFinite(lineMax) ? { width: lineMax } : {})}
+        >
+          {details.map((d, i) => (
+            <box key={`${i}:${d.text}`} height={1}>
+              <text fg={d.color}>{d.text}</text>
+            </box>
+          ))}
         </box>
       )}
     </box>

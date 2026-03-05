@@ -128,6 +128,10 @@ export function RunConfigForm({ onStart, error: externalError, onExit, onOpenMod
 
   const updateForm = useCallback(<K extends keyof TuiRunConfig>(key: K, value: TuiRunConfig[K]) => {
     setForm((prev) => {
+      if (Object.is(prev[key], value)) {
+        return prev;
+      }
+
       const next = { ...prev, [key]: value };
       // Enforce mutual exclusion: cacheOnly and noCache
       if (key === "cacheOnly" && value === true) {

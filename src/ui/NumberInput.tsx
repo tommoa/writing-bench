@@ -15,6 +15,10 @@ interface NumberInputProps {
   focused?: boolean;
 }
 
+function formatDisplayValue(value: number | undefined): string {
+  return value != null ? String(value) : "";
+}
+
 /**
  * Numeric input with local display state to support intermediate text
  * like "0." or "-" during float entry. Uses TextInput's validate
@@ -35,13 +39,19 @@ export function NumberInput({
 }: NumberInputProps) {
   // Local display text to handle intermediate states like "0." or "-"
   const [displayValue, setDisplayValue] = useState(
-    value != null ? String(value) : "",
+    formatDisplayValue(value),
   );
 
   // Sync display when parent's numeric value changes externally.
+  // While focused, keep local display state authoritative so
+  // intermediate text does not bounce against committed numeric state.
   useEffect(() => {
-    setDisplayValue(value != null ? String(value) : "");
-  }, [value]);
+    if (focused) {
+      return;
+    }
+    const nextDisplay = formatDisplayValue(value);
+    setDisplayValue((prev) => (prev === nextDisplay ? prev : nextDisplay));
+  }, [value, focused]);
 
   const validate = useCallback(
     (text: string): boolean => {
@@ -53,16 +63,30 @@ export function NumberInput({
   );
 
   function handleChange(text: string) {
-    setDisplayValue(text);
-    if (text === "" || text === "-") {
-      onChange(undefined);
+    if (text === displayValue) {
       return;
     }
+
+    setDisplayValue(text);
+
+    if (text === "" || text === "-") {
+      if (value !== undefined) {
+        onChange(undefined);
+      }
+      return;
+    }
+
     // Intermediate float state like "0." -- display it but don't
     // commit a numeric value yet
     if (allowFloat && text.endsWith(".")) return;
+
     const num = allowFloat ? parseFloat(text) : parseInt(text, 10);
     if (isNaN(num)) return;
+
+    if (value === num) {
+      return;
+    }
+
     onChange(num);
   }
 

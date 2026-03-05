@@ -20,6 +20,23 @@ interface TextInputProps {
   width?: number;
 }
 
+interface TextInputContainerProps {
+  width?: number;
+  flexGrow?: number;
+}
+
+export function getTextInputContainerProps(width?: number): TextInputContainerProps {
+  if (width != null) {
+    return { width };
+  }
+
+  return { flexGrow: 1 };
+}
+
+export function shouldForwardInputChange(currentValue: string, nextValue: string): boolean {
+  return nextValue !== currentValue;
+}
+
 /**
  * Single-line text input wrapper around OpenTUI's native `<input>`.
  * Keeps existing form semantics (submit/cancel/validate) while relying
@@ -58,6 +75,9 @@ export function TextInput({
     if (validate && !validate(next)) {
       return;
     }
+    if (!shouldForwardInputChange(value, next)) {
+      return;
+    }
     onChange(next);
   }
 
@@ -76,7 +96,7 @@ export function TextInput({
   }
 
   return (
-    <box {...(width != null ? { width } : {})}>
+    <box {...getTextInputContainerProps(width)}>
       <input
         value={value}
         placeholder={placeholder}

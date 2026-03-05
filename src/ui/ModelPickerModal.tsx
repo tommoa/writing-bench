@@ -366,14 +366,16 @@ export function ModelPickerModal({
               <box width={5}>
                 <text fg={palette.gray}>Add: </text>
               </box>
-              <TextInput
-                value={addInputValue}
-                onChange={(v) => { setAddInputValue(v); setAddInputError(null); }}
-                onSubmit={handleAddSubmit}
-                onCancel={handleAddCancel}
-                placeholder="provider:model"
-                focused={addInputActive}
-              />
+              <box flexGrow={1}>
+                <TextInput
+                  value={addInputValue}
+                  onChange={(v) => { setAddInputValue(v); setAddInputError(null); }}
+                  onSubmit={handleAddSubmit}
+                  onCancel={handleAddCancel}
+                  placeholder="provider:model"
+                  focused={addInputActive}
+                />
+              </box>
             </box>
             {addInputError && (
               <box>
