@@ -44,6 +44,10 @@ type ModelsDb = Record<string, ModelsDevProvider>;
 
 let cachedDb: ModelsDb | null = null;
 
+export function resetModelsDbCache(): void {
+  cachedDb = null;
+}
+
 /**
  * Fetch the models.dev database, using a local cache when available.
  */
@@ -275,15 +279,62 @@ export async function buildModelLabelMap(
 ): Promise<Record<string, string>> {
   const db = await fetchModelsDb();
   const map: Record<string, string> = {};
+
   for (const spec of specs) {
-    const colonIdx = spec.indexOf(":");
-    if (colonIdx < 0) continue;
-    const provider = spec.slice(0, colonIdx);
-    const model = spec.slice(colonIdx + 1).split("~")[0].split("@")[0];
-    const name = db[provider]?.models[model]?.name;
-    if (name) map[spec] = name;
+    const parsed = parseModelSpecForLabel(spec);
+    if (!parsed) continue;
+
+    if (parsed.label.length > 0) {
+      map[spec] = parsed.label;
+      continue;
+    }
+
+    const providerModels = db[parsed.provider]?.models;
+    if (!providerModels) continue;
+
+    const exact = providerModels[parsed.model]?.name;
+    if (exact) {
+      map[spec] = exact;
+      continue;
+    }
+
+    const atIdx = parsed.model.indexOf("@");
+    if (atIdx < 0) continue;
+
+    const fallbackModel = parsed.model.slice(0, atIdx);
+    const fallback = providerModels[fallbackModel]?.name;
+    if (fallback) {
+      map[spec] = fallback;
+    }
   }
+
   return map;
+}
+
+function parseModelSpecForLabel(spec: string): {
+  provider: string;
+  model: string;
+  label: string;
+} | null {
+  const tildeIdx = spec.indexOf("~");
+  let lookupSpec = spec;
+
+  if (tildeIdx >= 0) {
+    const rightSide = spec.slice(tildeIdx + 1);
+    if (rightSide.includes(":")) {
+      lookupSpec = rightSide;
+    }
+  }
+
+  const firstColon = lookupSpec.indexOf(":");
+  if (firstColon < 0) return null;
+  const provider = lookupSpec.slice(0, firstColon);
+  const rest = lookupSpec.slice(firstColon + 1);
+  const eqIdx = rest.indexOf("=");
+  const model = eqIdx >= 0 ? rest.slice(0, eqIdx) : rest;
+  const label = eqIdx >= 0 ? rest.slice(eqIdx + 1) : "";
+
+  return { provider, model, label };
 }
 
 /**

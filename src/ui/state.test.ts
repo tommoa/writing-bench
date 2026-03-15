@@ -67,6 +67,25 @@ describe("appReducer", () => {
     expect(next.cache.confirmAction).toBeNull();
     expect(next.runs.confirmDelete).toBeNull();
   });
+
+  it("stores merge cache confirmation payload", () => {
+    const next = appReducer(INITIAL_STATE, {
+      type: "CACHE_CONFIRM",
+      action: {
+        type: "merge",
+        sourceModel: "openai__gpt-4o-mini",
+        targetModel: "openai__gpt-4o",
+        targetSpec: "openai:gpt-4o",
+      },
+    });
+
+    expect(next.cache.confirmAction).toEqual({
+      type: "merge",
+      sourceModel: "openai__gpt-4o-mini",
+      targetModel: "openai__gpt-4o",
+      targetSpec: "openai:gpt-4o",
+    });
+  });
 });
 
 function makeProgress(overrides: Partial<BenchmarkProgress> = {}): BenchmarkProgress {

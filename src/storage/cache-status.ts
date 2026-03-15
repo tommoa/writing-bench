@@ -80,6 +80,15 @@ export interface CacheStatusResult {
   diskSize: CacheDiskSize;
 }
 
+export interface CoveringModelProjection {
+  modelKey: string;
+  asWriterCount: number;
+  asJudgeCount: number;
+  coveringCount: number;
+  maxOutputsPerModel: number;
+  promptIds: string[];
+}
+
 // ── Directory listing helpers ───────────────────────
 
 async function safeDirSet(dir: string): Promise<Set<string>> {
@@ -939,6 +948,71 @@ export function allPairs<T>(items: T[]): [T, T][] {
     }
   }
   return result;
+}
+
+/**
+ * Project covering participation by model for quick cross-section summaries.
+ */
+export function projectCoveringsByModel(
+  coverings: Covering[]
+): CoveringModelProjection[] {
+  const byModel = new Map<string, {
+    modelKey: string;
+    asWriterCount: number;
+    asJudgeCount: number;
+    coveringCount: number;
+    maxOutputsPerModel: number;
+    promptIds: Set<string>;
+  }>();
+
+  for (const covering of coverings) {
+    const writers = new Set(covering.writerKeys);
+    const judges = new Set(covering.judgeKeys);
+    const allModels = new Set([...writers, ...judges]);
+
+    for (const modelKey of allModels) {
+      const current = byModel.get(modelKey) ?? {
+        modelKey,
+        asWriterCount: 0,
+        asJudgeCount: 0,
+        coveringCount: 0,
+        maxOutputsPerModel: 0,
+        promptIds: new Set<string>(),
+      };
+
+      if (writers.has(modelKey)) {
+        current.asWriterCount += 1;
+      }
+      if (judges.has(modelKey)) {
+        current.asJudgeCount += 1;
+      }
+      current.coveringCount += 1;
+      current.maxOutputsPerModel = Math.max(
+        current.maxOutputsPerModel,
+        covering.outputsPerModel
+      );
+
+      for (const promptId of covering.promptIds) {
+        current.promptIds.add(promptId);
+      }
+
+      byModel.set(modelKey, current);
+    }
+  }
+
+  return [...byModel.values()].map((row) => ({
+    modelKey: row.modelKey,
+    asWriterCount: row.asWriterCount,
+    asJudgeCount: row.asJudgeCount,
+    coveringCount: row.coveringCount,
+    maxOutputsPerModel: row.maxOutputsPerModel,
+    promptIds: [...row.promptIds].sort(),
+  })).sort((a, b) => {
+    if (a.coveringCount !== b.coveringCount) {
+      return b.coveringCount - a.coveringCount;
+    }
+    return a.modelKey.localeCompare(b.modelKey);
+  });
 }
 
 // ── Display formatting ──────────────────────────────

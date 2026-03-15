@@ -4,6 +4,7 @@ import { join, basename, dirname } from "path";
 import { createHash, randomBytes } from "crypto";
 import type { TokenUsage, CostBreakdown } from "../types.js";
 import { safeReaddir, safeReadJson, removeIfEmpty } from "./fs-utils.js";
+import { listRuns, loadRun } from "./run-store.js";
 
 // ── Cached entry types ──────────────────────────────
 
@@ -43,12 +44,79 @@ export interface CachedJudgment {
   winner: "A" | "B" | "tie";
   reasoning: string;
   stage: "initial" | "revised" | "improvement";
+  /** Sorted cache ID pair used by this judgment. */
+  firstCacheId?: string;
+  /** Sorted cache ID pair used by this judgment. */
+  secondCacheId?: string;
   /** Position swap state from the original API call. undefined for legacy cache entries. */
   positionSwapped?: boolean;
   usage: TokenUsage;
   cost: CostBreakdown;
   latencyMs: number;
   createdAt: string;
+}
+
+export type CacheArtifactCategory = "writes" | "feedback" | "revisions" | "judgments";
+
+export interface CacheArtifactSummary {
+  category: CacheArtifactCategory;
+  /** Unique key within a category for later detail lookup. */
+  artifactKey: string;
+  modelKey: string;
+  cacheId?: string;
+  createdAt?: string;
+  promptHash?: string;
+  outputIndex?: number;
+  stage?: string;
+  comparisonLabel?: string;
+  comparedCacheIds?: [string, string];
+  preview: string;
+}
+
+export interface CacheArtifactDetail {
+  category: CacheArtifactCategory;
+  artifactKey: string;
+  modelKey: string;
+  payload: unknown;
+}
+
+interface UsageLike {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+interface CostLike {
+  total?: number;
+  totalUncached?: number;
+}
+
+interface CachedOutputLocator {
+  category: "writes" | "revisions";
+  modelKey: string;
+  path: string;
+  promptHash?: string;
+  outputIndex?: number;
+}
+
+export interface JudgmentComparedOutput {
+  cacheId: string;
+  category: "writes" | "revisions";
+  modelKey: string;
+  promptHash?: string;
+  outputIndex?: number;
+  text: string;
+}
+
+export interface JudgmentComparedPair {
+  first: JudgmentComparedOutput;
+  second: JudgmentComparedOutput;
+}
+
+interface RunOutputLocator {
+  category: "writes" | "revisions";
+  modelKey: string;
+  outputIndex?: number;
+  text: string;
 }
 
 // ── Helpers ─────────────────────────────────────────
@@ -82,6 +150,51 @@ export function specFromModelKey(key: string): string | null {
     return `${provider}:${model}`;
   }
   return null;
+}
+
+function modelKeyFromRegistryId(registryId?: string, fallbackLabel?: string): string {
+  if (!registryId || !registryId.includes(":")) {
+    return fallbackLabel ?? "unknown";
+  }
+  const splitAt = registryId.indexOf(":");
+  if (splitAt <= 0 || splitAt >= registryId.length - 1) {
+    return fallbackLabel ?? registryId;
+  }
+  const provider = registryId.slice(0, splitAt);
+  const model = registryId.slice(splitAt + 1);
+  return modelKey(provider, model);
+}
+
+async function buildRunOutputLocatorIndex(): Promise<Map<string, RunOutputLocator>> {
+  const index = new Map<string, RunOutputLocator>();
+  const runIds = await listRuns();
+
+  for (const runId of runIds) {
+    let run;
+    try {
+      run = await loadRun(runId);
+    } catch {
+      continue;
+    }
+
+    for (const sample of run.samples) {
+      if (index.has(sample.id)) {
+        continue;
+      }
+      index.set(sample.id, {
+        category: sample.stage === "initial" ? "writes" : "revisions",
+        modelKey: modelKeyFromRegistryId(sample.registryId, sample.model),
+        outputIndex: sample.outputIndex,
+        text: sample.text,
+      });
+    }
+  }
+
+  return index;
+}
+
+async function getRunOutputLocatorIndex(): Promise<Map<string, RunOutputLocator>> {
+  return buildRunOutputLocatorIndex();
 }
 
 /**
@@ -135,6 +248,27 @@ function flipWinner(winner: "A" | "B" | "tie"): "A" | "B" | "tie" {
 /** Flip a positionSwapped flag, preserving undefined for legacy entries. */
 function flipPositionSwapped(swapped?: boolean): boolean | undefined {
   return swapped != null ? !swapped : undefined;
+}
+
+function compactPreview(value: unknown, maxLen: number = 96): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLen) {
+    return compact;
+  }
+  return compact.slice(0, maxLen - 3) + "...";
+}
+
+function allPairs<T>(items: T[]): [T, T][] {
+  const pairs: [T, T][] = [];
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      pairs.push([items[i], items[j]]);
+    }
+  }
+  return pairs;
 }
 
 // ── Sample Cache ────────────────────────────────────
@@ -367,14 +501,20 @@ export class SampleCache {
     await mkdir(dir, { recursive: true });
 
     // Normalize winner and positionSwapped to sorted order
-    const [sortedFirst] = [cacheIdA, cacheIdB].sort();
+    const [sortedFirst, sortedSecond] = [cacheIdA, cacheIdB].sort();
     const normalized: CachedJudgment =
       cacheIdA === sortedFirst
-        ? entry
+        ? {
+            ...entry,
+            firstCacheId: sortedFirst,
+            secondCacheId: sortedSecond,
+          }
         : {
             ...entry,
             winner: flipWinner(entry.winner),
             positionSwapped: flipPositionSwapped(entry.positionSwapped),
+            firstCacheId: sortedFirst,
+            secondCacheId: sortedSecond,
           };
 
     const filePath = this.judgmentPath(
@@ -389,6 +529,593 @@ export class SampleCache {
     await writeFile(tmpPath, JSON.stringify(normalized, null, 2));
     await rename(tmpPath, filePath);
   }
+}
+
+async function buildCachedOutputLocatorIndex(
+  cacheDir: string
+): Promise<Map<string, CachedOutputLocator>> {
+  const index = new Map<string, CachedOutputLocator>();
+
+  const writeBase = join(cacheDir, "writes");
+  const writeModelKeys = await discoverModelKeys(writeBase);
+  for (const writeModelKey of writeModelKeys) {
+    const promptHashes = await safeReaddir(join(writeBase, writeModelKey));
+    for (const promptHash of promptHashes) {
+      const promptDir = join(writeBase, writeModelKey, promptHash);
+      const files = (await safeReaddir(promptDir)).filter((f) => f.endsWith(".json"));
+      for (const file of files) {
+        const path = join(promptDir, file);
+        const entry = await safeReadJson<CachedWrite>(path);
+        if (!entry || index.has(entry.cacheId)) {
+          continue;
+        }
+        const outputIndex = parseInt(file.match(/\d+/)?.[0] ?? "0", 10);
+        index.set(entry.cacheId, {
+          category: "writes",
+          modelKey: writeModelKey,
+          path,
+          promptHash,
+          outputIndex,
+        });
+      }
+    }
+  }
+
+  const revisionBase = join(cacheDir, "revisions");
+  const revisionModelKeys = await discoverModelKeys(revisionBase);
+  for (const revisionModelKey of revisionModelKeys) {
+    const files = (await safeReaddir(join(revisionBase, revisionModelKey)))
+      .filter((f) => f.endsWith(".json"));
+    for (const file of files) {
+      const path = join(revisionBase, revisionModelKey, file);
+      const entry = await safeReadJson<CachedRevision>(path);
+      if (!entry || index.has(entry.cacheId)) {
+        continue;
+      }
+      index.set(entry.cacheId, {
+        category: "revisions",
+        modelKey: revisionModelKey,
+        path,
+      });
+    }
+  }
+
+  return index;
+}
+
+function comparisonModelLabel(
+  cacheId: string,
+  index: Map<string, CachedOutputLocator>
+): string {
+  const locator = index.get(cacheId);
+  if (!locator) {
+    return cacheId;
+  }
+  const spec = specFromModelKey(locator.modelKey) ?? locator.modelKey;
+  const suffix = locator.category === "writes"
+    ? `#${locator.outputIndex ?? 0}`
+    : "(rev)";
+  return `${spec} ${suffix}`;
+}
+
+function addJudgmentHashPair(
+  map: Map<string, [string, string]>,
+  stage: "initial" | "revised" | "improvement",
+  cacheIdA: string,
+  cacheIdB: string,
+): void {
+  const [first, second] = [cacheIdA, cacheIdB].sort();
+  const hash = judgmentPairHash(stage, first, second);
+  if (!map.has(hash)) {
+    map.set(hash, [first, second]);
+  }
+}
+
+function judgmentHashFromArtifactKey(artifactKey: string): string {
+  const fileName = basename(artifactKey);
+  return fileName.endsWith(".json") ? fileName.slice(0, -5) : fileName;
+}
+
+async function buildLegacyJudgmentPairIndex(
+  cacheDir: string,
+  outputLocatorIndex: Map<string, CachedOutputLocator>,
+  includeRuns: boolean = false,
+): Promise<Map<string, [string, string]>> {
+  const hashToPair = new Map<string, [string, string]>();
+  const writesByPromptOutput = new Map<string, string[]>();
+  const writeLocatorByCacheId = new Map<string, CachedOutputLocator>();
+
+  for (const [cacheId, locator] of outputLocatorIndex.entries()) {
+    if (locator.category !== "writes") {
+      continue;
+    }
+    writeLocatorByCacheId.set(cacheId, locator);
+    const promptHash = locator.promptHash ?? "-";
+    const outputIndex = locator.outputIndex ?? 0;
+    const key = `${promptHash}:${outputIndex}`;
+    const existing = writesByPromptOutput.get(key) ?? [];
+    existing.push(cacheId);
+    writesByPromptOutput.set(key, existing);
+  }
+
+  for (const cacheIds of writesByPromptOutput.values()) {
+    const uniq = [...new Set(cacheIds)];
+    for (const [cacheIdA, cacheIdB] of allPairs(uniq)) {
+      addJudgmentHashPair(hashToPair, "initial", cacheIdA, cacheIdB);
+    }
+  }
+
+  const feedbackByWriteCacheId = new Map<string, Array<{ feedbackCacheId: string; feedbackModelKey: string }>>();
+  const feedbackBase = join(cacheDir, "feedback");
+  const feedbackModelKeys = await discoverModelKeys(feedbackBase);
+  for (const feedbackModelKey of feedbackModelKeys) {
+    const feedbackDir = join(feedbackBase, feedbackModelKey);
+    const files = (await safeReaddir(feedbackDir)).filter((f) => f.endsWith(".json"));
+    for (const file of files) {
+      const entry = await safeReadJson<CachedFeedback>(join(feedbackDir, file));
+      if (!entry) {
+        continue;
+      }
+      const links = feedbackByWriteCacheId.get(entry.writeCacheId) ?? [];
+      links.push({
+        feedbackCacheId: entry.cacheId,
+        feedbackModelKey,
+      });
+      feedbackByWriteCacheId.set(entry.writeCacheId, links);
+    }
+  }
+
+  const revisionByWriterFeedback = new Map<string, string>();
+  for (const [cacheId, locator] of outputLocatorIndex.entries()) {
+    if (locator.category !== "revisions") {
+      continue;
+    }
+    const entry = await safeReadJson<CachedRevision>(locator.path);
+    if (!entry) {
+      continue;
+    }
+    revisionByWriterFeedback.set(`${locator.modelKey}:${entry.feedbackCacheId}`, cacheId);
+  }
+
+  const revisedGroups = new Map<string, string[]>();
+
+  for (const [writeCacheId, writeLocator] of writeLocatorByCacheId.entries()) {
+    const feedbackLinks = feedbackByWriteCacheId.get(writeCacheId) ?? [];
+    for (const link of feedbackLinks) {
+      const revisionCacheId = revisionByWriterFeedback.get(
+        `${writeLocator.modelKey}:${link.feedbackCacheId}`
+      );
+      if (!revisionCacheId) {
+        continue;
+      }
+
+      addJudgmentHashPair(hashToPair, "improvement", writeCacheId, revisionCacheId);
+
+      const promptHash = writeLocator.promptHash ?? "-";
+      const outputIndex = writeLocator.outputIndex ?? 0;
+      const groupKey = `${promptHash}:${outputIndex}:${link.feedbackModelKey}`;
+      const revisions = revisedGroups.get(groupKey) ?? [];
+      revisions.push(revisionCacheId);
+      revisedGroups.set(groupKey, revisions);
+    }
+  }
+
+  for (const revisionCacheIds of revisedGroups.values()) {
+    const uniq = [...new Set(revisionCacheIds)];
+    for (const [cacheIdA, cacheIdB] of allPairs(uniq)) {
+      addJudgmentHashPair(hashToPair, "revised", cacheIdA, cacheIdB);
+    }
+  }
+
+  if (includeRuns) {
+    const runIds = await listRuns();
+    for (const runId of runIds) {
+      let run;
+      try {
+        run = await loadRun(runId);
+      } catch {
+        continue;
+      }
+      for (const judgment of run.judgments) {
+        addJudgmentHashPair(hashToPair, judgment.stage, judgment.sampleA, judgment.sampleB);
+      }
+    }
+  }
+
+  return hashToPair;
+}
+
+/**
+ * List cache artifacts for a model key across all cache categories.
+ */
+export async function listModelCacheArtifacts(
+  cacheDir: string,
+  modelDirKey: string
+): Promise<CacheArtifactSummary[]> {
+  const results: CacheArtifactSummary[] = [];
+
+  const writesBase = join(cacheDir, "writes", modelDirKey);
+  for (const promptHash of await safeReaddir(writesBase)) {
+    const promptDir = join(writesBase, promptHash);
+    const writeFiles = (await safeReaddir(promptDir))
+      .filter((f) => f.endsWith(".json"))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)?.[0] ?? "0", 10);
+        const nb = parseInt(b.match(/\d+/)?.[0] ?? "0", 10);
+        return na - nb;
+      });
+
+    for (const file of writeFiles) {
+      const entry = await safeReadJson<CachedWrite>(join(promptDir, file));
+      if (!entry) continue;
+      const outputIndex = parseInt(file.match(/\d+/)?.[0] ?? "0", 10);
+      results.push({
+        category: "writes",
+        artifactKey: `${promptHash}/${file}`,
+        modelKey: modelDirKey,
+        cacheId: entry.cacheId,
+        createdAt: entry.createdAt,
+        promptHash,
+        outputIndex,
+        preview: compactPreview(entry.text),
+      });
+    }
+  }
+
+  const categoryDirs: Array<[CacheArtifactCategory, string]> = [
+    ["feedback", join(cacheDir, "feedback", modelDirKey)],
+    ["revisions", join(cacheDir, "revisions", modelDirKey)],
+    ["judgments", join(cacheDir, "judgments", modelDirKey)],
+  ];
+
+  let outputLocatorIndex: Map<string, CachedOutputLocator> | null = null;
+  let legacyJudgmentPairIndex: Map<string, [string, string]> | null = null;
+
+  for (const [category, dir] of categoryDirs) {
+    const files = (await safeReaddir(dir))
+      .filter((f) => f.endsWith(".json"))
+      .sort();
+    for (const file of files) {
+      const artifactKey = file;
+      if (category === "feedback") {
+        const entry = await safeReadJson<CachedFeedback>(join(dir, file));
+        if (!entry) continue;
+        results.push({
+          category,
+          artifactKey,
+          modelKey: modelDirKey,
+          cacheId: entry.cacheId,
+          createdAt: entry.createdAt,
+          preview: compactPreview(entry.text),
+        });
+      } else if (category === "revisions") {
+        const entry = await safeReadJson<CachedRevision>(join(dir, file));
+        if (!entry) continue;
+        results.push({
+          category,
+          artifactKey,
+          modelKey: modelDirKey,
+          cacheId: entry.cacheId,
+          createdAt: entry.createdAt,
+          preview: compactPreview(entry.text),
+        });
+      } else {
+        const entry = await safeReadJson<CachedJudgment>(join(dir, file));
+        if (!entry) continue;
+
+        let comparedPair: [string, string] | null = null;
+        if (typeof entry.firstCacheId === "string" && typeof entry.secondCacheId === "string") {
+          comparedPair = [entry.firstCacheId, entry.secondCacheId];
+        } else {
+          if (!outputLocatorIndex) {
+            outputLocatorIndex = await buildCachedOutputLocatorIndex(cacheDir);
+          }
+          if (!legacyJudgmentPairIndex) {
+            legacyJudgmentPairIndex = await buildLegacyJudgmentPairIndex(cacheDir, outputLocatorIndex);
+          }
+          comparedPair = legacyJudgmentPairIndex.get(judgmentHashFromArtifactKey(file)) ?? null;
+        }
+
+        let comparisonLabel: string | undefined;
+        let comparedCacheIds: [string, string] | undefined;
+        if (comparedPair) {
+          if (!outputLocatorIndex) {
+            outputLocatorIndex = await buildCachedOutputLocatorIndex(cacheDir);
+          }
+          comparedCacheIds = comparedPair;
+          comparisonLabel = `${comparisonModelLabel(comparedPair[0], outputLocatorIndex)} vs ${comparisonModelLabel(comparedPair[1], outputLocatorIndex)}`;
+        }
+        results.push({
+          category,
+          artifactKey,
+          modelKey: modelDirKey,
+          cacheId: entry.cacheId,
+          createdAt: entry.createdAt,
+          stage: entry.stage,
+          comparisonLabel,
+          comparedCacheIds,
+          preview: compactPreview(entry.reasoning),
+        });
+      }
+    }
+  }
+
+  results.sort((a, b) => {
+    const aTime = a.createdAt ?? "";
+    const bTime = b.createdAt ?? "";
+    if (aTime !== bTime) {
+      return bTime.localeCompare(aTime);
+    }
+    if (a.category !== b.category) {
+      return a.category.localeCompare(b.category);
+    }
+    return a.artifactKey.localeCompare(b.artifactKey);
+  });
+
+  return results;
+}
+
+/**
+ * Load one cache artifact payload by category and artifact key.
+ */
+export async function loadModelCacheArtifact(
+  cacheDir: string,
+  modelDirKey: string,
+  category: CacheArtifactCategory,
+  artifactKey: string
+): Promise<CacheArtifactDetail | null> {
+  let path: string;
+  if (category === "writes") {
+    const slash = artifactKey.indexOf("/");
+    if (slash <= 0 || slash >= artifactKey.length - 1) {
+      return null;
+    }
+    const promptHash = artifactKey.slice(0, slash);
+    const fileName = artifactKey.slice(slash + 1);
+    if (!fileName.endsWith(".json")) {
+      return null;
+    }
+    path = join(cacheDir, category, modelDirKey, promptHash, fileName);
+  } else {
+    const fileName = basename(artifactKey);
+    if (!fileName.endsWith(".json")) {
+      return null;
+    }
+    path = join(cacheDir, category, modelDirKey, fileName);
+  }
+
+  const payload = await safeReadJson<unknown>(path);
+  if (!payload) {
+    return null;
+  }
+
+  return {
+    category,
+    artifactKey,
+    modelKey: modelDirKey,
+    payload,
+  };
+}
+
+/**
+ * Resolve and load the two cached outputs referenced by a judgment detail.
+ */
+export async function loadJudgmentComparedOutputs(
+  cacheDir: string,
+  detail: CacheArtifactDetail
+): Promise<JudgmentComparedPair | null> {
+  if (detail.category !== "judgments") {
+    return null;
+  }
+  const payload = asObject(detail.payload);
+  if (!payload) {
+    return null;
+  }
+
+  const outputLocatorIndex = await buildCachedOutputLocatorIndex(cacheDir);
+  let comparedPair: [string, string] | null = null;
+
+  if (typeof payload.firstCacheId === "string" && typeof payload.secondCacheId === "string") {
+    comparedPair = [payload.firstCacheId, payload.secondCacheId];
+  } else {
+    const legacyPairIndex = await buildLegacyJudgmentPairIndex(cacheDir, outputLocatorIndex, true);
+    comparedPair = legacyPairIndex.get(judgmentHashFromArtifactKey(detail.artifactKey)) ?? null;
+  }
+
+  if (!comparedPair) {
+    return null;
+  }
+
+  const firstFromCache = outputLocatorIndex.get(comparedPair[0]);
+  const secondFromCache = outputLocatorIndex.get(comparedPair[1]);
+
+  let first = await resolveComparedOutput(comparedPair[0], firstFromCache, undefined);
+  let second = await resolveComparedOutput(comparedPair[1], secondFromCache, undefined);
+
+  if (!first || !second) {
+    const runOutputLocatorIndex = await getRunOutputLocatorIndex();
+    if (!first) {
+      first = await resolveComparedOutput(
+        comparedPair[0],
+        firstFromCache,
+        runOutputLocatorIndex.get(comparedPair[0])
+      );
+    }
+    if (!second) {
+      second = await resolveComparedOutput(
+        comparedPair[1],
+        secondFromCache,
+        runOutputLocatorIndex.get(comparedPair[1])
+      );
+    }
+  }
+
+  if (!first || !second) {
+    return null;
+  }
+
+  return { first, second };
+}
+
+async function resolveComparedOutput(
+  cacheId: string,
+  cacheLocator: CachedOutputLocator | undefined,
+  runLocator: RunOutputLocator | undefined,
+): Promise<JudgmentComparedOutput | null> {
+  if (cacheLocator) {
+    const payload = await safeReadJson<CachedWrite | CachedRevision>(cacheLocator.path);
+    if (payload && typeof payload.text === "string") {
+      return {
+        cacheId,
+        category: cacheLocator.category,
+        modelKey: cacheLocator.modelKey,
+        promptHash: cacheLocator.promptHash,
+        outputIndex: cacheLocator.outputIndex,
+        text: payload.text,
+      };
+    }
+  }
+
+  if (runLocator) {
+    return {
+      cacheId,
+      category: runLocator.category,
+      modelKey: runLocator.modelKey,
+      outputIndex: runLocator.outputIndex,
+      text: runLocator.text,
+    };
+  }
+
+  return null;
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function usageSummary(value: unknown): string {
+  const usage = asObject(value) as UsageLike | null;
+  if (!usage) {
+    return "-";
+  }
+  const input = usage.inputTokens ?? 0;
+  const output = usage.outputTokens ?? 0;
+  return `${input} in / ${output} out`;
+}
+
+function costSummary(value: unknown): string {
+  const cost = asObject(value) as CostLike | null;
+  if (!cost) {
+    return "-";
+  }
+  const total = typeof cost.total === "number" ? cost.total.toFixed(6) : "-";
+  const uncached = typeof cost.totalUncached === "number"
+    ? cost.totalUncached.toFixed(6)
+    : "-";
+  return `$${total} (uncached $${uncached})`;
+}
+
+function parseOutputIndex(artifactKey: string): number | null {
+  const fileName = basename(artifactKey);
+  const match = fileName.match(/\d+/);
+  if (!match) {
+    return null;
+  }
+  return parseInt(match[0], 10);
+}
+
+/**
+ * Format one cache artifact detail for human-readable TUI display.
+ */
+export function formatCacheArtifactDetail(detail: CacheArtifactDetail): string {
+  const payload = asObject(detail.payload);
+  if (!payload) {
+    return JSON.stringify(detail.payload, null, 2);
+  }
+
+  const spec = specFromModelKey(detail.modelKey) ?? detail.modelKey;
+
+  if (detail.category === "writes" && typeof payload.text === "string") {
+    const outputIndex = parseOutputIndex(detail.artifactKey);
+    const slash = detail.artifactKey.indexOf("/");
+    const promptHash = slash > 0 ? detail.artifactKey.slice(0, slash) : "-";
+    const lines = [
+      `Type: write`,
+      `Model: ${spec}`,
+      `Cache ID: ${String(payload.cacheId ?? "-")}`,
+      `Prompt Hash: ${promptHash}`,
+      `Output Index: ${outputIndex ?? "-"}`,
+      `Created: ${String(payload.createdAt ?? "-")}`,
+      `Latency: ${String(payload.latencyMs ?? "-")} ms`,
+      `Usage: ${usageSummary(payload.usage)}`,
+      `Cost: ${costSummary(payload.cost)}`,
+      "",
+      "Text:",
+      payload.text,
+    ];
+    return lines.join("\n");
+  }
+
+  if (detail.category === "feedback" && typeof payload.text === "string") {
+    const lines = [
+      `Type: feedback`,
+      `Model: ${spec}`,
+      `Cache ID: ${String(payload.cacheId ?? "-")}`,
+      `Write Cache ID: ${String(payload.writeCacheId ?? "-")}`,
+      `Source Model: ${String(payload.sourceModel ?? "-")}`,
+      `Created: ${String(payload.createdAt ?? "-")}`,
+      `Latency: ${String(payload.latencyMs ?? "-")} ms`,
+      `Usage: ${usageSummary(payload.usage)}`,
+      `Cost: ${costSummary(payload.cost)}`,
+      "",
+      "Text:",
+      payload.text,
+    ];
+    return lines.join("\n");
+  }
+
+  if (detail.category === "revisions" && typeof payload.text === "string") {
+    const lines = [
+      `Type: revision`,
+      `Model: ${spec}`,
+      `Cache ID: ${String(payload.cacheId ?? "-")}`,
+      `Feedback Cache ID: ${String(payload.feedbackCacheId ?? "-")}`,
+      `Created: ${String(payload.createdAt ?? "-")}`,
+      `Latency: ${String(payload.latencyMs ?? "-")} ms`,
+      `Usage: ${usageSummary(payload.usage)}`,
+      `Cost: ${costSummary(payload.cost)}`,
+      "",
+      "Text:",
+      payload.text,
+    ];
+    return lines.join("\n");
+  }
+
+  if (detail.category === "judgments" && typeof payload.reasoning === "string") {
+    const lines = [
+      `Type: judgment`,
+      `Model: ${spec}`,
+      `Cache ID: ${String(payload.cacheId ?? "-")}`,
+      `Stage: ${String(payload.stage ?? "-")}`,
+      `Winner: ${String(payload.winner ?? "-")}`,
+      `First Cache ID: ${String(payload.firstCacheId ?? "-")}`,
+      `Second Cache ID: ${String(payload.secondCacheId ?? "-")}`,
+      `Position Swapped: ${String(payload.positionSwapped ?? "-")}`,
+      `Created: ${String(payload.createdAt ?? "-")}`,
+      `Latency: ${String(payload.latencyMs ?? "-")} ms`,
+      `Usage: ${usageSummary(payload.usage)}`,
+      `Cost: ${costSummary(payload.cost)}`,
+      "",
+      "Reasoning:",
+      payload.reasoning,
+    ];
+    return lines.join("\n");
+  }
+
+  return JSON.stringify(detail.payload, null, 2);
 }
 
 /**

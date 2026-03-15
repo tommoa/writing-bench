@@ -81,7 +81,7 @@ export function BenchmarkTab({
 
   return (
     <box flexDirection="column" flexGrow={1}>
-      <box paddingLeft={1}>
+      <box paddingLeft={1} flexShrink={0}>
         <StatusBar
           stage={progress.stage}
           activeStages={progress.activeStages}
@@ -98,10 +98,11 @@ export function BenchmarkTab({
         />
       </box>
 
-      <box paddingLeft={1}>
+      <box paddingLeft={1} flexShrink={0}>
         <RunProgress
           progress={progress.stageProgress}
           opsDone={progress.stageDone}
+          contentWidth={contentWidth}
         />
       </box>
 

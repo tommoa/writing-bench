@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync } from "fs";
-import { rm, readdir, readFile } from "fs/promises";
+import { rm, readdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
+import type { PairwiseJudgment, RunResult, WritingSample } from "../types.js";
 import {
   SampleCache,
   hashPromptContent,
@@ -11,13 +12,20 @@ import {
   judgmentPairHash,
   modelKey,
   specFromModelKey,
+  listModelCacheArtifacts,
+  loadModelCacheArtifact,
+  formatCacheArtifactDetail,
+  loadJudgmentComparedOutputs,
+  type CacheArtifactCategory,
   type CachedWrite,
   type CachedFeedback,
   type CachedRevision,
   type CachedJudgment,
 } from "./sample-cache.js";
+import { saveRun } from "./run-store.js";
 
 const TEST_CACHE_DIR = join(process.cwd(), "data", "test-cache");
+const TEST_RUN_DIR = join(process.cwd(), "data", "runs");
 
 function makeCachedWrite(overrides: Partial<CachedWrite> = {}): CachedWrite {
   return {
@@ -153,6 +161,9 @@ describe("SampleCache - writes", () => {
   afterEach(async () => {
     if (existsSync(TEST_CACHE_DIR)) {
       await rm(TEST_CACHE_DIR, { recursive: true });
+    }
+    if (existsSync(TEST_RUN_DIR)) {
+      await rm(TEST_RUN_DIR, { recursive: true });
     }
   });
 
@@ -387,6 +398,94 @@ function makeCachedJudgment(
   };
 }
 
+function makeRunResult(opts: {
+  id: string;
+  samples: WritingSample[];
+  judgments: PairwiseJudgment[];
+}): RunResult {
+  return {
+    config: {
+      id: opts.id,
+      models: [],
+      prompts: [],
+      outputsPerModel: 1,
+      reasoning: true,
+      noCache: false,
+      cacheOnly: false,
+      skipSeeding: false,
+      timestamp: new Date().toISOString(),
+      concurrency: 1,
+      convergence: {
+        ciThreshold: 0,
+        maxRounds: 1,
+        minPairsPerModel: 2,
+        writingWeight: 1,
+        feedbackWeight: 0.25,
+        revisedWeight: 0.4,
+        judgeQuality: true,
+        judgeQualityMode: "consensus",
+        judgeDecay: 0.03,
+        judgePruneThreshold: 0.5,
+      },
+    },
+    samples: opts.samples,
+    feedback: [],
+    judgments: opts.judgments,
+    elo: {
+      initial: { stage: "initial", ratings: [] },
+      revised: { stage: "revised", ratings: [] },
+    },
+    meta: {
+      totalTokens: 0,
+      totalCost: 0,
+      totalCostUncached: 0,
+      costByModel: {},
+      costByStage: {},
+      costByModelByStage: {},
+      speedByModel: {},
+      durationMs: 0,
+      terminationReason: "converged",
+      converged: true,
+      roundsCompleted: 0,
+    },
+    modelInfo: {},
+  };
+}
+
+function makeRunSample(overrides: Partial<WritingSample> = {}): WritingSample {
+  return {
+    id: "run-sample-1",
+    model: "writer",
+    registryId: "openai:gpt-4o",
+    promptId: "prompt-1",
+    outputIndex: 0,
+    text: "run sample",
+    stage: "initial",
+    usage: { inputTokens: 0, outputTokens: 0 },
+    cost: { input: 0, output: 0, total: 0, totalUncached: 0 },
+    latencyMs: 0,
+    ...overrides,
+  };
+}
+
+function makeRunJudgment(overrides: Partial<PairwiseJudgment> = {}): PairwiseJudgment {
+  return {
+    id: "run-judgment-1",
+    judgeModel: "judge",
+    judgeRegistryId: "anthropic:claude-sonnet-4-20250514",
+    promptId: "prompt-1",
+    sampleA: "run-sample-a",
+    sampleB: "run-sample-b",
+    winner: "A",
+    reasoning: "run judgment",
+    stage: "initial",
+    usage: { inputTokens: 0, outputTokens: 0 },
+    cost: { input: 0, output: 0, total: 0, totalUncached: 0 },
+    latencyMs: 0,
+    ...overrides,
+  };
+}
+
 describe("SampleCache - judgments", () => {
   let cache: SampleCache;
 
@@ -588,6 +687,404 @@ describe("SampleCache - full provenance chain", () => {
     expect(rev!.feedbackCacheId).toBe("chain-fb1");
   });
 });
+
+describe("cache artifact browser helpers", () => {
+  let cache: SampleCache;
+  const WRITER = { provider: "openai", model: "gpt-4o" };
+  const WRITER_ALT = { provider: "google", model: "gemini-2.5-flash" };
+  const JUDGE = { provider: "anthropic", model: "claude-sonnet-4-20250514" };
+  const MK = modelKey(WRITER.provider, WRITER.model);
+
+  beforeEach(async () => {
+    if (existsSync(TEST_CACHE_DIR)) {
+      await rm(TEST_CACHE_DIR, { recursive: true });
+    }
+    cache = new SampleCache(TEST_CACHE_DIR);
+  });
+
+  afterEach(async () => {
+    if (existsSync(TEST_CACHE_DIR)) {
+      await rm(TEST_CACHE_DIR, { recursive: true });
+    }
+  });
+
+  it("lists artifacts across all categories", async () => {
+    await cache.addCachedWrite(
+      WRITER.provider,
+      WRITER.model,
+      "Prompt A",
+      makeCachedWrite({ cacheId: "w-a", text: "write a" }),
+      0
+    );
+    await cache.addCachedFeedback(
+      WRITER.provider,
+      WRITER.model,
+      "w-a",
+      makeCachedFeedback({ cacheId: "fb-a", writeCacheId: "w-a", text: "feedback a" })
+    );
+    await cache.addCachedRevision(
+      WRITER.provider,
+      WRITER.model,
+      "fb-a",
+      makeCachedRevision({ cacheId: "rev-a", feedbackCacheId: "fb-a", text: "revision a" })
+    );
+    await cache.addCachedJudgment(
+      JUDGE.provider,
+      JUDGE.model,
+      "initial",
+      "w-a",
+      "w-b",
+      makeCachedJudgment({ cacheId: "j-a", reasoning: "judgment a" })
+    );
+
+    const writerArtifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, MK);
+    expect(writerArtifacts.some((a) => a.category === "writes")).toBe(true);
+    expect(writerArtifacts.some((a) => a.category === "feedback")).toBe(true);
+    expect(writerArtifacts.some((a) => a.category === "revisions")).toBe(true);
+
+    const judgeArtifacts = await listModelCacheArtifacts(
+      TEST_CACHE_DIR,
+      modelKey(JUDGE.provider, JUDGE.model)
+    );
+    expect(judgeArtifacts.some((a) => a.category === "judgments")).toBe(true);
+  });
+
+  it("loads artifact detail by category and key", async () => {
+    await cache.addCachedWrite(
+      WRITER.provider,
+      WRITER.model,
+      "Prompt B",
+      makeCachedWrite({ cacheId: "w-b", text: "body" }),
+      0
+    );
+    const artifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, MK);
+    const write = artifacts.find((a) => a.category === "writes");
+    expect(write).toBeDefined();
+
+    const detail = await loadModelCacheArtifact(
+      TEST_CACHE_DIR,
+      MK,
+      "writes",
+      write!.artifactKey
+    );
+
+    expect(detail).not.toBeNull();
+    expect((detail!.payload as { cacheId: string }).cacheId).toBe("w-b");
+  });
+
+  it("skips malformed json files when listing", async () => {
+    await cache.addCachedWrite(
+      WRITER.provider,
+      WRITER.model,
+      "Prompt C",
+      makeCachedWrite({ cacheId: "w-c" }),
+      0
+    );
+    const promptHash = hashPromptContent("Prompt C");
+    const badPath = join(TEST_CACHE_DIR, "writes", MK, promptHash, "sample_0.json");
+    await writeFile(badPath, "{ bad json");
+
+    const artifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, MK);
+    expect(artifacts).toEqual([]);
+  });
+
+  it("returns null for invalid artifact keys", async () => {
+    const categories: CacheArtifactCategory[] = ["writes", "feedback", "revisions", "judgments"];
+    for (const category of categories) {
+      const detail = await loadModelCacheArtifact(TEST_CACHE_DIR, MK, category, "not-a-file");
+      expect(detail).toBeNull();
+    }
+  });
+
+  it("formats write artifact details with readable text block", async () => {
+    await cache.addCachedWrite(
+      WRITER.provider,
+      WRITER.model,
+      "Prompt D",
+      makeCachedWrite({
+        cacheId: "w-d",
+        text: "Line one\nLine two",
+      }),
+      0
+    );
+    const artifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, MK);
+    const write = artifacts.find((a) => a.category === "writes");
+    const detail = await loadModelCacheArtifact(TEST_CACHE_DIR, MK, "writes", write!.artifactKey);
+    const rendered = formatCacheArtifactDetail(detail!);
+
+    expect(rendered).toContain("Type: write");
+    expect(rendered).toContain("Cache ID: w-d");
+    expect(rendered).toContain("Text:");
+    expect(rendered).toContain("Line one\nLine two");
+  });
+
+  it("formats judgment artifact details with readable reasoning", async () => {
+    const judgeKey = modelKey(JUDGE.provider, JUDGE.model);
+    await cache.addCachedJudgment(
+      JUDGE.provider,
+      JUDGE.model,
+      "revised",
+      "w-x",
+      "w-y",
+      makeCachedJudgment({
+        cacheId: "j-d",
+        stage: "revised",
+        winner: "B",
+        reasoning: "Reasoning line A\nReasoning line B",
+      })
+    );
+    const artifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, judgeKey);
+    const judgment = artifacts.find((a) => a.category === "judgments");
+    const detail = await loadModelCacheArtifact(
+      TEST_CACHE_DIR,
+      judgeKey,
+      "judgments",
+      judgment!.artifactKey
+    );
+    const rendered = formatCacheArtifactDetail(detail!);
+
+    expect(rendered).toContain("Type: judgment");
+    expect(rendered).toContain("Stage: revised");
+    expect(rendered).toContain("Winner: B");
+    expect(rendered).toContain("Reasoning:");
+    expect(rendered).toContain("Reasoning line A\nReasoning line B");
+  });
+
+  it("includes compared model labels for judgment artifacts", async () => {
+    await cache.addCachedWrite(
+      WRITER.provider,
+      WRITER.model,
+      "Prompt E",
+      makeCachedWrite({ cacheId: "w-e1", text: "writer one" }),
+      0
+    );
+    await cache.addCachedWrite(
+      WRITER_ALT.provider,
+      WRITER_ALT.model,
+      "Prompt E",
+      makeCachedWrite({ cacheId: "w-e2", text: "writer two" }),
+      0
+    );
+    await cache.addCachedJudgment(
+      JUDGE.provider,
+      JUDGE.model,
+      "initial",
+      "w-e1",
+      "w-e2",
+      makeCachedJudgment({ cacheId: "j-e" })
+    );
+
+    const judgeKey = modelKey(JUDGE.provider, JUDGE.model);
+    const artifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, judgeKey);
+    const judgment = artifacts.find((a) => a.category === "judgments");
+
+    expect(judgment?.comparisonLabel).toContain("openai:gpt-4o");
+    expect(judgment?.comparisonLabel).toContain("google:gemini-2.5-flash");
+    expect(judgment?.comparedCacheIds).toBeDefined();
+  });
+
+  it("loads compared outputs referenced by a judgment", async () => {
+    await cache.addCachedWrite(
+      WRITER.provider,
+      WRITER.model,
+      "Prompt F",
+      makeCachedWrite({ cacheId: "w-f", text: "original body" }),
+      0
+    );
+    await cache.addCachedRevision(
+      WRITER.provider,
+      WRITER.model,
+      "fb-f",
+      makeCachedRevision({ cacheId: "rev-f", feedbackCacheId: "fb-f", text: "revised body" })
+    );
+    await cache.addCachedJudgment(
+      JUDGE.provider,
+      JUDGE.model,
+      "improvement",
+      "w-f",
+      "rev-f",
+      makeCachedJudgment({ cacheId: "j-f", stage: "improvement" })
+    );
+
+    const judgeKey = modelKey(JUDGE.provider, JUDGE.model);
+    const artifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, judgeKey);
+    const judgment = artifacts.find((a) => a.category === "judgments");
+    const detail = await loadModelCacheArtifact(TEST_CACHE_DIR, judgeKey, "judgments", judgment!.artifactKey);
+    const pair = await loadJudgmentComparedOutputs(TEST_CACHE_DIR, detail!);
+
+    expect(pair).not.toBeNull();
+    const ids = [pair!.first.cacheId, pair!.second.cacheId].sort();
+    expect(ids).toEqual(["rev-f", "w-f"]);
+    expect(pair!.first.text === "original body" || pair!.second.text === "original body").toBe(true);
+    expect(pair!.first.text === "revised body" || pair!.second.text === "revised body").toBe(true);
+  });
+
+  it("resolves compared outputs for legacy judgment entries", async () => {
+    await cache.addCachedWrite(
+      WRITER.provider,
+      WRITER.model,
+      "Prompt G",
+      makeCachedWrite({ cacheId: "w-g", text: "legacy original" }),
+      0
+    );
+    await cache.addCachedRevision(
+      WRITER.provider,
+      WRITER.model,
+      "fb-g",
+      makeCachedRevision({ cacheId: "rev-g", feedbackCacheId: "fb-g", text: "legacy revised" })
+    );
+    await cache.addCachedFeedback(
+      WRITER_ALT.provider,
+      WRITER_ALT.model,
+      "w-g",
+      makeCachedFeedback({ cacheId: "fb-g", writeCacheId: "w-g" })
+    );
+    await cache.addCachedJudgment(
+      JUDGE.provider,
+      JUDGE.model,
+      "improvement",
+      "w-g",
+      "rev-g",
+      makeCachedJudgment({ cacheId: "j-g", stage: "improvement" })
+    );
+
+    const judgeKey = modelKey(JUDGE.provider, JUDGE.model);
+    const artifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, judgeKey);
+    const judgment = artifacts.find((a) => a.category === "judgments" && a.cacheId === "j-g");
+    expect(judgment).toBeDefined();
+
+    const judgmentPath = join(TEST_CACHE_DIR, "judgments", judgeKey, judgment!.artifactKey);
+    const raw = JSON.parse(await readFile(judgmentPath, "utf-8"));
+    delete raw.firstCacheId;
+    delete raw.secondCacheId;
+    await writeFile(judgmentPath, JSON.stringify(raw, null, 2));
+
+    const legacyArtifacts = await listModelCacheArtifacts(TEST_CACHE_DIR, judgeKey);
+    const legacyJudgment = legacyArtifacts.find((a) => a.category === "judgments" && a.cacheId === "j-g");
+    expect(legacyJudgment?.comparedCacheIds).toEqual(["rev-g", "w-g"]);
+
+    const detail = await loadModelCacheArtifact(
+      TEST_CACHE_DIR,
+      judgeKey,
+      "judgments",
+      legacyJudgment!.artifactKey
+    );
+    const pair = await loadJudgmentComparedOutputs(TEST_CACHE_DIR, detail!);
+    expect(pair).not.toBeNull();
+    const texts = [pair!.first.text, pair!.second.text].sort();
+    expect(texts).toEqual(["legacy original", "legacy revised"]);
+  });
+
+  it("reloads run output fallback after new runs are saved", async () => {
+    const judgeKey = modelKey(JUDGE.provider, JUDGE.model);
+
+    await saveRun(makeRunResult({
+      id: "run-1",
+      samples: [
+        makeRunSample({ id: "run-w-1a", text: "run one a" }),
+        makeRunSample({
+          id: "run-w-1b",
+          model: "writer alt",
+          registryId: "google:gemini-2.5-flash",
+          text: "run one b",
+        }),
+      ],
+      judgments: [
+        makeRunJudgment({ id: "judgment-1", sampleA: "run-w-1a", sampleB: "run-w-1b" }),
+      ],
+    }));
+
+    await cache.addCachedJudgment(
+      JUDGE.provider,
+      JUDGE.model,
+      "initial",
+      "run-w-1a",
+      "run-w-1b",
+      makeCachedJudgment({ cacheId: "legacy-j-1" })
+    );
+    await stripJudgmentComparedCacheIds(TEST_CACHE_DIR, judgeKey, "legacy-j-1");
+
+    const firstPair = await loadJudgmentComparedOutputs(
+      TEST_CACHE_DIR,
+      await loadLegacyJudgmentDetail(TEST_CACHE_DIR, judgeKey, "legacy-j-1")
+    );
+
+    expect(firstPair).not.toBeNull();
+    expect([firstPair!.first.text, firstPair!.second.text].sort()).toEqual(["run one a", "run one b"]);
+
+    await saveRun(makeRunResult({
+      id: "run-2",
+      samples: [
+        makeRunSample({ id: "run-w-2a", text: "run two a" }),
+        makeRunSample({
+          id: "run-w-2b",
+          model: "writer alt",
+          registryId: "google:gemini-2.5-flash",
+          text: "run two b",
+        }),
+      ],
+      judgments: [
+        makeRunJudgment({ id: "judgment-2", sampleA: "run-w-2a", sampleB: "run-w-2b" }),
+      ],
+    }));
+
+    await cache.addCachedJudgment(
+      JUDGE.provider,
+      JUDGE.model,
+      "initial",
+      "run-w-2a",
+      "run-w-2b",
+      makeCachedJudgment({ cacheId: "legacy-j-2" })
+    );
+    await stripJudgmentComparedCacheIds(TEST_CACHE_DIR, judgeKey, "legacy-j-2");
+
+    const secondPair = await loadJudgmentComparedOutputs(
+      TEST_CACHE_DIR,
+      await loadLegacyJudgmentDetail(TEST_CACHE_DIR, judgeKey, "legacy-j-2")
+    );
+
+    expect(secondPair).not.toBeNull();
+    expect([secondPair!.first.text, secondPair!.second.text].sort()).toEqual(["run two a", "run two b"]);
+  });
+
+  it("falls back to JSON for unknown payload format", () => {
+    const rendered = formatCacheArtifactDetail({
+      category: "feedback",
+      artifactKey: "x.json",
+      modelKey: MK,
+      payload: "raw-string",
+    });
+
+    expect(rendered).toContain("raw-string");
+  });
+});
+
+async function stripJudgmentComparedCacheIds(
+  cacheDir: string,
+  judgeKey: string,
+  judgmentCacheId: string,
+): Promise<void> {
+  const detail = await loadLegacyJudgmentDetail(cacheDir, judgeKey, judgmentCacheId);
+  const judgmentPath = join(cacheDir, "judgments", judgeKey, detail.artifactKey);
+  const raw = JSON.parse(await readFile(judgmentPath, "utf-8")) as Record<string, unknown>;
+  delete raw.firstCacheId;
+  delete raw.secondCacheId;
+  await writeFile(judgmentPath, JSON.stringify(raw, null, 2));
+}
+
+async function loadLegacyJudgmentDetail(
+  cacheDir: string,
+  judgeKey: string,
+  judgmentCacheId: string,
+) {
+  const artifacts = await listModelCacheArtifacts(cacheDir, judgeKey);
+  const judgment = artifacts.find((artifact) => artifact.category === "judgments" && artifact.cacheId === judgmentCacheId);
+  expect(judgment).toBeDefined();
+
+  const detail = await loadModelCacheArtifact(cacheDir, judgeKey, "judgments", judgment!.artifactKey);
+  expect(detail).not.toBeNull();
+  return detail!;
+}
 
 // ── trimModelOutputs ────────────────────────────────
 

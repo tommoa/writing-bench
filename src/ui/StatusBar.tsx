@@ -34,13 +34,20 @@ const STAGE_LABELS: Record<BenchmarkStage, string> = {
 
 import { truncate } from "./format-utils.js";
 
-function fitStatusLine(text: string, maxWidth: number): string {
-  if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
-    return text;
-  }
+function sanitizeStatusText(text: string): string {
+  return text
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  const clipped = truncate(text, maxWidth);
-  return clipped.padEnd(maxWidth, " ");
+function fitStatusLine(text: string, maxWidth: number): string {
+  const cleaned = sanitizeStatusText(text);
+  if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
+    return cleaned;
+  }
+  return truncate(cleaned, maxWidth);
 }
 
 interface StatusBarProps {
@@ -85,6 +92,7 @@ export function StatusBar({
 
   // Max text width for indented lines (3 marginLeft + 1 paddingLeft from parent)
   const lineMax = contentWidth != null ? contentWidth - 4 : Infinity;
+  const topLineText = fitStatusLine(`${stageLabel}  ${pct}%  (${opsDone} ops)`, lineMax);
 
   // ── Build detail lines ──
   const details: Array<{ text: string; color: string }> = [];
@@ -109,26 +117,25 @@ export function StatusBar({
     });
   }
 
+  const totalRows = 1 + details.length;
+
   return (
-    <box flexDirection="column" marginBottom={1}>
-      <box height={1}>
-        <box flexDirection="row">
-          {!isComplete && (
-            <>
-              <box width={1} backgroundColor={palette.bg}>
-                <Spinner color={palette.cyan} />
-              </box>
-              <box width={2}>
-                <text>{"  "}</text>
-              </box>
-            </>
-          )}
-          <box>
-            <text>
-              <b><span fg={isComplete ? palette.green : palette.yellow}>{stageLabel}</span></b>
-              <span fg={palette.gray}>{"  "}{pct}%  ({opsDone} ops)</span>
-            </text>
-          </box>
+    <box flexDirection="column" marginBottom={1} height={totalRows} flexShrink={0}>
+      <box height={1} flexDirection="row">
+        {!isComplete && (
+          <>
+            <box width={1} backgroundColor={palette.bg}>
+              <Spinner color={palette.cyan} />
+            </box>
+            <box width={2}>
+              <text>{"  "}</text>
+            </box>
+          </>
+        )}
+        <box>
+          <text>
+            <b><span fg={isComplete ? palette.green : palette.yellow}>{topLineText}</span></b>
+          </text>
         </box>
       </box>
       {details.length > 0 && (

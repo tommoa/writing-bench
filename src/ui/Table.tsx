@@ -11,12 +11,16 @@ export interface Column<T> {
   align?: "left" | "right";
   /** Minimum column width (header length is also considered). */
   width?: number;
+  /** Smallest width allowed when shrinking to fit a max table width. */
+  minWidth?: number;
   /** Compute minimum width dynamically from the full data set. */
   computeWidth?: (data: T[]) => number;
   /** Return the cell content as a plain string. */
   value: (row: T, index: number) => string;
   /** Return a color string for the cell (undefined = inherit). */
   color?: (row: T, index: number) => string | undefined;
+  /** Allow this column to shrink and truncate when maxWidth is set. */
+  truncate?: boolean;
   /** When false, the column is hidden. Default true. */
   when?: boolean;
 }
@@ -48,32 +52,53 @@ export function computeTableLayout<T>(
   columns: Column<T>[],
   data: T[],
   gap: string = "  ",
+  maxWidth?: number,
 ): TableLayout<T> {
   const active = columns.filter((c) => c.when !== false);
 
-  const widths = active.map((col) => {
+  const desiredWidths = active.map((col) => {
     const headerW = col.header.length;
     const minW = col.width ?? 0;
     const dataW = col.computeWidth ? col.computeWidth(data) : 0;
     return Math.max(headerW, minW, dataW);
   });
 
+  const shrinkable = active.map((col, i) => col.truncate ? i : -1).filter((i) => i >= 0);
+  const gapOptions = [...new Set([gap, " ", ""])] ;
+
+  let widths = [...desiredWidths];
+  let resolvedGap = gap;
+
+  for (const gapCandidate of gapOptions) {
+    const candidateWidths = [...desiredWidths];
+    shrinkWidthsToFit(active, candidateWidths, gapCandidate.length, maxWidth, shrinkable);
+    const candidateSepLen = candidateWidths.reduce((sum, w) => sum + w, 0)
+      + (active.length - 1) * gapCandidate.length;
+
+    widths = candidateWidths;
+    resolvedGap = gapCandidate;
+    if (maxWidth == null || candidateSepLen <= maxWidth) {
+      break;
+    }
+  }
+
   const headerStr = active
     .map((col, i) => {
       const w = widths[i];
+      const header = formatCellText(col.header, w);
       return col.align === "right"
-        ? col.header.padStart(w)
-        : col.header.padEnd(w);
+        ? header.padStart(w)
+        : header.padEnd(w);
     })
-    .join(gap);
+    .join(resolvedGap);
 
   const sepLen =
     widths.reduce((sum, w) => sum + w, 0) +
-    (active.length - 1) * gap.length;
+    (active.length - 1) * resolvedGap.length;
 
   function formatRow(row: T, index: number): CellData[] {
     return active.map((col, i) => {
-      const raw = col.value(row, index);
+      const raw = formatCellText(col.value(row, index), widths[i]);
       const w = widths[i];
       const text =
         col.align === "right" ? raw.padStart(w) : raw.padEnd(w);
@@ -82,7 +107,59 @@ export function computeTableLayout<T>(
     });
   }
 
-  return { headerStr, sepLen, gap, formatRow };
+  return { headerStr, sepLen, gap: resolvedGap, formatRow };
+}
+
+function shrinkWidthsToFit<T>(
+  columns: Column<T>[],
+  widths: number[],
+  gapLength: number,
+  maxWidth: number | undefined,
+  shrinkable: number[],
+): void {
+  if (maxWidth == null || !Number.isFinite(maxWidth) || shrinkable.length === 0) {
+    return;
+  }
+
+  const minWidths = columns.map((col, i) => {
+    const headerFloor = col.truncate ? 1 : col.header.length;
+    return Math.max(col.minWidth ?? 0, Math.min(widths[i], headerFloor));
+  });
+
+  while (true) {
+    const total = widths.reduce((sum, w) => sum + w, 0) + (columns.length - 1) * gapLength;
+    if (total <= maxWidth) {
+      return;
+    }
+
+    let widestIndex = -1;
+    let widestWidth = -1;
+    for (const index of shrinkable) {
+      if (widths[index] > minWidths[index] && widths[index] > widestWidth) {
+        widestWidth = widths[index];
+        widestIndex = index;
+      }
+    }
+
+    if (widestIndex < 0) {
+      return;
+    }
+
+    widths[widestIndex] -= 1;
+  }
+}
+
+function formatCellText(value: string, width: number): string {
+  if (width <= 0) {
+    return "";
+  }
+  if (value.length <= width) {
+    return value;
+  }
+  if (width <= 3) {
+    return value.slice(0, width);
+  }
+  return value.slice(0, width - 3) + "...";
 }
 
 // ── React Component ────────────────────────────────
@@ -98,6 +175,8 @@ interface TableProps<T> {
   columns: Column<T>[];
   /** Gap string between columns (default "  "). */
   gap?: string;
+  /** Maximum rendered table width in columns. */
+  maxWidth?: number;
   /** Produce a unique React key for each data row. */
   keyFn: (row: T, index: number) => string;
   /** Optional default foreground color for a row. */
@@ -115,13 +194,14 @@ export function Table<T>({
   data,
   columns,
   gap = "  ",
+  maxWidth,
   keyFn,
   rowFg,
   marginBottom = 1,
   children,
 }: TableProps<T>) {
   const palette = usePalette();
-  const layout = computeTableLayout(columns, data, gap);
+  const layout = computeTableLayout(columns, data, gap, maxWidth);
 
   return (
     <box flexDirection="column" marginBottom={marginBottom}>

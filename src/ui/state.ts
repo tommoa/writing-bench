@@ -27,7 +27,13 @@ export interface CacheModelEntry {
 
 export type CacheConfirmAction =
   | { type: "trim"; model: string }
-  | { type: "delete"; model: string };
+  | { type: "delete"; model: string }
+  | {
+      type: "merge";
+      sourceModel: string;
+      targetModel: string;
+      targetSpec: string;
+    };
 
 export interface CacheTabState {
   loading: boolean;

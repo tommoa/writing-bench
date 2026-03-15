@@ -12,6 +12,7 @@ import {
   formatCacheStatusJson,
   formatBytes,
   computeCacheDiskSize,
+  projectCoveringsByModel,
 } from "./cache-status.js";
 import { hashPromptContent, modelKey, judgmentPairHash, specFromModelKey, discoverModelKeys } from "./sample-cache.js";
 import type { PromptConfig } from "../types.js";
@@ -1505,6 +1506,47 @@ describe("findMaximalCoverings with overlapping coverings", () => {
     expect(coverings).toHaveLength(1);
     expect(coverings[0].writerKeys.sort()).toEqual(writerKeys.sort());
     expect(coverings[0].outputsPerModel).toBe(1);
+  });
+});
+
+describe("projectCoveringsByModel", () => {
+  it("returns empty for empty coverings", () => {
+    expect(projectCoveringsByModel([])).toEqual([]);
+  });
+
+  it("aggregates writer and judge participation", () => {
+    const coverings: Covering[] = [
+      {
+        writerKeys: ["openai__gpt-4o", "anthropic__claude"],
+        promptIds: ["p1", "p2"],
+        judgeKeys: ["openai__gpt-4o"],
+        outputsPerModel: 2,
+      },
+      {
+        writerKeys: ["openai__gpt-4o"],
+        promptIds: ["p3"],
+        judgeKeys: ["anthropic__claude", "openai__gpt-4o"],
+        outputsPerModel: 1,
+      },
+    ];
+
+    const rows = projectCoveringsByModel(coverings);
+    expect(rows).toHaveLength(2);
+
+    const openai = rows.find((r) => r.modelKey === "openai__gpt-4o");
+    const claude = rows.find((r) => r.modelKey === "anthropic__claude");
+
+    expect(openai?.asWriterCount).toBe(2);
+    expect(openai?.asJudgeCount).toBe(2);
+    expect(openai?.coveringCount).toBe(2);
+    expect(openai?.maxOutputsPerModel).toBe(2);
+    expect(openai?.promptIds).toEqual(["p1", "p2", "p3"]);
+
+    expect(claude?.asWriterCount).toBe(1);
+    expect(claude?.asJudgeCount).toBe(1);
+    expect(claude?.coveringCount).toBe(2);
+    expect(claude?.maxOutputsPerModel).toBe(2);
+    expect(claude?.promptIds).toEqual(["p1", "p2", "p3"]);
   });
 });
 
