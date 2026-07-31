@@ -1,8 +1,7 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from "react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
-import { join, dirname } from "path";
-import { rm } from "fs/promises";
+import { join } from "path";
 import { existsSync } from "fs";
 import { ConfirmPrompt } from "../ConfirmPrompt.js";
 import { TextInput } from "../TextInput.js";
@@ -19,6 +18,7 @@ import {
 } from "../../storage/cache-status.js";
 import {
   trimModelOutputs,
+  clearModelCache,
   specFromModelKey,
   discoverModelKeys,
   combineModelCaches,
@@ -32,7 +32,7 @@ import {
   type CacheArtifactSummary,
   type JudgmentComparedPair,
 } from "../../storage/sample-cache.js";
-import { safeReaddir, removeIfEmpty } from "../../storage/fs-utils.js";
+import { safeReaddir } from "../../storage/fs-utils.js";
 import { loadPrompts } from "../../config.js";
 import { parseModelSpec } from "../../providers/registry.js";
 import { loadLatestRun } from "../../storage/run-store.js";
@@ -169,16 +169,6 @@ async function loadCacheData(dispatch: (action: AppAction) => void) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     dispatch({ type: "CACHE_ERROR", message: `Failed to load cache: ${msg}` });
-  }
-}
-
-async function deleteModelCache(modelDirKey: string): Promise<void> {
-  for (const cat of CATEGORIES) {
-    const dir = join(CACHE_DIR, cat, modelDirKey);
-    if (existsSync(dir)) {
-      await rm(dir, { recursive: true });
-      await removeIfEmpty(dirname(dir), join(CACHE_DIR, cat));
-    }
   }
 }
 
@@ -775,7 +765,7 @@ export function CacheTab({ state, activeTab, dispatch }: CacheTabProps) {
         await trimModelOutputs(CACHE_DIR, action.model, 1);
         setNotice(`Trimmed ${specFromModelKey(action.model) ?? action.model} to 1 output per prompt.`);
       } else if (action.type === "delete") {
-        await deleteModelCache(action.model);
+        await clearModelCache(CACHE_DIR, action.model);
         setNotice(`Deleted all cache for ${specFromModelKey(action.model) ?? action.model}.`);
       } else {
         const result = await combineModelCaches(CACHE_DIR, action.sourceModel, action.targetModel);

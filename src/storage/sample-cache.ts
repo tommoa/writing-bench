@@ -1145,6 +1145,189 @@ export interface TrimResult {
   judgmentsDeleted: number;
 }
 
+export interface ClearModelCacheResult {
+  writesDeleted: number;
+  feedbackDeleted: number;
+  revisionsDeleted: number;
+  judgmentsDeleted: number;
+}
+
+interface CachedFileEntry {
+  path: string;
+  dependencyId: string;
+  cacheId?: string;
+}
+
+async function listFlatCacheEntries(dir: string): Promise<CachedFileEntry[]> {
+  const entries: CachedFileEntry[] = [];
+  const files = (await safeReaddir(dir)).filter((file) => file.endsWith(".json"));
+  for (const file of files) {
+    const path = join(dir, file);
+    const cached = await safeReadJson<{ cacheId?: string }>(path);
+    entries.push({
+      path,
+      dependencyId: basename(file, ".json"),
+      cacheId: cached?.cacheId,
+    });
+  }
+  return entries;
+}
+
+async function listWriteCacheEntries(dir: string): Promise<CachedFileEntry[]> {
+  const entries: CachedFileEntry[] = [];
+  for (const promptHash of await safeReaddir(dir)) {
+    entries.push(...await listFlatCacheEntries(join(dir, promptHash)));
+  }
+  return entries;
+}
+
+async function removeModelCacheDir(dir: string, categoryDir: string): Promise<void> {
+  if (!existsSync(dir)) return;
+  await rm(dir, { recursive: true });
+  await removeIfEmpty(dirname(dir), categoryDir);
+}
+
+async function collectOutputCacheIds(cacheDir: string): Promise<Set<string>> {
+  const cacheIds = new Set<string>();
+  const writesDir = join(cacheDir, "writes");
+  for (const modelDir of await discoverModelKeys(writesDir)) {
+    for (const entry of await listWriteCacheEntries(join(writesDir, modelDir))) {
+      if (entry.cacheId) cacheIds.add(entry.cacheId);
+    }
+  }
+
+  const revisionsDir = join(cacheDir, "revisions");
+  for (const modelDir of await discoverModelKeys(revisionsDir)) {
+    for (const entry of await listFlatCacheEntries(join(revisionsDir, modelDir))) {
+      if (entry.cacheId) cacheIds.add(entry.cacheId);
+    }
+  }
+  return cacheIds;
+}
+
+async function deleteAffectedJudgments(
+  cacheDir: string,
+  deletedOutputIds: Set<string>,
+  judgeModelKey?: string,
+): Promise<number> {
+  const judgmentsDir = join(cacheDir, "judgments");
+  let deleted = 0;
+
+  if (judgeModelKey) {
+    const judgeDir = join(judgmentsDir, judgeModelKey);
+    deleted += (await safeReaddir(judgeDir)).filter((file) => file.endsWith(".json")).length;
+    await removeModelCacheDir(judgeDir, judgmentsDir);
+  }
+
+  if (deletedOutputIds.size === 0) return deleted;
+
+  const allOutputIds = await collectOutputCacheIds(cacheDir);
+  for (const id of deletedOutputIds) allOutputIds.add(id);
+
+  const staleHashes = new Set<string>();
+  for (const deletedId of deletedOutputIds) {
+    for (const otherId of allOutputIds) {
+      if (deletedId === otherId) continue;
+      for (const stage of ["initial", "improvement", "revised"] as const) {
+        staleHashes.add(judgmentPairHash(stage, deletedId, otherId));
+      }
+    }
+  }
+
+  for (const modelDir of await discoverModelKeys(judgmentsDir)) {
+    if (modelDir === judgeModelKey) continue;
+    const modelPath = join(judgmentsDir, modelDir);
+    for (const entry of await listFlatCacheEntries(modelPath)) {
+      const judgment = await safeReadJson<Pick<CachedJudgment, "firstCacheId" | "secondCacheId">>(entry.path);
+      const referencesDeletedOutput =
+        (judgment?.firstCacheId != null && deletedOutputIds.has(judgment.firstCacheId))
+        || (judgment?.secondCacheId != null && deletedOutputIds.has(judgment.secondCacheId));
+      if (!referencesDeletedOutput && !staleHashes.has(entry.dependencyId)) continue;
+      await unlink(entry.path);
+      deleted++;
+    }
+    await removeIfEmpty(modelPath, judgmentsDir);
+  }
+  await removeIfEmpty(judgmentsDir);
+  return deleted;
+}
+
+/**
+ * Clear artifacts produced by a model and every artifact that depends on
+ * those outputs, while preserving unrelated cache entries.
+ */
+export async function clearModelCache(
+  cacheDir: string,
+  mk: string,
+  judgmentsOnly: boolean = false,
+): Promise<ClearModelCacheResult> {
+  const result: ClearModelCacheResult = {
+    writesDeleted: 0,
+    feedbackDeleted: 0,
+    revisionsDeleted: 0,
+    judgmentsDeleted: 0,
+  };
+
+  if (judgmentsOnly) {
+    result.judgmentsDeleted = await deleteAffectedJudgments(cacheDir, new Set(), mk);
+    return result;
+  }
+
+  const writesDir = join(cacheDir, "writes");
+  const feedbackDir = join(cacheDir, "feedback");
+  const revisionsDir = join(cacheDir, "revisions");
+  const modelWritesDir = join(writesDir, mk);
+  const modelFeedbackDir = join(feedbackDir, mk);
+  const modelRevisionsDir = join(revisionsDir, mk);
+
+  const modelWrites = await listWriteCacheEntries(modelWritesDir);
+  const modelFeedback = await listFlatCacheEntries(modelFeedbackDir);
+  const modelRevisions = await listFlatCacheEntries(modelRevisionsDir);
+  const deletedWriteIds = new Set(modelWrites.flatMap((entry) => entry.cacheId ? [entry.cacheId] : []));
+  const deletedFeedbackIds = new Set(modelFeedback.flatMap((entry) => entry.cacheId ? [entry.cacheId] : []));
+  const deletedRevisionIds = new Set(modelRevisions.flatMap((entry) => entry.cacheId ? [entry.cacheId] : []));
+
+  result.writesDeleted = modelWrites.length;
+  result.feedbackDeleted = modelFeedback.length;
+  result.revisionsDeleted = modelRevisions.length;
+  await removeModelCacheDir(modelWritesDir, writesDir);
+  await removeModelCacheDir(modelFeedbackDir, feedbackDir);
+  await removeModelCacheDir(modelRevisionsDir, revisionsDir);
+
+  // Feedback filenames identify their source write, so malformed payloads can
+  // still be removed safely. Valid cache IDs extend the dependency cascade.
+  for (const modelDir of await discoverModelKeys(feedbackDir)) {
+    const modelPath = join(feedbackDir, modelDir);
+    for (const entry of await listFlatCacheEntries(modelPath)) {
+      if (!deletedWriteIds.has(entry.dependencyId)) continue;
+      if (entry.cacheId) deletedFeedbackIds.add(entry.cacheId);
+      await unlink(entry.path);
+      result.feedbackDeleted++;
+    }
+    await removeIfEmpty(modelPath, feedbackDir);
+  }
+
+  // Revision filenames identify their source feedback cache ID.
+  for (const modelDir of await discoverModelKeys(revisionsDir)) {
+    const modelPath = join(revisionsDir, modelDir);
+    for (const entry of await listFlatCacheEntries(modelPath)) {
+      if (!deletedFeedbackIds.has(entry.dependencyId)) continue;
+      if (entry.cacheId) deletedRevisionIds.add(entry.cacheId);
+      await unlink(entry.path);
+      result.revisionsDeleted++;
+    }
+    await removeIfEmpty(modelPath, revisionsDir);
+  }
+
+  result.judgmentsDeleted = await deleteAffectedJudgments(
+    cacheDir,
+    new Set([...deletedWriteIds, ...deletedRevisionIds]),
+    mk,
+  );
+
+  return result;
+}
+
 
 /**
  * Trim cached outputs for a model to at most `maxOutputs` per prompt.
@@ -1159,7 +1342,6 @@ export async function trimModelOutputs(
   const writesBase = join(cacheDir, "writes", mk);
   const feedbackBase = join(cacheDir, "feedback");
   const revisionsBase = join(cacheDir, "revisions");
-  const judgmentsBase = join(cacheDir, "judgments");
 
   // ── Phase 1: Trim writes ──────────────────────────
 
@@ -1168,7 +1350,6 @@ export async function trimModelOutputs(
   let promptsAffected = 0;
 
   const deletedWriteIds: string[] = [];
-  const survivingWriteIds: string[] = [];
 
   for (const promptHash of promptHashes) {
     const promptDir = join(writesBase, promptHash);
@@ -1184,14 +1365,11 @@ export async function trimModelOutputs(
     if (keepCount < files.length) promptsAffected++;
 
     for (let i = 0; i < files.length; i++) {
+      if (i < keepCount) continue;
       const filePath = join(promptDir, files[i]);
       const entry = await safeReadJson<{ cacheId: string }>(filePath);
-      if (i < keepCount) {
-        if (entry?.cacheId) survivingWriteIds.push(entry.cacheId);
-      } else {
-        if (entry?.cacheId) deletedWriteIds.push(entry.cacheId);
-        await unlink(filePath);
-      }
+      if (entry?.cacheId) deletedWriteIds.push(entry.cacheId);
+      await unlink(filePath);
     }
 
     if (keepCount === 0) await removeIfEmpty(promptDir);
@@ -1210,7 +1388,6 @@ export async function trimModelOutputs(
 
   // ── Phase 2: Cascade delete feedback + revisions ──
 
-  const deletedFeedbackIds: string[] = [];
   const deletedRevisionIds: string[] = [];
   let feedbackDeleted = 0;
   let revisionsDeleted = 0;
@@ -1224,7 +1401,6 @@ export async function trimModelOutputs(
       const fbEntry = await safeReadJson<{ cacheId: string }>(fbPath);
       if (!fbEntry?.cacheId) continue;
 
-      deletedFeedbackIds.push(fbEntry.cacheId);
       await unlink(fbPath);
       feedbackDeleted++;
 
@@ -1242,82 +1418,10 @@ export async function trimModelOutputs(
 
   // ── Phase 3: Surgical judgment cleanup ────────────
 
-  const deletedIds = new Set<string>([
+  const judgmentsDeleted = await deleteAffectedJudgments(cacheDir, new Set([
     ...deletedWriteIds,
-    ...deletedFeedbackIds,
     ...deletedRevisionIds,
-  ]);
-
-  // Build inventory of ALL known write + revision cacheIds across
-  // the cache (needed to compute judgment pair hashes). Feedback IDs
-  // are not used in judgment hashes so they are skipped. Deleted IDs
-  // are already in `deletedIds` and matched from that side of the
-  // pairing, so only surviving write IDs are seeded here.
-  const allKnownIds = new Set<string>([
-    ...survivingWriteIds,
-  ]);
-
-  // Writes from OTHER models (Phase 1 only covers the trimmed model)
-  const allWriteModelDirs = await discoverModelKeys(join(cacheDir, "writes"));
-  for (const wModelDir of allWriteModelDirs) {
-    if (wModelDir === mk) continue; // already collected
-    const prompts = await safeReaddir(join(cacheDir, "writes", wModelDir));
-    for (const ph of prompts) {
-      const samples = (await safeReaddir(join(cacheDir, "writes", wModelDir, ph)))
-        .filter((f) => f.endsWith(".json"));
-      for (const sf of samples) {
-        const entry = await safeReadJson<{ cacheId: string }>(
-          join(cacheDir, "writes", wModelDir, ph, sf),
-        );
-        if (entry?.cacheId) allKnownIds.add(entry.cacheId);
-      }
-    }
-  }
-
-  // Revisions from ALL models (needed for revised/improvement judgment hashes)
-  for (const revDir of revisionModelDirs) {
-    const files = (await safeReaddir(join(revisionsBase, revDir)))
-      .filter((f) => f.endsWith(".json"));
-    for (const f of files) {
-      const entry = await safeReadJson<{ cacheId: string }>(
-        join(revisionsBase, revDir, f),
-      );
-      if (entry?.cacheId) allKnownIds.add(entry.cacheId);
-    }
-  }
-
-  // Compute all stale judgment hashes: every (deletedId, otherId) pair
-  // across all three stages. Invalid stage+type combos simply won't
-  // match any file on disk -- harmless extra hash computations.
-  const STAGES = ["initial", "improvement", "revised"] as const;
-  const staleHashes = new Set<string>();
-
-  const allKnownArr = Array.from(allKnownIds);
-  for (const deletedId of deletedIds) {
-    for (const otherId of allKnownArr) {
-      if (deletedId === otherId) continue;
-      for (const stage of STAGES) {
-        staleHashes.add(judgmentPairHash(stage, deletedId, otherId));
-      }
-    }
-  }
-
-  // Scan judgment directories and delete matching files
-  let judgmentsDeleted = 0;
-  const judgeModelDirs = await discoverModelKeys(judgmentsBase);
-  for (const judgeDir of judgeModelDirs) {
-    const judgeDirPath = join(judgmentsBase, judgeDir);
-    const files = (await safeReaddir(judgeDirPath))
-      .filter((f) => f.endsWith(".json"));
-    for (const f of files) {
-      const hash = basename(f, ".json");
-      if (staleHashes.has(hash)) {
-        await unlink(join(judgeDirPath, f));
-        judgmentsDeleted++;
-      }
-    }
-    await removeIfEmpty(judgeDirPath, judgmentsBase);
-  }
+  ]));
 
   // Clean up empty directories (stopAt ensures namespace parents are removed too)
   await removeIfEmpty(join(cacheDir, "writes", mk), join(cacheDir, "writes"));
@@ -1327,7 +1431,6 @@ export async function trimModelOutputs(
   for (const revDir of revisionModelDirs) {
     await removeIfEmpty(join(revisionsBase, revDir), revisionsBase);
   }
-  await removeIfEmpty(judgmentsBase);
 
   return {
     promptsAffected,

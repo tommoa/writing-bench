@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { join, dirname } from "path";
-import { rm } from "fs/promises";
+import { join } from "path";
 import { existsSync } from "fs";
 import { parseArgs, type Command } from "./cli.js";
 import { executeRun, resolveRunInputs, loadAndFilterPrompts, RunValidationError } from "./engine/run-manager.js";
@@ -10,8 +9,7 @@ import { loadRun, loadLatestRun, listRuns, deleteRunFull, listRunSummaries } fro
 import { loadCumulativeElo, rebuildCumulativeElo } from "./storage/elo-store.js";
 import { exportForWeb } from "./export/web-export.js";
 import { analyzeCacheStatus, formatCacheStatusTable, formatCacheStatusJson } from "./storage/cache-status.js";
-import { modelKey, trimModelOutputs, combineModelCaches } from "./storage/sample-cache.js";
-import { removeIfEmpty } from "./storage/fs-utils.js";
+import { modelKey, trimModelOutputs, clearModelCache, combineModelCaches } from "./storage/sample-cache.js";
 import { parseModelSpec } from "./providers/registry.js";
 import { App } from "./ui/App.js";
 import { printFinalTables, printEloTablePlain } from "./ui/print-tables.js";
@@ -698,35 +696,21 @@ async function handleClearCache(
     return;
   }
 
-  // ── Full clear mode (existing behavior) ──
-  let totalRemoved = 0;
-
-  if (!args.judgmentsOnly) {
-    const categories = ["writes", "feedback", "revisions"] as const;
-    for (const category of categories) {
-      const dir = join(cacheBase, category, mk);
-      if (existsSync(dir)) {
-        await rm(dir, { recursive: true });
-        await removeIfEmpty(dirname(dir), join(cacheBase, category));
-        console.log(`  Removed ${category}/${mk}/`);
-        totalRemoved++;
-      }
-    }
-  }
-
-  // Always clear judgments involving this model.
-  // Judgments are stored under the judge model's directory, but stale
-  // entries (referencing deleted sample IDs) waste disk. Clear them all.
-  const judgmentsDir = join(cacheBase, "judgments");
-  if (existsSync(judgmentsDir)) {
-    await rm(judgmentsDir, { recursive: true });
-    console.log("  Removed judgments/ (all judges)");
-    totalRemoved++;
-  }
+  const result = await clearModelCache(cacheBase, mk, args.judgmentsOnly);
+  const removed = [
+    ["writes", result.writesDeleted],
+    ["feedback", result.feedbackDeleted],
+    ["revisions", result.revisionsDeleted],
+    ["judgments", result.judgmentsDeleted],
+  ] as const;
+  const totalRemoved = removed.reduce((total, [, count]) => total + count, 0);
 
   if (totalRemoved === 0) {
     console.log(`No cache found for ${args.model}`);
   } else {
+    for (const [category, count] of removed) {
+      if (count > 0) console.log(`  Removed ${count} ${category}`);
+    }
     console.log(`\nCleared cache for ${args.model}.`);
   }
 }

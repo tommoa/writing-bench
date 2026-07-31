@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync } from "fs";
-import { rm, readdir, readFile, writeFile } from "fs/promises";
+import { mkdir, rm, readdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import type { PairwiseJudgment, RunResult, WritingSample } from "../types.js";
 import {
@@ -8,6 +8,7 @@ import {
   hashPromptContent,
   randomSample,
   trimModelOutputs,
+  clearModelCache,
   combineModelCaches,
   judgmentPairHash,
   modelKey,
@@ -1368,6 +1369,186 @@ describe("trimModelOutputs", () => {
 
     const remaining2 = await cache.getCachedWrites(WRITER.provider, WRITER.model, PROMPT2);
     expect(remaining2).toHaveLength(2);
+  });
+});
+
+// ── clearModelCache ─────────────────────────────────
+
+describe("clearModelCache", () => {
+  let cache: SampleCache;
+  const TARGET = { provider: "openai", model: "gpt-4o" };
+  const OTHER = { provider: "anthropic", model: "claude-sonnet" };
+  const FEEDBACK = { provider: "google", model: "gemini-flash" };
+  const OTHER_JUDGE = { provider: "xai", model: "grok" };
+  const PROMPT = "Write a story.";
+  const TARGET_KEY = modelKey(TARGET.provider, TARGET.model);
+
+  beforeEach(async () => {
+    if (existsSync(TEST_CACHE_DIR)) {
+      await rm(TEST_CACHE_DIR, { recursive: true });
+    }
+    cache = new SampleCache(TEST_CACHE_DIR);
+  });
+
+  afterEach(async () => {
+    if (existsSync(TEST_CACHE_DIR)) {
+      await rm(TEST_CACHE_DIR, { recursive: true });
+    }
+  });
+
+  it("deletes owned and dependent artifacts including legacy judgments", async () => {
+    await cache.addCachedWrite(
+      TARGET.provider, TARGET.model, PROMPT,
+      makeCachedWrite({ cacheId: "w-target" }), 0,
+    );
+    await cache.addCachedWrite(
+      OTHER.provider, OTHER.model, PROMPT,
+      makeCachedWrite({ cacheId: "w-other" }), 0,
+    );
+    await cache.addCachedWrite(
+      OTHER.provider, OTHER.model, PROMPT,
+      makeCachedWrite({ cacheId: "w-spare" }), 1,
+    );
+
+    await cache.addCachedFeedback(
+      FEEDBACK.provider, FEEDBACK.model, "w-target",
+      makeCachedFeedback({ cacheId: "fb-on-target", writeCacheId: "w-target" }),
+    );
+    await cache.addCachedFeedback(
+      TARGET.provider, TARGET.model, "w-other",
+      makeCachedFeedback({ cacheId: "fb-by-target", writeCacheId: "w-other" }),
+    );
+    await cache.addCachedFeedback(
+      FEEDBACK.provider, FEEDBACK.model, "w-other",
+      makeCachedFeedback({ cacheId: "fb-unrelated", writeCacheId: "w-other" }),
+    );
+
+    await cache.addCachedRevision(
+      OTHER.provider, OTHER.model, "fb-on-target",
+      makeCachedRevision({ cacheId: "rev-on-target", feedbackCacheId: "fb-on-target" }),
+    );
+    await cache.addCachedRevision(
+      OTHER.provider, OTHER.model, "fb-by-target",
+      makeCachedRevision({ cacheId: "rev-from-target", feedbackCacheId: "fb-by-target" }),
+    );
+    await cache.addCachedRevision(
+      OTHER.provider, OTHER.model, "fb-unrelated",
+      makeCachedRevision({ cacheId: "rev-unrelated", feedbackCacheId: "fb-unrelated" }),
+    );
+    await cache.addCachedRevision(
+      TARGET.provider, TARGET.model, "fb-unrelated",
+      makeCachedRevision({ cacheId: "rev-by-target", feedbackCacheId: "fb-unrelated" }),
+    );
+
+    await cache.addCachedJudgment(
+      OTHER_JUDGE.provider, OTHER_JUDGE.model, "initial", "w-target", "w-other",
+      makeCachedJudgment({ cacheId: "j-stale-write" }),
+    );
+    await cache.addCachedJudgment(
+      OTHER_JUDGE.provider, OTHER_JUDGE.model, "improvement", "w-other", "rev-from-target",
+      makeCachedJudgment({ cacheId: "j-stale-revision", stage: "improvement" }),
+    );
+    await cache.addCachedJudgment(
+      OTHER_JUDGE.provider, OTHER_JUDGE.model, "initial", "w-other", "w-spare",
+      makeCachedJudgment({ cacheId: "j-unrelated" }),
+    );
+    await cache.addCachedJudgment(
+      TARGET.provider, TARGET.model, "initial", "w-other", "w-spare",
+      makeCachedJudgment({ cacheId: "j-by-target" }),
+    );
+
+    const otherJudgeKey = modelKey(OTHER_JUDGE.provider, OTHER_JUDGE.model);
+    await stripJudgmentComparedCacheIds(TEST_CACHE_DIR, otherJudgeKey, "j-stale-write");
+    await stripJudgmentComparedCacheIds(TEST_CACHE_DIR, otherJudgeKey, "j-stale-revision");
+    await stripJudgmentComparedCacheIds(TEST_CACHE_DIR, otherJudgeKey, "j-unrelated");
+
+    const result = await clearModelCache(TEST_CACHE_DIR, TARGET_KEY);
+
+    expect(result).toEqual({
+      writesDeleted: 1,
+      feedbackDeleted: 2,
+      revisionsDeleted: 3,
+      judgmentsDeleted: 3,
+    });
+    expect(await cache.getCachedWrites(TARGET.provider, TARGET.model, PROMPT)).toEqual([]);
+    expect(await cache.getCachedFeedback(FEEDBACK.provider, FEEDBACK.model, "w-target")).toBeNull();
+    expect(await cache.getCachedFeedback(FEEDBACK.provider, FEEDBACK.model, "w-other")).not.toBeNull();
+    expect(await cache.getCachedRevision(OTHER.provider, OTHER.model, "fb-on-target")).toBeNull();
+    expect(await cache.getCachedRevision(OTHER.provider, OTHER.model, "fb-by-target")).toBeNull();
+    expect(await cache.getCachedRevision(OTHER.provider, OTHER.model, "fb-unrelated")).not.toBeNull();
+    expect(await cache.getCachedJudgment(
+      OTHER_JUDGE.provider, OTHER_JUDGE.model, "initial", "w-other", "w-spare",
+    )).not.toBeNull();
+    expect(await cache.getCachedJudgment(
+      OTHER_JUDGE.provider, OTHER_JUDGE.model, "initial", "w-target", "w-other",
+    )).toBeNull();
+  });
+
+  it("clears nested model keys and malformed filename-linked feedback", async () => {
+    const nestedModelKey = "legacy/provider-model";
+    const promptHash = "0123456789abcdef";
+    const writeDir = join(TEST_CACHE_DIR, "writes", nestedModelKey, promptHash);
+    const feedbackPath = join(
+      TEST_CACHE_DIR,
+      "feedback",
+      "legacy/feedback-model",
+      "nested-write.json",
+    );
+    await mkdir(writeDir, { recursive: true });
+    await writeFile(
+      join(writeDir, "sample_0.json"),
+      JSON.stringify(makeCachedWrite({ cacheId: "nested-write" })),
+    );
+    await mkdir(join(TEST_CACHE_DIR, "feedback", "legacy/feedback-model"), {
+      recursive: true,
+    });
+    await writeFile(feedbackPath, "{malformed");
+
+    const result = await clearModelCache(TEST_CACHE_DIR, nestedModelKey);
+
+    expect(result).toEqual({
+      writesDeleted: 1,
+      feedbackDeleted: 1,
+      revisionsDeleted: 0,
+      judgmentsDeleted: 0,
+    });
+    expect(existsSync(join(TEST_CACHE_DIR, "writes", nestedModelKey))).toBe(false);
+    expect(existsSync(feedbackPath)).toBe(false);
+  });
+
+  it("clears only judgments produced by the model in judgments-only mode", async () => {
+    await cache.addCachedWrite(
+      TARGET.provider, TARGET.model, PROMPT,
+      makeCachedWrite({ cacheId: "w-target" }), 0,
+    );
+    await cache.addCachedWrite(
+      OTHER.provider, OTHER.model, PROMPT,
+      makeCachedWrite({ cacheId: "w-other" }), 0,
+    );
+    await cache.addCachedJudgment(
+      TARGET.provider, TARGET.model, "initial", "w-target", "w-other",
+      makeCachedJudgment({ cacheId: "j-target" }),
+    );
+    await cache.addCachedJudgment(
+      OTHER_JUDGE.provider, OTHER_JUDGE.model, "initial", "w-target", "w-other",
+      makeCachedJudgment({ cacheId: "j-other" }),
+    );
+
+    const result = await clearModelCache(TEST_CACHE_DIR, TARGET_KEY, true);
+
+    expect(result).toEqual({
+      writesDeleted: 0,
+      feedbackDeleted: 0,
+      revisionsDeleted: 0,
+      judgmentsDeleted: 1,
+    });
+    expect(await cache.getCachedWrites(TARGET.provider, TARGET.model, PROMPT)).toHaveLength(1);
+    expect(await cache.getCachedJudgment(
+      TARGET.provider, TARGET.model, "initial", "w-target", "w-other",
+    )).toBeNull();
+    expect(await cache.getCachedJudgment(
+      OTHER_JUDGE.provider, OTHER_JUDGE.model, "initial", "w-target", "w-other",
+    )).not.toBeNull();
   });
 });
 
