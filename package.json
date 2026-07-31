@@ -9,6 +9,10 @@
   "scripts": {
     "start": "bun run src/index.tsx",
     "test": "bun test",
+    "typecheck:src": "tsc --noEmit",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "bun run typecheck:src && bun run typecheck:web",
+    "check": "bun run typecheck && bun test",
     "export": "bun run src/index.tsx export",
     "build:logos": "bun scripts/fetch-logos.ts",
     "build:web": "bun web/src/build-methodology.ts && bun build web/src/app.ts web/src/dashboard.ts web/src/run-detail.ts --outdir web --target browser --minify --splitting --format esm --entry-naming [name].js --chunk-naming chunk-[hash].js && bun build web/src/style-base.css web/src/style-methodology.css web/src/style-run-detail.css --outdir web --target browser --minify",
@@ -16,7 +20,7 @@
     "check:web-budget:base": "bun scripts/check-web-budget.ts --route=base",
     "check:web-budget:run": "bun scripts/check-web-budget.ts --route=run",
     "check:web-flight": "bun scripts/check-web-flight.ts",
-    "verify:web-budget": "bun run build:web && bun run check:web-budget"
+    "verify:web": "bun run build:web && bun run check:web-budget && bun run check:web-flight --route=all"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.44",

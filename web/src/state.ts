@@ -1,6 +1,7 @@
 import type { RunsIndex, PromptContent, TagAlternatives } from "./types.js";
 import type { SectionLoader } from "./ensure-section-loaded.js";
-import { DEFAULT_CONVERGENCE, JudgeQualityMode } from "../../src/types.js";
+import type { JudgeQualityMode } from "../../src/types.js";
+import { DEFAULT_CONVERGENCE } from "../../src/types.js";
 import { ensureSectionLoaded } from "./ensure-section-loaded.js";
 
 // ── App state ───────────────────────────────────────
@@ -14,6 +15,7 @@ export const state: AppState = { index: null };
 // ── Rating settings state ───────────────────────────
 
 export type RatingMode = "default" | "equalWeight" | "noBiasCorrection" | "custom";
+export type QualityMode = JudgeQualityMode;
 
 export interface RatingState {
   ratingMode: RatingMode;

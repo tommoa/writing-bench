@@ -1,10 +1,16 @@
 import { basename, resolve, join, sep } from "path";
+import { mkdtemp, rm } from "fs/promises";
+import { tmpdir } from "os";
 import { collectRouteFiles } from "./check-web-budget.js";
 import type { RouteName } from "./check-web-budget.js";
 
 type RouteOption = RouteName | "all";
 const DEFAULT_PACKET_BYTES = 1460;
 const DEFAULT_PACKETS = 10;
+// curl reports protocol- and server-specific header sizes. Use a fixed
+// per-response allowance for the enforced budget while retaining measured
+// header bytes in the report for diagnostics.
+const RESPONSE_HEADER_BUDGET_BYTES = 200;
 
 interface CliOptions {
   baseUrl?: string;
@@ -20,6 +26,7 @@ interface FlightStat {
   statusCode: number;
   requestBytes: number;
   headerBytes: number;
+  budgetedHeaderBytes: number;
   bodyBytes: number;
   wireBytes: number;
 }
@@ -31,6 +38,7 @@ interface FlightReport {
   packetBudgetBytes: number;
   totalRequestBytes: number;
   totalHeaderBytes: number;
+  totalBudgetedHeaderBytes: number;
   totalBodyBytes: number;
   totalWireBytes: number;
 }
@@ -51,9 +59,15 @@ async function main(): Promise<void> {
     : [options.route];
 
   try {
-  const reports: FlightReport[] = [];
+    const reports: FlightReport[] = [];
     for (const route of routes) {
-      reports.push(await measureRoute(route, baseUrl, options.packetBytes, options.packets));
+      reports.push(await measureRoute(
+        route,
+        baseUrl,
+        options.packetBytes,
+        options.packets,
+        server?.socketPath,
+      ));
     }
 
     const failures = reports.filter((report) => report.totalWireBytes > report.packetBudgetBytes);
@@ -74,7 +88,7 @@ async function main(): Promise<void> {
       throw new Error(`Web flight budget exceeded: ${details}`);
     }
   } finally {
-    server?.stop();
+    await server?.stop();
   }
 }
 
@@ -187,6 +201,7 @@ async function measureRoute(
   baseUrl: string,
   packetBytes: number,
   packets: number,
+  socketPath?: string,
 ): Promise<FlightReport> {
   const localFiles = [...await collectRouteFiles(route)]
     .filter((path) => !path.endsWith(".json"))
@@ -195,10 +210,22 @@ async function measureRoute(
   const files: FlightStat[] = [];
   for (const localPath of localFiles) {
     const url = toAssetUrl(baseUrl, route, localPath);
-    const measured = await measureUrl(url);
+    const measured = await measureUrl(url, socketPath);
     if (measured.statusCode >= 400) {
       throw new Error(`HTTP ${measured.statusCode} for ${url}`);
     }
+    if (socketPath && measured.headerBytes > RESPONSE_HEADER_BUDGET_BYTES) {
+      throw new Error(
+        `Local response headers exceeded the fixed allowance for ${url}: `
+        + `${measured.headerBytes} B > ${RESPONSE_HEADER_BUDGET_BYTES} B`,
+      );
+    }
+
+    // Local measurements use a fixed policy allowance so curl/OS details do
+    // not move the gate. Explicit --url checks retain actual wire headers.
+    const budgetedHeaderBytes = socketPath
+      ? RESPONSE_HEADER_BUDGET_BYTES
+      : measured.headerBytes;
 
     files.push({
       localPath,
@@ -206,11 +233,12 @@ async function measureRoute(
       statusCode: measured.statusCode,
       requestBytes: measured.requestBytes,
       headerBytes: measured.headerBytes,
+      budgetedHeaderBytes,
       bodyBytes: measured.bodyBytes,
       // Request bytes vary significantly by curl build and HTTP/2
       // implementation details. Keep them in the report, but budget only
       // the response path users pay to receive.
-      wireBytes: measured.headerBytes + measured.bodyBytes,
+      wireBytes: budgetedHeaderBytes + measured.bodyBytes,
     });
   }
 
@@ -223,6 +251,7 @@ async function measureRoute(
     packetBudgetBytes,
     totalRequestBytes: sum(files, (f) => f.requestBytes),
     totalHeaderBytes: sum(files, (f) => f.headerBytes),
+    totalBudgetedHeaderBytes: sum(files, (f) => f.budgetedHeaderBytes),
     totalBodyBytes: sum(files, (f) => f.bodyBytes),
     totalWireBytes: sum(files, (f) => f.wireBytes),
   };
@@ -247,54 +276,67 @@ interface CurlMeasure {
 
 interface LocalServer {
   baseUrl: string;
-  stop: () => void;
+  socketPath: string;
+  stop: () => Promise<void>;
 }
 
-async function startLocalGzipServer(): Promise<LocalServer> {
+/** Start an isolated local gzip server without allocating a TCP port. */
+export async function startLocalGzipServer(): Promise<LocalServer> {
   const webRoot = resolve(process.cwd(), "web");
   const indexFile = Bun.file(join(webRoot, "index.html"));
   if (!(await indexFile.exists())) {
     throw new Error("Missing web/index.html -- run `bun run build:web` first or pass --url");
   }
 
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(request: Request): Promise<Response> {
-      const url = new URL(request.url);
-      const relPath = toRelativeWebPath(url.pathname);
-      const filePath = resolve(webRoot, relPath);
+  const tempDir = await mkdtemp(join(tmpdir(), "wb-flight-"));
+  const socketPath = join(tempDir, "s.sock");
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    server = Bun.serve({
+      unix: socketPath,
+      async fetch(request: Request): Promise<Response> {
+        const url = new URL(request.url);
+        const relPath = toRelativeWebPath(url.pathname);
+        const filePath = resolve(webRoot, relPath);
 
-      if (!isPathUnderRoot(filePath, webRoot)) {
-        return new Response("Forbidden", { status: 403 });
-      }
+        if (!isPathUnderRoot(filePath, webRoot)) {
+          return new Response("Forbidden", { status: 403 });
+        }
 
-      const file = Bun.file(filePath);
-      if (!(await file.exists())) {
-        return new Response("Not found", { status: 404 });
-      }
+        const file = Bun.file(filePath);
+        if (!(await file.exists())) {
+          return new Response("Not found", { status: 404 });
+        }
 
-      const source = new Uint8Array(await file.arrayBuffer());
-      const body = Bun.gzipSync(source);
-      const headers = new Headers();
-      headers.set("Content-Encoding", "gzip");
-      headers.set("Vary", "Accept-Encoding");
-      headers.set("Cache-Control", "no-store");
-      if (file.type) {
-        headers.set("Content-Type", file.type);
-      }
+        const source = new Uint8Array(await file.arrayBuffer());
+        const body = Bun.gzipSync(source);
+        const headers = new Headers();
+        headers.set("Content-Encoding", "gzip");
+        headers.set("Vary", "Accept-Encoding");
+        headers.set("Cache-Control", "no-store");
+        if (file.type) {
+          headers.set("Content-Type", file.type);
+        }
 
-      return new Response(body, {
-        status: 200,
-        headers,
-      });
-    },
-  });
+        return new Response(body, {
+          status: 200,
+          headers,
+        });
+      },
+    });
+  } catch (error) {
+    await rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
 
   return {
-    baseUrl: `http://127.0.0.1:${server.port}/`,
-    stop: () => {
+    // curl still needs an HTTP URL for the Host header and request path;
+    // --unix-socket changes only the transport used to reach the server.
+    baseUrl: "http://localhost/",
+    socketPath,
+    stop: async () => {
       server.stop(true);
+      await rm(tempDir, { recursive: true, force: true });
     },
   };
 }
@@ -311,12 +353,14 @@ function isPathUnderRoot(filePath: string, rootDir: string): boolean {
   return filePath === rootDir || filePath.startsWith(rootDir + sep);
 }
 
-async function measureUrl(url: string): Promise<CurlMeasure> {
+async function measureUrl(url: string, socketPath?: string): Promise<CurlMeasure> {
+  const socketArgs = socketPath ? ["--unix-socket", socketPath] : [];
   const proc = Bun.spawn({
     cmd: [
       "curl",
       "--http2",
       "--compressed",
+      ...socketArgs,
       "-sS",
       "-o",
       "/dev/null",
@@ -362,11 +406,12 @@ function printReports(reports: FlightReport[]): void {
     console.log(`\n[${report.route}]`);
     for (const file of report.files) {
       console.log(
-        `  ${basename(file.localPath)}: req ${file.requestBytes} B, hdr ${file.headerBytes} B, body ${file.bodyBytes} B, wire ${file.wireBytes} B`,
+        `  ${basename(file.localPath)}: req ${file.requestBytes} B, measured hdr ${file.headerBytes} B, body ${file.bodyBytes} B, budgeted wire ${file.wireBytes} B`,
       );
     }
     console.log(`  total req: ${report.totalRequestBytes} B`);
-    console.log(`  total hdr: ${report.totalHeaderBytes} B`);
+    console.log(`  total measured hdr: ${report.totalHeaderBytes} B`);
+    console.log(`  total budgeted hdr: ${report.totalBudgetedHeaderBytes} B`);
     console.log(`  total body: ${report.totalBodyBytes} B`);
     console.log(`  total wire: ${report.totalWireBytes} B`);
     console.log(`  packet budget: ${report.packetBudgetBytes} B (${report.packetBytes} B x ${Math.round(report.packetBudgetBytes / report.packetBytes)} packets)`);
