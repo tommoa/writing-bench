@@ -33,6 +33,36 @@ function identifyNeedsWithState(
 }
 
 describe("identifyNeeds", () => {
+  it("keeps canonical identities distinct when display labels collide", () => {
+    const first = {
+      ...makeModel("shared"),
+      registryId: "openai:first",
+    };
+    const second = {
+      ...makeModel("shared"),
+      provider: "anthropic" as const,
+      registryId: "anthropic:second",
+    };
+    const judge = {
+      ...makeModel("shared"),
+      registryId: "openai:judge",
+    };
+
+    const needs = identifyNeeds(
+      [], [], [], workWith(), [first, second], [judge], onePrompt(),
+      DEFAULT_CONVERGENCE, 10, 1,
+    );
+    const initial = needs.find(
+      (need): need is Extract<Need, { type: "initial_judgment" }> =>
+        need.type === "initial_judgment",
+    );
+
+    expect(initial).toBeDefined();
+    expect(initial?.modelA.registryId).toBe("openai:first");
+    expect(initial?.modelB.registryId).toBe("anthropic:second");
+    expect(primaryModel(initial!)).toBe("openai:first");
+  });
+
   it("returns empty list when all CIs are below threshold", () => {
     const ratings = [
       makeWhrRating("modelA", 1550, 30, 10),
@@ -62,7 +92,7 @@ describe("identifyNeeds", () => {
     const firstNeed = needs[0];
     expect(firstNeed.type).toBe("initial_judgment");
     if (firstNeed.type === "initial_judgment") {
-      const involvedModels = [firstNeed.modelA, firstNeed.modelB];
+      const involvedModels = [firstNeed.modelA.label, firstNeed.modelB.label];
       // Should involve at least one of the high-CI models
       expect(
         involvedModels.includes("modelA") || involvedModels.includes("modelC")
@@ -84,8 +114,8 @@ describe("identifyNeeds", () => {
     expect(needs).toHaveLength(1);
     if (needs[0].type === "initial_judgment") {
       // Should pick A vs B (both uncertain) over pairs involving C (confident)
-      expect(needs[0].modelA).toBe("modelA");
-      expect(needs[0].modelB).toBe("modelB");
+      expect(needs[0].modelA.label).toBe("modelA");
+      expect(needs[0].modelB.label).toBe("modelB");
     }
   });
 
@@ -464,12 +494,12 @@ describe("missing-artifact pruning", () => {
     );
     // Improvement needs where writer=modelA should be pruned
     const impA = needs.filter(
-      (n) => n.type === "improvement_judgment" && n.writer === "modelA",
+      (n) => n.type === "improvement_judgment" && n.writer.label === "modelA",
     );
     expect(impA).toHaveLength(0);
     // But writer=modelB should still have needs
     const impB = needs.filter(
-      (n) => n.type === "improvement_judgment" && n.writer === "modelB",
+      (n) => n.type === "improvement_judgment" && n.writer.label === "modelB",
     );
     expect(impB.length).toBeGreaterThan(0);
   });
@@ -489,7 +519,7 @@ describe("missing-artifact pruning", () => {
     // Side with feedbackModel=modelA on writer=modelB should be pruned
     const prunedSide = needs.filter(
       (n) => n.type === "improvement_judgment"
-        && n.feedbackModel === "modelA" && n.writer === "modelB",
+        && n.feedbackModel.label === "modelA" && n.writer.label === "modelB",
     );
     expect(prunedSide).toHaveLength(0);
   });
@@ -525,7 +555,7 @@ describe("missing-artifact pruning", () => {
     // Revised judgments with fbModel=modelA involving modelA should be pruned
     const pruned = needs.filter(
       (n) => n.type === "revised_judgment"
-        && n.feedbackModel === "modelA",
+        && n.feedbackModel.label === "modelA",
     );
     expect(pruned).toHaveLength(0);
   });
@@ -586,7 +616,7 @@ describe("missing-artifact pruning", () => {
     // The pruned side: writer=modelA, feedbackModel=modelA
     const pruned = needs.filter(
       (n) => n.type === "improvement_judgment"
-        && n.writer === "modelA" && n.feedbackModel === "modelA",
+        && n.writer.label === "modelA" && n.feedbackModel.label === "modelA",
     );
     expect(pruned).toHaveLength(0);
   });
@@ -606,7 +636,7 @@ describe("missing-artifact pruning", () => {
     );
     const opposite = needs.filter(
       (n) => n.type === "improvement_judgment"
-        && n.writer === "modelB" && n.feedbackModel === "modelA",
+        && n.writer.label === "modelB" && n.feedbackModel.label === "modelA",
     );
     expect(opposite.length).toBeGreaterThan(0);
   });
@@ -627,12 +657,12 @@ describe("missing-artifact pruning", () => {
     );
     // Revised judgments with fbModel=modelA should be pruned
     const pruned = needs.filter(
-      (n) => n.type === "revised_judgment" && n.feedbackModel === "modelA",
+      (n) => n.type === "revised_judgment" && n.feedbackModel.label === "modelA",
     );
     expect(pruned).toHaveLength(0);
     // But fbModel=modelB should still have needs
     const remaining = needs.filter(
-      (n) => n.type === "revised_judgment" && n.feedbackModel === "modelB",
+      (n) => n.type === "revised_judgment" && n.feedbackModel.label === "modelB",
     );
     expect(remaining.length).toBeGreaterThan(0);
   });
@@ -854,7 +884,7 @@ describe("identifyNeeds with overlap", () => {
     expect(initialNeeds.length).toBeGreaterThan(0);
     for (const n of initialNeeds) {
       if (n.type === "initial_judgment") {
-        expect([n.modelA, n.modelB].sort()).toEqual(["modelB", "modelC"]);
+        expect([n.modelA.label, n.modelB.label].sort()).toEqual(["modelB", "modelC"]);
       }
     }
   });
@@ -878,7 +908,9 @@ describe("identifyNeeds with overlap", () => {
     );
     const initialNeeds = needs.filter((n) => n.type === "initial_judgment");
     const pairs = new Set(initialNeeds.map((n) =>
-      n.type === "initial_judgment" ? [n.modelA, n.modelB].sort().join(":") : "",
+      n.type === "initial_judgment"
+        ? [n.modelA.label, n.modelB.label].sort().join(":")
+        : "",
     ));
     expect(pairs.has("modelA:modelB")).toBe(false);  // non-overlapping → resolved
     expect(pairs.has("modelB:modelC")).toBe(true);   // overlapping → needs
@@ -1063,8 +1095,8 @@ describe("formatNeedDescription", () => {
 function makeInitialNeed(modelA: string, modelB: string): Need {
   return {
     type: "initial_judgment",
-    modelA,
-    modelB,
+    modelA: makeModel(modelA),
+    modelB: makeModel(modelB),
     outputIdxA: 0,
     outputIdxB: 0,
     promptId: "p1",
@@ -1076,9 +1108,9 @@ function makeInitialNeed(modelA: string, modelB: string): Need {
 function makeImprovementNeed(writer: string, feedbackModel: string, againstFeedbackModel = "otherFb"): Need {
   return {
     type: "improvement_judgment",
-    writer,
-    feedbackModel,
-    againstFeedbackModel,
+    writer: makeModel(writer),
+    feedbackModel: makeModel(feedbackModel),
+    againstFeedbackModel: makeModel(againstFeedbackModel),
     outputIdx: 0,
     promptId: "p1",
     judgeModel: makeModel("judge"),
@@ -1089,11 +1121,11 @@ function makeImprovementNeed(writer: string, feedbackModel: string, againstFeedb
 function makeRevisedNeed(modelA: string, modelB: string, feedbackModel: string): Need {
   return {
     type: "revised_judgment",
-    modelA,
-    modelB,
+    modelA: makeModel(modelA),
+    modelB: makeModel(modelB),
     outputIdxA: 0,
     outputIdxB: 0,
-    feedbackModel,
+    feedbackModel: makeModel(feedbackModel),
     promptId: "p1",
     judgeModel: makeModel("judge"),
     score: 3,
@@ -1122,7 +1154,7 @@ function makeModel(label: string): ModelConfig {
     provider: "openai" as const,
     model: label,
     label,
-    registryId: `openai:${label}`,
+    registryId: label,
   };
 }
 
@@ -1430,7 +1462,7 @@ describe("batch dimension coverage", () => {
     ) as Array<Extract<Need, { type: "improvement_judgment" }>>;
     const feedbackModels = new Set<string>();
     for (const n of improvementNeeds) {
-      feedbackModels.add(n.feedbackModel);
+      feedbackModels.add(n.feedbackModel.label);
     }
     // Must cover more than 2 feedback models
     expect(feedbackModels.size).toBeGreaterThan(2);
@@ -1458,7 +1490,7 @@ describe("batch dimension coverage", () => {
     ) as Array<Extract<Need, { type: "revised_judgment" }>>;
     const writerPairs = new Set<string>();
     for (const n of revisedNeeds) {
-      writerPairs.add([n.modelA, n.modelB].sort().join(":"));
+      writerPairs.add([n.modelA.label, n.modelB.label].sort().join(":"));
     }
     // Must cover more than 1 writer pair
     expect(writerPairs.size).toBeGreaterThan(1);
@@ -1658,11 +1690,11 @@ describe("cost-aware scoring", () => {
     // Find improvement needs for the same writer/prompt
     const impNeeds = needs.filter(
       (n): n is Extract<Need, { type: "improvement_judgment" }> =>
-        n.type === "improvement_judgment" && n.writer === "writer",
+        n.type === "improvement_judgment" && n.writer.label === "writer",
     );
 
-    const cachedSide = impNeeds.find((n) => n.feedbackModel === "modelA");
-    const uncachedSide = impNeeds.find((n) => n.feedbackModel === "modelB");
+    const cachedSide = impNeeds.find((n) => n.feedbackModel.label === "modelA");
+    const uncachedSide = impNeeds.find((n) => n.feedbackModel.label === "modelB");
 
     expect(cachedSide).toBeDefined();
     expect(uncachedSide).toBeDefined();
@@ -1693,11 +1725,11 @@ describe("cost-aware scoring", () => {
 
     const impNeeds = needs.filter(
       (n): n is Extract<Need, { type: "improvement_judgment" }> =>
-        n.type === "improvement_judgment" && n.writer === "writer",
+        n.type === "improvement_judgment" && n.writer.label === "writer",
     );
 
-    const partialSide = impNeeds.find((n) => n.feedbackModel === "modelA");
-    const uncachedSide = impNeeds.find((n) => n.feedbackModel === "modelB");
+    const partialSide = impNeeds.find((n) => n.feedbackModel.label === "modelA");
+    const uncachedSide = impNeeds.find((n) => n.feedbackModel.label === "modelB");
 
     expect(partialSide).toBeDefined();
     expect(uncachedSide).toBeDefined();
@@ -1738,8 +1770,8 @@ describe("cost-aware scoring", () => {
         n.type === "revised_judgment",
     );
 
-    const cachedFb = revisedNeeds.find((n) => n.feedbackModel === "modelA");
-    const uncachedFb = revisedNeeds.find((n) => n.feedbackModel === "modelB");
+    const cachedFb = revisedNeeds.find((n) => n.feedbackModel.label === "modelA");
+    const uncachedFb = revisedNeeds.find((n) => n.feedbackModel.label === "modelB");
 
     expect(cachedFb).toBeDefined();
     expect(uncachedFb).toBeDefined();
@@ -1810,10 +1842,10 @@ describe("cost-aware scoring", () => {
     // - feedbackModel=modelB side should still have needs
     const impNeedsWriterA = needs.filter(
       (n): n is Extract<Need, { type: "improvement_judgment" }> =>
-        n.type === "improvement_judgment" && n.writer === "modelA",
+        n.type === "improvement_judgment" && n.writer.label === "modelA",
     );
-    const brokenSide = impNeedsWriterA.filter((n) => n.feedbackModel === "modelA");
-    const goodSide = impNeedsWriterA.filter((n) => n.feedbackModel === "modelB");
+    const brokenSide = impNeedsWriterA.filter((n) => n.feedbackModel.label === "modelA");
+    const goodSide = impNeedsWriterA.filter((n) => n.feedbackModel.label === "modelB");
     expect(brokenSide).toHaveLength(0);
     expect(goodSide.length).toBeGreaterThan(0);
   });
@@ -1825,8 +1857,8 @@ describe("primaryModel", () => {
   it("returns modelA for initial_judgment", () => {
     const need: Need = {
       type: "initial_judgment",
-      modelA: "a",
-      modelB: "b",
+      modelA: makeModel("a"),
+      modelB: makeModel("b"),
       outputIdxA: 0,
       outputIdxB: 0,
       promptId: "p1",
@@ -1839,10 +1871,10 @@ describe("primaryModel", () => {
   it("returns writer for improvement_judgment", () => {
     const need: Need = {
       type: "improvement_judgment",
-      writer: "writer-x",
+      writer: makeModel("writer-x"),
       outputIdx: 0,
-      feedbackModel: "fb",
-      againstFeedbackModel: "other-fb",
+      feedbackModel: makeModel("fb"),
+      againstFeedbackModel: makeModel("other-fb"),
       promptId: "p1",
       judgeModel: makeModel("judge"),
       score: 1,
@@ -1853,11 +1885,11 @@ describe("primaryModel", () => {
   it("returns modelA for revised_judgment", () => {
     const need: Need = {
       type: "revised_judgment",
-      modelA: "x",
-      modelB: "y",
+      modelA: makeModel("x"),
+      modelB: makeModel("y"),
       outputIdxA: 0,
       outputIdxB: 0,
-      feedbackModel: "fb",
+      feedbackModel: makeModel("fb"),
       promptId: "p1",
       judgeModel: makeModel("judge"),
       score: 1,
@@ -1872,8 +1904,8 @@ describe("interleaveByModel", () => {
   function makeNeedForModel(model: string, score: number): Need {
     return {
       type: "initial_judgment",
-      modelA: model,
-      modelB: "other",
+      modelA: makeModel(model),
+      modelB: makeModel("other"),
       outputIdxA: 0,
       outputIdxB: 0,
       promptId: "p1",

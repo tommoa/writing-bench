@@ -10,8 +10,8 @@ import { shouldPruneJudge } from "./judge-quality.js";
 export type Need =
   | {
       type: "initial_judgment";
-      modelA: string;
-      modelB: string;
+      modelA: ModelConfig;
+      modelB: ModelConfig;
       outputIdxA: number;
       outputIdxB: number;
       promptId: string;
@@ -20,22 +20,22 @@ export type Need =
     }
   | {
       type: "improvement_judgment";
-      writer: string;
+      writer: ModelConfig;
       outputIdx: number;
-      feedbackModel: string;
+      feedbackModel: ModelConfig;
       /** The opposing feedback model in this comparison (for batch diversification only). */
-      againstFeedbackModel: string;
+      againstFeedbackModel: ModelConfig;
       promptId: string;
       judgeModel: ModelConfig;
       score: number;
     }
   | {
       type: "revised_judgment";
-      modelA: string;
-      modelB: string;
+      modelA: ModelConfig;
+      modelB: ModelConfig;
       outputIdxA: number;
       outputIdxB: number;
-      feedbackModel: string;
+      feedbackModel: ModelConfig;
       promptId: string;
       judgeModel: ModelConfig;
       score: number;
@@ -45,15 +45,15 @@ export type Need =
 export interface CompletedWork {
   /** Set of judgment dedup keys (see judgmentKey()). */
   judgments: Set<string>;
-  /** Missing samples: "model:promptId:outputIndex" */
+  /** Missing samples keyed by canonical model ID, prompt, and output index. */
   missingSamples: Set<string>;
-  /** Missing feedback: "fbModel:writerModel:promptId:outputIndex" */
+  /** Missing feedback keyed by canonical feedback/writer IDs, prompt, and output index. */
   missingFeedback: Set<string>;
-  /** Missing revisions: "writerModel:fbModel:promptId:outputIndex" */
+  /** Missing revisions keyed by canonical writer/feedback IDs, prompt, and output index. */
   missingRevisions: Set<string>;
   /** Missing judgments:
-   *  - initial/revised: "modelA:modelB:promptId:idxA:idxB" (models sorted)
-   *  - improvement: "writer:feedbackModel:promptId:outputIdx" (asymmetric)
+   *  - initial/revised: canonical model pair, prompt, and output indices
+   *  - improvement: canonical writer/feedback IDs, prompt, and output index
    *  All judges missed.
    */
   missingJudgments: Set<string>;
@@ -151,18 +151,18 @@ export function formatNeedDescription(
   ratingMap: Map<string, WhrRating>,
 ): string {
   if (need.type === "initial_judgment") {
-    const ciA = lookupCi(ratingMap, "writing", need.modelA);
-    const ciB = lookupCi(ratingMap, "writing", need.modelB);
-    return `writing: ${need.modelA} vs ${need.modelB} (${ciA} / ${ciB})`;
+    const ciA = lookupCi(ratingMap, "writing", need.modelA.label);
+    const ciB = lookupCi(ratingMap, "writing", need.modelB.label);
+    return `writing: ${need.modelA.label} vs ${need.modelB.label} (${ciA} / ${ciB})`;
   }
   if (need.type === "improvement_judgment") {
-    const ci = lookupCi(ratingMap, "feedback", need.feedbackModel);
-    return `feedback: ${need.feedbackModel} on ${need.writer} (${ci})`;
+    const ci = lookupCi(ratingMap, "feedback", need.feedbackModel.label);
+    return `feedback: ${need.feedbackModel.label} on ${need.writer.label} (${ci})`;
   }
   // revised_judgment
-  const ciA = lookupCi(ratingMap, "revised", need.modelA);
-  const ciB = lookupCi(ratingMap, "revised", need.modelB);
-  return `revision: ${need.modelA} vs ${need.modelB} fb:${need.feedbackModel} (${ciA} / ${ciB})`;
+  const ciA = lookupCi(ratingMap, "revised", need.modelA.label);
+  const ciB = lookupCi(ratingMap, "revised", need.modelB.label);
+  return `revision: ${need.modelA.label} vs ${need.modelB.label} fb:${need.feedbackModel.label} (${ciA} / ${ciB})`;
 }
 
 /** Summarize a batch of needs by type count. */
@@ -253,10 +253,10 @@ export function uncachedSteps(
 function playerPairKey(c: Need): string {
   switch (c.type) {
     case "improvement_judgment":
-      return [c.feedbackModel, c.againstFeedbackModel].sort().join(":");
+      return [c.feedbackModel.registryId, c.againstFeedbackModel.registryId].sort().join(":");
     case "initial_judgment":
     case "revised_judgment":
-      return [c.modelA, c.modelB].sort().join(":");
+      return [c.modelA.registryId, c.modelB.registryId].sort().join(":");
   }
 }
 
@@ -386,7 +386,7 @@ export function identifyNeeds(
 
   // Per-model output cap: breadth-first enforcement -- a model must cover
   // all prompts at depth N before advancing to N+1.
-  const capFor = (label: string) => modelOutputCaps?.get(label) ?? outputsPerModel;
+  const capFor = (model: ModelConfig) => modelOutputCaps?.get(model.registryId) ?? outputsPerModel;
 
   // ── Initial judgment needs ────────────────────────
   for (let i = 0; i < models.length; i++) {
@@ -398,28 +398,28 @@ export function identifyNeeds(
 
       const gain = informationGain(rA, rB) * convergence.writingWeight;
 
-      for (let oi = 0; oi < capFor(models[i].label); oi++) {
-        for (let oj = 0; oj < capFor(models[j].label); oj++) {
+      for (let oi = 0; oi < capFor(models[i]); oi++) {
+        for (let oj = 0; oj < capFor(models[j]); oj++) {
           for (const prompt of prompts) {
             // Prune: skip if either sample is known-missing
-            if (completedWork.missingSamples.has(sampleKey(models[i].label, prompt.id, oi))
-              || completedWork.missingSamples.has(sampleKey(models[j].label, prompt.id, oj))) continue;
+            if (completedWork.missingSamples.has(sampleKey(models[i].registryId, prompt.id, oi))
+              || completedWork.missingSamples.has(sampleKey(models[j].registryId, prompt.id, oj))) continue;
 
             // Prune: skip if all judges missed this judgment group
-            if (completedWork.missingJudgments.has(judgmentGroupKey(models[i].label, models[j].label, prompt.id, oi, oj))) continue;
+            if (completedWork.missingJudgments.has(judgmentGroupKey(models[i].registryId, models[j].registryId, prompt.id, oi, oj))) continue;
 
             for (const judge of effectiveJudges) {
               const key = judgmentKey(
-                "initial", models[i].label, models[j].label,
-                prompt.id, judge.label, oi, oj,
+                "initial", models[i].registryId, models[j].registryId,
+                prompt.id, judge.registryId, oi, oj,
               );
               if (completedWork.judgments.has(key)) continue;
 
               const judgeWeight = jw.get(judge.label) ?? 1.0;
               candidates.push({
                 type: "initial_judgment",
-                modelA: models[i].label,
-                modelB: models[j].label,
+                modelA: models[i],
+                modelB: models[j],
                 outputIdxA: oi,
                 outputIdxB: oj,
                 promptId: prompt.id,
@@ -447,23 +447,23 @@ export function identifyNeeds(
 
       // Each improvement comparison needs a writer to apply both feedbacks to
       for (const writer of models) {
-        for (let oi = 0; oi < capFor(writer.label); oi++) {
+        for (let oi = 0; oi < capFor(writer); oi++) {
           for (const prompt of prompts) {
             // Pre-check per-side cascade deps and triple pruning (independent of judge).
             // isCascadeBroken checks sample, feedback, and revision for each side.
             const sideAMissing =
-              isCascadeBroken(completedWork, writer.label, models[i].label, prompt.id, oi)
+              isCascadeBroken(completedWork, writer.registryId, models[i].registryId, prompt.id, oi)
               || completedWork.missingJudgments.has(improvementJudgmentGroupKey(
-                writer.label,
-                models[i].label,
+                writer.registryId,
+                models[i].registryId,
                 prompt.id,
                 oi,
               ));
             const sideBMissing =
-              isCascadeBroken(completedWork, writer.label, models[j].label, prompt.id, oi)
+              isCascadeBroken(completedWork, writer.registryId, models[j].registryId, prompt.id, oi)
               || completedWork.missingJudgments.has(improvementJudgmentGroupKey(
-                writer.label,
-                models[j].label,
+                writer.registryId,
+                models[j].registryId,
                 prompt.id,
                 oi,
               ));
@@ -472,24 +472,24 @@ export function identifyNeeds(
             // Cascade cost: 1 (judgment) + uncached intermediate steps.
             // Only computed for non-missing sides (missing sides emit no needs).
             const costA = sideAMissing ? 0
-              : 1 + uncachedSteps(completedWork, writer.label, models[i].label, prompt.id, oi);
+              : 1 + uncachedSteps(completedWork, writer.registryId, models[i].registryId, prompt.id, oi);
             const costB = sideBMissing ? 0
-              : 1 + uncachedSteps(completedWork, writer.label, models[j].label, prompt.id, oi);
+              : 1 + uncachedSteps(completedWork, writer.registryId, models[j].registryId, prompt.id, oi);
 
             for (const judge of effectiveJudges) {
               // Emit needs for whichever side is incomplete
-              const keyA = judgmentKey("improvement", writer.label, models[i].label, prompt.id, judge.label, oi);
-              const keyB = judgmentKey("improvement", writer.label, models[j].label, prompt.id, judge.label, oi);
+              const keyA = judgmentKey("improvement", writer.registryId, models[i].registryId, prompt.id, judge.registryId, oi);
+              const keyB = judgmentKey("improvement", writer.registryId, models[j].registryId, prompt.id, judge.registryId, oi);
               if (completedWork.judgments.has(keyA) && completedWork.judgments.has(keyB)) continue;
 
               const judgeWeight = jw.get(judge.label) ?? 1.0;
               if (!sideAMissing && !completedWork.judgments.has(keyA)) {
                 candidates.push({
                   type: "improvement_judgment",
-                  writer: writer.label,
+                  writer,
                   outputIdx: oi,
-                  feedbackModel: models[i].label,
-                  againstFeedbackModel: models[j].label,
+                  feedbackModel: models[i],
+                  againstFeedbackModel: models[j],
                   promptId: prompt.id,
                   judgeModel: judge,
                   score: gain * judgeWeight / (1 + oi) / costA,
@@ -498,10 +498,10 @@ export function identifyNeeds(
               if (!sideBMissing && !completedWork.judgments.has(keyB)) {
                 candidates.push({
                   type: "improvement_judgment",
-                  writer: writer.label,
+                  writer,
                   outputIdx: oi,
-                  feedbackModel: models[j].label,
-                  againstFeedbackModel: models[i].label,
+                  feedbackModel: models[j],
+                  againstFeedbackModel: models[i],
                   promptId: prompt.id,
                   judgeModel: judge,
                   score: gain * judgeWeight / (1 + oi) / costB,
@@ -524,36 +524,36 @@ export function identifyNeeds(
 
       const gain = informationGain(rA, rB) * convergence.revisedWeight;
 
-      for (let oi = 0; oi < capFor(models[i].label); oi++) {
-        for (let oj = 0; oj < capFor(models[j].label); oj++) {
+      for (let oi = 0; oi < capFor(models[i]); oi++) {
+        for (let oj = 0; oj < capFor(models[j]); oj++) {
           for (const fbModel of models) {
             for (const prompt of prompts) {
               // Prune: skip if either side's cascade is broken or the triple is missing.
               // Both sides are required for revised comparisons (A's revision vs B's revision).
-              if (isCascadeBroken(completedWork, models[i].label, fbModel.label, prompt.id, oi)
-                || isCascadeBroken(completedWork, models[j].label, fbModel.label, prompt.id, oj)
-                || completedWork.missingJudgments.has(judgmentGroupKey(models[i].label, models[j].label, `${prompt.id}:${fbModel.label}`, oi, oj))) continue;
+              if (isCascadeBroken(completedWork, models[i].registryId, fbModel.registryId, prompt.id, oi)
+                || isCascadeBroken(completedWork, models[j].registryId, fbModel.registryId, prompt.id, oj)
+                || completedWork.missingJudgments.has(judgmentGroupKey(models[i].registryId, models[j].registryId, `${prompt.id}:${fbModel.registryId}`, oi, oj))) continue;
 
               // Cascade cost: 1 (judgment) + uncached steps for both sides.
               const revisedCost = 1
-                + uncachedSteps(completedWork, models[i].label, fbModel.label, prompt.id, oi)
-                + uncachedSteps(completedWork, models[j].label, fbModel.label, prompt.id, oj);
+                + uncachedSteps(completedWork, models[i].registryId, fbModel.registryId, prompt.id, oi)
+                + uncachedSteps(completedWork, models[j].registryId, fbModel.registryId, prompt.id, oj);
 
               for (const judge of effectiveJudges) {
                 const key = judgmentKey(
-                  "revised", models[i].label, models[j].label,
-                  `${prompt.id}:${fbModel.label}`, judge.label, oi, oj,
+                  "revised", models[i].registryId, models[j].registryId,
+                  `${prompt.id}:${fbModel.registryId}`, judge.registryId, oi, oj,
                 );
                 if (completedWork.judgments.has(key)) continue;
 
                 const judgeWeight = jw.get(judge.label) ?? 1.0;
                 candidates.push({
                   type: "revised_judgment",
-                  modelA: models[i].label,
-                  modelB: models[j].label,
+                  modelA: models[i],
+                  modelB: models[j],
                   outputIdxA: oi,
                   outputIdxB: oj,
-                  feedbackModel: fbModel.label,
+                  feedbackModel: fbModel,
                   promptId: prompt.id,
                   judgeModel: judge,
                   score: gain * judgeWeight / (1 + Math.max(oi, oj)) / revisedCost,
@@ -743,12 +743,12 @@ function dimensionConverged(
 // ── Need Interleaving ───────────────────────────────
 
 /**
- * Extract the primary model from a need -- the model most likely to
+ * Extract the primary canonical model ID from a need -- the model most likely to
  * trigger a fresh API call (the writer or first model in the pair).
  */
 export function primaryModel(need: Need): string {
   return need.type === "improvement_judgment"
-    ? need.writer : need.modelA;
+    ? need.writer.registryId : need.modelA.registryId;
 }
 
 /**

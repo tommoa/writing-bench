@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import type { Need } from "./need-identifier.js";
-import type { ModelConfig } from "../types.js";
-import { settledPool, tagModel, needModels } from "./runner.js";
+import type { ModelConfig, ModelInfo } from "../types.js";
+import { settledPool, tagModel, needModels, displayNamesForModelIds, modelInfoByLabel } from "./runner.js";
 
 // ── Helper factories ────────────────────────────────
 
@@ -10,15 +10,15 @@ function makeModelConfig(label: string): ModelConfig {
     provider: "openai",
     model: label,
     label,
-    registryId: `openai:${label}`,
+    registryId: label,
   };
 }
 
 function makeInitialNeed(modelA: string, modelB: string, judge: string): Need {
   return {
     type: "initial_judgment",
-    modelA,
-    modelB,
+    modelA: makeModelConfig(modelA),
+    modelB: makeModelConfig(modelB),
     outputIdxA: 0,
     outputIdxB: 0,
     promptId: "p1",
@@ -30,10 +30,10 @@ function makeInitialNeed(modelA: string, modelB: string, judge: string): Need {
 function makeImprovementNeed(writer: string, fb: string, judge: string): Need {
   return {
     type: "improvement_judgment",
-    writer,
+    writer: makeModelConfig(writer),
     outputIdx: 0,
-    feedbackModel: fb,
-    againstFeedbackModel: "other-fb",
+    feedbackModel: makeModelConfig(fb),
+    againstFeedbackModel: makeModelConfig("other-fb"),
     promptId: "p1",
     judgeModel: makeModelConfig(judge),
     score: 1,
@@ -43,11 +43,11 @@ function makeImprovementNeed(writer: string, fb: string, judge: string): Need {
 function makeRevisedNeed(modelA: string, modelB: string, fb: string, judge: string): Need {
   return {
     type: "revised_judgment",
-    modelA,
-    modelB,
+    modelA: makeModelConfig(modelA),
+    modelB: makeModelConfig(modelB),
     outputIdxA: 0,
     outputIdxB: 0,
-    feedbackModel: fb,
+    feedbackModel: makeModelConfig(fb),
     promptId: "p1",
     judgeModel: makeModelConfig(judge),
     score: 1,
@@ -158,6 +158,28 @@ describe("tagModel", () => {
 // ── needModels ──────────────────────────────────────
 
 describe("needModels", () => {
+  it("returns canonical IDs rather than display labels", () => {
+    const first = { ...makeModelConfig("same"), registryId: "openai:first" };
+    const second = { ...makeModelConfig("same"), registryId: "anthropic:second" };
+    const judge = { ...makeModelConfig("same"), registryId: "openai:judge" };
+    const need: Need = {
+      type: "initial_judgment",
+      modelA: first,
+      modelB: second,
+      outputIdxA: 0,
+      outputIdxB: 0,
+      promptId: "p1",
+      judgeModel: judge,
+      score: 1,
+    };
+
+    expect(needModels(need)).toEqual([
+      "openai:first",
+      "anthropic:second",
+      "openai:judge",
+    ]);
+  });
+
   it("returns modelA, modelB, judge for initial_judgment", () => {
     const need = makeInitialNeed("a", "b", "judge");
     expect(needModels(need).sort()).toEqual(["a", "b", "judge"].sort());
@@ -171,6 +193,39 @@ describe("needModels", () => {
   it("returns modelA, modelB, feedbackModel, judge for revised_judgment", () => {
     const need = makeRevisedNeed("a", "b", "fb", "judge");
     expect(needModels(need).sort()).toEqual(["a", "b", "fb", "judge"].sort());
+  });
+});
+
+describe("model identity presentation boundaries", () => {
+  it("shows every role label for a suspended canonical model", () => {
+    const writer = { ...makeModelConfig("writer"), registryId: "openai:gpt" };
+    const judge = { ...makeModelConfig("judge"), registryId: "openai:gpt" };
+
+    expect(displayNamesForModelIds(
+      new Set(["openai:gpt"]),
+      [writer, judge],
+    )).toEqual(["writer / judge"]);
+  });
+
+  it("preserves writer and judge labels in result metadata", () => {
+    const writer = { ...makeModelConfig("writer"), registryId: "openai:gpt" };
+    const judge = { ...makeModelConfig("judge"), registryId: "openai:gpt" };
+    const info: ModelInfo = {
+      name: "GPT",
+      family: "gpt",
+      openWeights: false,
+      supportsTemperature: true,
+      supportsStructuredOutput: true,
+      contextLimit: 128_000,
+      outputLimit: 16_384,
+      costPer1MInput: 1,
+      costPer1MOutput: 2,
+    };
+
+    expect(modelInfoByLabel(
+      [writer, judge],
+      { "openai:gpt": info },
+    )).toEqual({ writer: info, judge: info });
   });
 });
 

@@ -105,26 +105,67 @@ export async function settledPool<T>(
  * Preserves an existing tag so inner (closer to the API call) attribution
  * is not overwritten by outer cascade wrappers.
  */
-export function tagModel<T>(label: string, p: Promise<T>): Promise<T> {
+export function tagModel<T>(modelId: string, p: Promise<T>): Promise<T> {
   return p.catch((err) => {
     if (err instanceof Error && !(err as any).failedModel) {
-      (err as any).failedModel = label;
+      (err as any).failedModel = modelId;
     }
     throw err;
   });
 }
 
 /**
- * Extract all model labels involved in a need (for circuit breaker skip check).
+ * Extract all canonical model IDs involved in a need for circuit-breaker checks.
  */
 export function needModels(n: Need): string[] {
   if (n.type === "initial_judgment") {
-    return [n.modelA, n.modelB, n.judgeModel.label];
+    return [n.modelA.registryId, n.modelB.registryId, n.judgeModel.registryId];
   }
   if (n.type === "improvement_judgment") {
-    return [n.writer, n.feedbackModel, n.judgeModel.label];
+    return [n.writer.registryId, n.feedbackModel.registryId, n.judgeModel.registryId];
   }
-  return [n.modelA, n.modelB, n.feedbackModel, n.judgeModel.label];
+  return [
+    n.modelA.registryId,
+    n.modelB.registryId,
+    n.feedbackModel.registryId,
+    n.judgeModel.registryId,
+  ];
+}
+
+/** Resolve canonical model IDs to the distinct labels used across run roles. */
+export function displayNamesForModelIds(
+  modelIds: Iterable<string>,
+  models: ModelConfig[],
+): string[] {
+  const labelsById = new Map<string, string[]>();
+  for (const model of models) {
+    const labels = labelsById.get(model.registryId) ?? [];
+    if (!labels.includes(model.label)) labels.push(model.label);
+    labelsById.set(model.registryId, labels);
+  }
+
+  return [...modelIds].map((modelId) =>
+    labelsById.get(modelId)?.join(" / ") ?? modelId
+  );
+}
+
+/** Convert canonical model metadata to the label-keyed run-result boundary. */
+export function modelInfoByLabel(
+  models: ModelConfig[],
+  modelInfoById: Record<string, ModelInfo>,
+): Record<string, ModelInfo> {
+  return Object.fromEntries(models.flatMap((model) => {
+    const info = modelInfoById[model.registryId];
+    return info ? [[model.label, info]] : [];
+  }));
+}
+
+function sampleModelId(sample: WritingSample): string {
+  return sample.registryId ?? sample.model;
+}
+
+function feedbackModelId(feedback: Feedback): string {
+  return feedback.sourceRegistryId ?? feedback.sourceModel;
 }
 
 /**
@@ -169,8 +210,8 @@ export class BenchmarkRunner {
   // Judgment array dedup -- prevents double-adding the same judgment
   // (e.g. from opportunistic cache probing after the batch already fulfilled it).
   // Separate from completedWork.judgments: that set uses need-identifier key
-  // format (model labels + prompt + output index) while this uses judgment-level
-  // keys (judge model + sample IDs), checked at push time vs. need-generation time.
+  // format (canonical IDs + prompt + output index) while this uses judgment-level
+  // keys (canonical judge ID + sample IDs), checked at push time vs. need-generation time.
   private addedJudgmentKeys = new Set<string>();
 
   // Inflight dedup -- coalesce concurrent requests for the same artifact
@@ -182,8 +223,9 @@ export class BenchmarkRunner {
   // Cache for getCachedWrites to avoid repeated filesystem reads
   private cachedWritesCache = new Map<string, CachedWrite[]>();
 
-  // Lookup maps for fast model/prompt resolution (built once in run())
-  private modelMap = new Map<string, ModelConfig>();
+  // Writer-only lookup for cached sample ownership. Judges can share a
+  // canonical ID with a writer while carrying role-specific presentation.
+  private writerMap = new Map<string, ModelConfig>();
   private promptMap = new Map<string, PromptConfig>();
 
   // WHR state
@@ -245,6 +287,7 @@ export class BenchmarkRunner {
 
   constructor(private config: RunConfig) {
     this.judgeModels = config.judges?.length ? config.judges : config.models;
+    for (const model of config.models) this.writerMap.set(model.registryId, model);
   }
 
   on(handler: EventHandler): void {
@@ -274,7 +317,7 @@ export class BenchmarkRunner {
     for (const model of this.config.models) {
       let minCount = Infinity;
       for (const prompt of this.config.prompts) {
-        const count = this.sampleCounts.get(`${model.label}:${prompt.id}`) ?? 0;
+        const count = this.sampleCounts.get(`${model.registryId}:${prompt.id}`) ?? 0;
         if (count < minCount) minCount = count;
       }
 
@@ -293,7 +336,7 @@ export class BenchmarkRunner {
       // prompts.  Without the floor, settled + minCount=0 → cap=0, which
       // blocks ALL dimensions (capFor returns 0 → the output-index loop
       // never runs) -- stalling feedback/revised convergence.
-      caps.set(model.label, Math.max(1, Math.min(
+      caps.set(model.registryId, Math.max(1, Math.min(
         this.config.outputsPerModel,
         minCount + (settled ? 0 : 1),
       )));
@@ -443,7 +486,11 @@ export class BenchmarkRunner {
         needDescription: this.currentNeedDescription,
         batchSummary: this.currentBatchSummary,
         suspendedModels: this.suspendedModels.size > 0
-          ? [...this.suspendedModels] : undefined,
+          ? displayNamesForModelIds(
+            this.suspendedModels,
+            [...this.config.models, ...this.judgeModels],
+          )
+          : undefined,
         judgeBias: this.serializeJudgeBias(),
       },
     });
@@ -632,7 +679,7 @@ export class BenchmarkRunner {
     outputIndex: number,
     cacheOnly = false,
   ): Promise<WritingSample | null> {
-    const storeKey = `${modelCfg.label}:${prompt.id}:${outputIndex}`;
+    const storeKey = `${modelCfg.registryId}:${prompt.id}:${outputIndex}`;
     const existing = this.sampleStore.get(storeKey);
     if (existing) return Promise.resolve(existing);
 
@@ -667,7 +714,7 @@ export class BenchmarkRunner {
           this.cacheStats.writes.savedCost += cs.cost.total;
           this.initialSamples.push(sample);
           this.sampleStore.set(storeKey, sample);
-          this.trackOutputCount(modelCfg.label, prompt.id, outputIndex);
+          this.trackOutputCount(modelCfg.registryId, prompt.id, outputIndex);
           this.opsDone++;
           return sample;
         }
@@ -680,7 +727,7 @@ export class BenchmarkRunner {
       this.emitProgress(`${modelCfg.label} writing "${prompt.name}" (${outputIndex + 1})`);
 
       try {
-        const sample = await tagModel(modelCfg.label,
+        const sample = await tagModel(modelCfg.registryId,
           this.generateSample(modelCfg, prompt, outputIndex, "initial"),
         );
         const cacheId = sample.id;
@@ -707,7 +754,7 @@ export class BenchmarkRunner {
         this.cacheStats.writes.fresh++;
         this.initialSamples.push(sample);
         this.sampleStore.set(storeKey, sample);
-        this.trackOutputCount(modelCfg.label, prompt.id, outputIndex);
+        this.trackOutputCount(modelCfg.registryId, prompt.id, outputIndex);
         this.opsDone++;
         return sample;
       } finally {
@@ -726,7 +773,7 @@ export class BenchmarkRunner {
     prompt: PromptConfig,
     cacheOnly = false,
   ): Promise<Feedback | null> {
-    const storeKey = `${sourceModel.label}:${targetSample.id}`;
+    const storeKey = `${sourceModel.registryId}:${targetSample.id}`;
     const existing = this.feedbackStore.get(storeKey);
     if (existing) return Promise.resolve(existing);
 
@@ -755,7 +802,12 @@ export class BenchmarkRunner {
           this.allFeedback.push(feedback);
           this.feedbackStore.set(storeKey, feedback);
           this.completedWork.existingFeedback.add(
-            feedbackKey(sourceModel.label, targetSample.model, prompt.id, targetSample.outputIndex),
+            feedbackKey(
+              sourceModel.registryId,
+              sampleModelId(targetSample),
+              prompt.id,
+              targetSample.outputIndex,
+            ),
           );
           this.opsDone++;
           return feedback;
@@ -769,7 +821,7 @@ export class BenchmarkRunner {
       this.emitProgress(`${sourceModel.label} reviewing ${targetSample.model}'s "${prompt.name}"`);
 
       try {
-        const feedback = await tagModel(sourceModel.label,
+        const feedback = await tagModel(sourceModel.registryId,
           this.generateFeedback(sourceModel, prompt, targetSample),
         );
         const fbCacheId = feedback.id;
@@ -795,7 +847,12 @@ export class BenchmarkRunner {
         this.allFeedback.push(feedback);
         this.feedbackStore.set(storeKey, feedback);
         this.completedWork.existingFeedback.add(
-          feedbackKey(sourceModel.label, targetSample.model, prompt.id, targetSample.outputIndex),
+          feedbackKey(
+            sourceModel.registryId,
+            sampleModelId(targetSample),
+            prompt.id,
+            targetSample.outputIndex,
+          ),
         );
         this.opsDone++;
         return feedback;
@@ -816,7 +873,7 @@ export class BenchmarkRunner {
     prompt: PromptConfig,
     cacheOnly = false,
   ): Promise<WritingSample | null> {
-    const storeKey = `${writerCfg.label}:${original.id}:${feedback.id}`;
+    const storeKey = `${writerCfg.registryId}:${original.id}:${feedback.id}`;
     const existing = this.revisionStore.get(storeKey);
     if (existing) return Promise.resolve(existing);
 
@@ -851,7 +908,12 @@ export class BenchmarkRunner {
           this.revisedSamples.push(revised);
           this.revisionStore.set(storeKey, revised);
           this.completedWork.existingRevisions.add(
-            revisionKey(writerCfg.label, feedback.sourceModel, prompt.id, original.outputIndex),
+            revisionKey(
+              writerCfg.registryId,
+              feedbackModelId(feedback),
+              prompt.id,
+              original.outputIndex,
+            ),
           );
           this.opsDone++;
           return revised;
@@ -867,7 +929,7 @@ export class BenchmarkRunner {
       );
 
       try {
-        const revised = await tagModel(writerCfg.label,
+        const revised = await tagModel(writerCfg.registryId,
           this.generateRevision(writerCfg, prompt, original, feedback),
         );
         const revCacheId = revised.id;
@@ -892,7 +954,12 @@ export class BenchmarkRunner {
         this.revisedSamples.push(revised);
         this.revisionStore.set(storeKey, revised);
         this.completedWork.existingRevisions.add(
-          revisionKey(writerCfg.label, feedback.sourceModel, prompt.id, original.outputIndex),
+          revisionKey(
+            writerCfg.registryId,
+            feedbackModelId(feedback),
+            prompt.id,
+            original.outputIndex,
+          ),
         );
         this.opsDone++;
         return revised;
@@ -914,7 +981,7 @@ export class BenchmarkRunner {
     stage: "initial" | "revised" | "improvement",
     cacheOnly = false,
   ): Promise<PairwiseJudgment | null> {
-    const dedupKey = `${judgeCfg.label}:${stage}:${sampleA.id}:${sampleB.id}`;
+    const dedupKey = `${judgeCfg.registryId}:${stage}:${sampleA.id}:${sampleB.id}`;
 
     return this.dedup(this.inflightJudgments, dedupKey, async () => {
       // Check cache
@@ -959,7 +1026,7 @@ export class BenchmarkRunner {
       this.emitProgress(`${judgeCfg.label} judging "${prompt.name}" (${stage})`);
 
       try {
-        const judgment = await tagModel(judgeCfg.label,
+        const judgment = await tagModel(judgeCfg.registryId,
           this.doJudge(judgeCfg, prompt, sampleA, sampleB, stage),
         );
 
@@ -994,7 +1061,8 @@ export class BenchmarkRunner {
   }
 
   private addJudgment(judgment: PairwiseJudgment): void {
-    const dk = `${judgment.judgeModel}:${judgment.stage}:${judgment.sampleA}:${judgment.sampleB}`;
+    const judgeId = judgment.judgeRegistryId ?? judgment.judgeModel;
+    const dk = `${judgeId}:${judgment.stage}:${judgment.sampleA}:${judgment.sampleB}`;
     if (this.addedJudgmentKeys.has(dk)) return;
     this.addedJudgmentKeys.add(dk);
     if (judgment.stage === "initial") this.initialJudgments.push(judgment);
@@ -1049,11 +1117,11 @@ export class BenchmarkRunner {
       const promptSamples = this.initialSamples.filter((s) => s.promptId === prompt.id);
       for (let i = 0; i < promptSamples.length; i++) {
         for (let j = i + 1; j < promptSamples.length; j++) {
-          if (promptSamples[i].model === promptSamples[j].model) continue;
+          if (sampleModelId(promptSamples[i]) === sampleModelId(promptSamples[j])) continue;
           for (const judge of this.judgeModels) {
             const jkey = judgmentKey("initial",
-              promptSamples[i].model, promptSamples[j].model,
-              prompt.id, judge.label,
+              sampleModelId(promptSamples[i]), sampleModelId(promptSamples[j]),
+              prompt.id, judge.registryId,
               promptSamples[i].outputIndex, promptSamples[j].outputIndex);
             if (this.completedWork.judgments.has(jkey)) continue;
             if (!hasCachedJudgment(judge, "initial", promptSamples[i], promptSamples[j])) continue;
@@ -1080,8 +1148,8 @@ export class BenchmarkRunner {
 
       for (const judge of this.judgeModels) {
         const jkey = judgmentKey("improvement",
-          revised.model, revised.feedbackModel ?? "",
-          prompt.id, judge.label, original.outputIndex);
+          sampleModelId(revised), revised.feedbackRegistryId ?? revised.feedbackModel ?? "",
+          prompt.id, judge.registryId, original.outputIndex);
         if (this.completedWork.judgments.has(jkey)) continue;
         if (!hasCachedJudgment(judge, "improvement", original, revised)) continue;
 
@@ -1100,7 +1168,7 @@ export class BenchmarkRunner {
       const promptRevisions = this.revisedSamples.filter((s) => s.promptId === prompt.id);
       const byFeedback = new Map<string, WritingSample[]>();
       for (const rev of promptRevisions) {
-        const key = rev.feedbackModel ?? "";
+        const key = rev.feedbackRegistryId ?? rev.feedbackModel ?? "";
         const group = byFeedback.get(key) ?? [];
         group.push(rev);
         byFeedback.set(key, group);
@@ -1109,11 +1177,12 @@ export class BenchmarkRunner {
       for (const [, group] of byFeedback) {
         for (let i = 0; i < group.length; i++) {
           for (let j = i + 1; j < group.length; j++) {
-            if (group[i].model === group[j].model) continue;
+            if (sampleModelId(group[i]) === sampleModelId(group[j])) continue;
             for (const judge of this.judgeModels) {
               const jkey = judgmentKey("revised",
-                group[i].model, group[j].model,
-                `${prompt.id}:${group[i].feedbackModel}`, judge.label,
+                sampleModelId(group[i]), sampleModelId(group[j]),
+                `${prompt.id}:${group[i].feedbackRegistryId ?? group[i].feedbackModel}`,
+                judge.registryId,
                 group[i].outputIndex, group[j].outputIndex);
               if (this.completedWork.judgments.has(jkey)) continue;
               if (!hasCachedJudgment(judge, "revised", group[i], group[j])) continue;
@@ -1192,7 +1261,7 @@ export class BenchmarkRunner {
       }
       const layer3Tasks: Promise<unknown>[] = [];
       for (const sample of [...this.initialSamples]) {
-        const writerCfg = this.modelMap.get(sample.model);
+        const writerCfg = this.writerMap.get(sampleModelId(sample));
         if (!writerCfg) continue;
         const prompt = this.promptMap.get(sample.promptId)!;
         for (const fb of feedbackBySample.get(sample.id) ?? []) {
@@ -1256,20 +1325,30 @@ export class BenchmarkRunner {
     cacheOnly: boolean,
     tripleResults: Map<string, boolean>,
   ): Promise<void> {
-    const modelACfg = this.modelMap.get(need.modelA)!;
-    const modelBCfg = this.modelMap.get(need.modelB)!;
+    const modelACfg = need.modelA;
+    const modelBCfg = need.modelB;
     const key = judgmentKey(
-      "initial", need.modelA, need.modelB, need.promptId, need.judgeModel.label,
+      "initial",
+      need.modelA.registryId,
+      need.modelB.registryId,
+      need.promptId,
+      need.judgeModel.registryId,
       need.outputIdxA, need.outputIdxB,
     );
 
     const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, cacheOnly);
     const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, cacheOnly);
-    if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA, need.promptId, need.outputIdxA));
-    if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB, need.promptId, need.outputIdxB));
+    if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA.registryId, need.promptId, need.outputIdxA));
+    if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB.registryId, need.promptId, need.outputIdxB));
     if (!sampleA || !sampleB) return;
 
-    const tk = judgmentGroupKey(need.modelA, need.modelB, need.promptId, need.outputIdxA, need.outputIdxB);
+    const tk = judgmentGroupKey(
+      need.modelA.registryId,
+      need.modelB.registryId,
+      need.promptId,
+      need.outputIdxA,
+      need.outputIdxB,
+    );
     const result = await this.ensureJudgment(
       need.judgeModel, prompt, sampleA, sampleB, "initial", cacheOnly,
     );
@@ -1283,35 +1362,45 @@ export class BenchmarkRunner {
     cacheOnly: boolean,
     tripleResults: Map<string, boolean>,
   ): Promise<void> {
-    const writerCfg = this.modelMap.get(need.writer)!;
-    const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
+    const writerCfg = need.writer;
+    const fbModelCfg = need.feedbackModel;
     const key = judgmentKey(
-      "improvement", need.writer, need.feedbackModel,
-      need.promptId, need.judgeModel.label, need.outputIdx,
+      "improvement", need.writer.registryId, need.feedbackModel.registryId,
+      need.promptId, need.judgeModel.registryId, need.outputIdx,
     );
 
     // Cascade: sample → feedback → revision → judge
     const sample = await this.ensureSample(writerCfg, prompt, need.outputIdx, cacheOnly);
     if (!sample) {
-      this.completedWork.missingSamples.add(sampleKey(need.writer, need.promptId, need.outputIdx));
+      this.completedWork.missingSamples.add(sampleKey(need.writer.registryId, need.promptId, need.outputIdx));
       return;
     }
 
     const feedback = await this.ensureFeedback(fbModelCfg, sample, prompt, cacheOnly);
     if (!feedback) {
-      this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.writer, need.promptId, need.outputIdx));
+      this.completedWork.missingFeedback.add(feedbackKey(
+        need.feedbackModel.registryId,
+        need.writer.registryId,
+        need.promptId,
+        need.outputIdx,
+      ));
       return;
     }
 
     const revision = await this.ensureRevision(writerCfg, sample, feedback, prompt, cacheOnly);
     if (!revision) {
-      this.completedWork.missingRevisions.add(revisionKey(need.writer, need.feedbackModel, need.promptId, need.outputIdx));
+      this.completedWork.missingRevisions.add(revisionKey(
+        need.writer.registryId,
+        need.feedbackModel.registryId,
+        need.promptId,
+        need.outputIdx,
+      ));
       return;
     }
 
     const tk = improvementJudgmentGroupKey(
-      need.writer,
-      need.feedbackModel,
+      need.writer.registryId,
+      need.feedbackModel.registryId,
       need.promptId,
       need.outputIdx,
     );
@@ -1328,35 +1417,41 @@ export class BenchmarkRunner {
     cacheOnly: boolean,
     tripleResults: Map<string, boolean>,
   ): Promise<void> {
-    const modelACfg = this.modelMap.get(need.modelA)!;
-    const modelBCfg = this.modelMap.get(need.modelB)!;
-    const fbModelCfg = this.modelMap.get(need.feedbackModel)!;
+    const modelACfg = need.modelA;
+    const modelBCfg = need.modelB;
+    const fbModelCfg = need.feedbackModel;
     const key = judgmentKey(
-      "revised", need.modelA, need.modelB,
-      `${need.promptId}:${need.feedbackModel}`, need.judgeModel.label,
+      "revised", need.modelA.registryId, need.modelB.registryId,
+      `${need.promptId}:${need.feedbackModel.registryId}`, need.judgeModel.registryId,
       need.outputIdxA, need.outputIdxB,
     );
 
     // Cascade: sampleA + sampleB → feedbackA + feedbackB → revisionA + revisionB → judge
     const sampleA = await this.ensureSample(modelACfg, prompt, need.outputIdxA, cacheOnly);
     const sampleB = await this.ensureSample(modelBCfg, prompt, need.outputIdxB, cacheOnly);
-    if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA, need.promptId, need.outputIdxA));
-    if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB, need.promptId, need.outputIdxB));
+    if (!sampleA) this.completedWork.missingSamples.add(sampleKey(need.modelA.registryId, need.promptId, need.outputIdxA));
+    if (!sampleB) this.completedWork.missingSamples.add(sampleKey(need.modelB.registryId, need.promptId, need.outputIdxB));
     if (!sampleA || !sampleB) return;
 
     const fbA = await this.ensureFeedback(fbModelCfg, sampleA, prompt, cacheOnly);
     const fbB = await this.ensureFeedback(fbModelCfg, sampleB, prompt, cacheOnly);
-    if (!fbA) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.modelA, need.promptId, need.outputIdxA));
-    if (!fbB) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel, need.modelB, need.promptId, need.outputIdxB));
+    if (!fbA) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel.registryId, need.modelA.registryId, need.promptId, need.outputIdxA));
+    if (!fbB) this.completedWork.missingFeedback.add(feedbackKey(need.feedbackModel.registryId, need.modelB.registryId, need.promptId, need.outputIdxB));
     if (!fbA || !fbB) return;
 
     const revA = await this.ensureRevision(modelACfg, sampleA, fbA, prompt, cacheOnly);
     const revB = await this.ensureRevision(modelBCfg, sampleB, fbB, prompt, cacheOnly);
-    if (!revA) this.completedWork.missingRevisions.add(revisionKey(need.modelA, need.feedbackModel, need.promptId, need.outputIdxA));
-    if (!revB) this.completedWork.missingRevisions.add(revisionKey(need.modelB, need.feedbackModel, need.promptId, need.outputIdxB));
+    if (!revA) this.completedWork.missingRevisions.add(revisionKey(need.modelA.registryId, need.feedbackModel.registryId, need.promptId, need.outputIdxA));
+    if (!revB) this.completedWork.missingRevisions.add(revisionKey(need.modelB.registryId, need.feedbackModel.registryId, need.promptId, need.outputIdxB));
     if (!revA || !revB) return;
 
-    const tk = judgmentGroupKey(need.modelA, need.modelB, `${need.promptId}:${need.feedbackModel}`, need.outputIdxA, need.outputIdxB);
+    const tk = judgmentGroupKey(
+      need.modelA.registryId,
+      need.modelB.registryId,
+      `${need.promptId}:${need.feedbackModel.registryId}`,
+      need.outputIdxA,
+      need.outputIdxB,
+    );
     const result = await this.ensureJudgment(
       need.judgeModel, prompt, revA, revB, "revised", cacheOnly,
     );
@@ -1376,18 +1471,28 @@ export class BenchmarkRunner {
     this.needFairCursor = 0;
 
     // Fetch model metadata for all models (writers + judges, deduplicated)
-    const allModelConfigs = new Map<string, { provider: string; model: string; label: string }>();
+    const allModelConfigs = new Map<string, {
+      provider: string;
+      model: string;
+      registryId: string;
+    }>();
     for (const m of this.config.models) {
-      allModelConfigs.set(m.label, { provider: m.provider, model: m.model, label: m.label });
+      allModelConfigs.set(m.registryId, {
+        provider: m.provider,
+        model: m.model,
+        registryId: m.registryId,
+      });
     }
     for (const m of this.judgeModels) {
-      allModelConfigs.set(m.label, { provider: m.provider, model: m.model, label: m.label });
+      allModelConfigs.set(m.registryId, {
+        provider: m.provider,
+        model: m.model,
+        registryId: m.registryId,
+      });
     }
     this.modelInfoMap = await getModelInfoMap([...allModelConfigs.values()]);
 
-    // Build lookup maps for fast model/prompt resolution
-    for (const m of this.config.models) this.modelMap.set(m.label, m);
-    for (const m of this.judgeModels) this.modelMap.set(m.label, m);
+    // Build prompt lookup map for cache seeding and adaptive fulfillment.
     for (const p of this.config.prompts) this.promptMap.set(p.id, p);
 
     // Phase 1: Seed from cache -- load ALL cached artifacts before any API calls
@@ -1485,18 +1590,26 @@ export class BenchmarkRunner {
               // Rate-limit / server errors: suspend model immediately.
               // No retries at the request level -- the adaptive loop
               // gives the model a fresh chance next round.
-              const model = (err as any)?.failedModel ?? primary;
-              if (!this.suspendedModels.has(model)) {
+              const modelId = (err as any)?.failedModel ?? primary;
+              const modelLabel = displayNamesForModelIds(
+                [modelId],
+                [...this.config.models, ...this.judgeModels],
+              )[0];
+              if (!this.suspendedModels.has(modelId)) {
                 const reason = err instanceof Error ? err.message : String(err);
-                this.emitProgress(`${model}: ${reason}`);
+                this.emitProgress(`${modelLabel}: ${reason}`);
               }
-              this.suspendedModels.add(model);
-              const taskError = extractTaskError(err, model);
+              this.suspendedModels.add(modelId);
+              const taskError = extractTaskError(err, modelLabel);
               this.taskErrors.push(taskError);
               this.emit({ type: "error", data: taskError });
             } else {
               // Other errors: record as TaskError with full details
-              const taskError = extractTaskError(err, primary);
+              const primaryLabel = displayNamesForModelIds(
+                [primary],
+                [...this.config.models, ...this.judgeModels],
+              )[0];
+              const taskError = extractTaskError(err, primaryLabel);
               this.taskErrors.push(taskError);
               this.emit({ type: "error", data: taskError });
             }
@@ -1646,7 +1759,10 @@ export class BenchmarkRunner {
         roundsCompleted: this.judgingRound,
         errors: this.taskErrors.length > 0 ? [...this.taskErrors] : undefined,
       },
-      modelInfo: this.modelInfoMap,
+      modelInfo: modelInfoByLabel(
+        [...this.config.models, ...this.judgeModels],
+        this.modelInfoMap,
+      ),
     };
 
     this.emit({ type: "complete", data: result });
@@ -1664,7 +1780,7 @@ export class BenchmarkRunner {
   ): Promise<PairwiseJudgment> {
     const { pair: orderedPair, swapped } = randomizePairOrder([sampleA, sampleB]);
 
-    const modelInfo = this.modelInfoMap[judgeCfg.label] ?? null;
+    const modelInfo = this.modelInfoMap[judgeCfg.registryId] ?? null;
     const judgment = await judgePair(
       judgeCfg, prompt,
       orderedPair[0], orderedPair[1],
@@ -1710,7 +1826,7 @@ export class BenchmarkRunner {
       prompt.maxWords ? ` Target length: approximately ${prompt.maxWords} words.` : ""
     }`;
 
-    const modelInfo = this.modelInfoMap[modelCfg.label] ?? null;
+    const modelInfo = this.modelInfoMap[modelCfg.registryId] ?? null;
     const maxOutputTokens = resolveMaxOutputTokens(modelCfg.maxTokens, modelInfo);
 
     const { text, usage: rawUsage } = await withRetry(async () => {
@@ -1774,7 +1890,7 @@ ${sample.text}
 
 Please provide your detailed feedback.`;
 
-    const modelInfo = this.modelInfoMap[feedbackModelCfg.label] ?? null;
+    const modelInfo = this.modelInfoMap[feedbackModelCfg.registryId] ?? null;
     const maxOutputTokens = resolveMaxOutputTokens(feedbackModelCfg.maxTokens, modelInfo);
 
     const { text, usage: rawUsage } = await withRetry(async () => {
@@ -1838,7 +1954,7 @@ ${feedback.text}
 
 Please write an improved version incorporating this feedback.`;
 
-    const modelInfo = this.modelInfoMap[writerCfg.label] ?? null;
+    const modelInfo = this.modelInfoMap[writerCfg.registryId] ?? null;
     const maxOutputTokens = resolveMaxOutputTokens(writerCfg.maxTokens, modelInfo);
 
     const { text, usage: rawUsage } = await withRetry(async () => {

@@ -78,8 +78,9 @@ export async function resolveRunInputs(
 
   // 4. Resolve display labels from models.dev
   try {
-    await resolveModelLabels(models);
-    if (judges) await resolveModelLabels(judges);
+    // Resolve both roles together so display labels are unique across the
+    // complete run even though canonical registry IDs drive internal work.
+    await resolveModelLabels([...models, ...(judges ?? [])]);
   } catch (err) {
     if (!tuiConfig.cacheOnly) throw err;
     // In cache-only mode, silently fall back to raw model IDs

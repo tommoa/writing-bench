@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { loadPrompts, parseModelConfigs, mergeModelEndpoints, createRunConfig, filterPrompts } from "./config.js";
+import { loadPrompts, parseModelConfigs, mergeModelEndpoints, createRunConfig, filterPrompts, resolveModelLabels } from "./config.js";
 import type { ModelConfig, PromptConfig } from "./types.js";
 
 describe("loadPrompts", () => {
@@ -66,6 +66,23 @@ describe("parseModelConfigs", () => {
       "anthropic:claude-sonnet-4-20250514=sonnet",
     ]);
     expect(configs).toHaveLength(2);
+  });
+});
+
+describe("resolveModelLabels", () => {
+  it("keeps colliding labels unique within one provider", async () => {
+    const models = parseModelConfigs([
+      "openai:first=shared",
+      "openai:second=shared",
+    ]);
+
+    await resolveModelLabels(models);
+
+    expect(new Set(models.map((model) => model.label)).size).toBe(2);
+    expect(models.map((model) => model.label)).toEqual([
+      "shared (openai) [openai:first]",
+      "shared (openai) [openai:second]",
+    ]);
   });
 });
 

@@ -162,7 +162,7 @@ export function mergeModelEndpoints(models: ModelConfig[]): ModelConfig[] {
  * Resolve auto-generated labels to models.dev display names.
  * Explicit labels (user-provided via =label suffix) are preserved.
  * Collisions between different models sharing a display name are
- * disambiguated by appending the provider display name.
+ * disambiguated by appending provider and, when necessary, registry identity.
  */
 export async function resolveModelLabels(
   models: ModelConfig[]
@@ -191,9 +191,30 @@ export async function resolveModelLabels(
     if (uniqueIds.size <= 1) continue;
 
     // Different models with same display name -- append provider name
+    const sharedProvider = new Set(group.map((m) => m.provider)).size === 1;
     for (const m of group) {
-      const providerName = await getProviderDisplayName(m.provider);
+      // Avoid redundant metadata lookups when the provider cannot disambiguate
+      // the group; the registry-ID pass below handles that rare case.
+      const providerName = sharedProvider
+        ? null
+        : await getProviderDisplayName(m.provider);
       m.label = `${m.label} (${providerName ?? m.provider})`;
+    }
+  }
+
+  // Models from the same provider can still share a display name. Keep every
+  // presentation key unique because run results and ratings remain label-keyed.
+  const remainingCollisions = new Map<string, ModelConfig[]>();
+  for (const m of models) {
+    const group = remainingCollisions.get(m.label) ?? [];
+    group.push(m);
+    remainingCollisions.set(m.label, group);
+  }
+
+  for (const [, group] of remainingCollisions) {
+    if (new Set(group.map((m) => m.registryId)).size <= 1) continue;
+    for (const m of group) {
+      m.label = `${m.label} [${m.registryId}]`;
     }
   }
 }

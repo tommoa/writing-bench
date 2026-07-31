@@ -341,14 +341,14 @@ function parseModelSpecForLabel(spec: string): {
  * Fetch model info for all models in a run and return a lookup map.
  */
 export async function getModelInfoMap(
-  models: Array<{ provider: string; model: string; label: string }>
+  models: Array<{ provider: string; model: string; registryId: string }>
 ): Promise<Record<string, ModelInfo>> {
   const map: Record<string, ModelInfo> = {};
 
   for (const m of models) {
     const info = await getModelInfo(m.provider, m.model);
     if (info) {
-      map[m.label] = info;
+      map[m.registryId] = info;
     }
   }
 
