@@ -4,6 +4,7 @@ import { join } from "path";
 import type { RunResult, TokenUsage, ModelInfo, EloRating, JudgeQualityExport, PairwiseJudgment } from "../types.js";
 import { DEFAULT_CONVERGENCE } from "../types.js";
 import { listRuns, loadRun } from "../storage/run-store.js";
+import { assertValidRunId } from "../storage/run-id.js";
 import { loadCumulativeElo } from "../storage/elo-store.js";
 import { computeJudgeQuality, computeEloBasedJudgeQuality } from "../engine/judge-quality.js";
 import type { JudgeQualityData } from "../engine/judge-quality.js";
@@ -361,7 +362,13 @@ export async function exportForWeb(outDir: string): Promise<number> {
   const modelFamilies: Record<string, string> = {};
 
   for (const id of runIds) {
-    const run = await loadRun(id);
+    let run: RunResult;
+    try {
+      run = await loadRun(id);
+    } catch {
+      // Keep export usable when an unrelated run directory is malformed.
+      continue;
+    }
 
     // Compute uncached costs and tokens in a single pass
     const { costs: uncachedByModelByStage, tokens: tokensByModelByStage } =
@@ -723,7 +730,7 @@ export async function exportForWeb(outDir: string): Promise<number> {
     JSON.stringify(index),
   );
 
-  return runIds.length;
+  return indexEntries.length;
 }
 
 /**
@@ -735,6 +742,7 @@ export async function removeRunFromExport(
   runId: string,
   outDir: string = "web/data",
 ): Promise<void> {
+  assertValidRunId(runId);
   const indexPath = join(outDir, "runs.json");
   if (!existsSync(indexPath) && !existsSync(indexPath + ".gz")) {
     return; // No web export exists -- nothing to clean up

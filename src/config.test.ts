@@ -80,7 +80,7 @@ describe("createRunConfig", () => {
       outputsPerModel: 2,
     });
 
-    expect(config.id).toBeTruthy();
+    expect(config.id).toMatch(/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/);
     expect(config.timestamp).toBeTruthy();
     expect(config.models).toHaveLength(1);
     expect(config.prompts.length).toBeGreaterThan(0);

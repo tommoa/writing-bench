@@ -235,7 +235,7 @@ export function createRunConfig(opts: {
   convergence?: Partial<ConvergenceConfig>;
 }): RunConfig {
   const now = new Date();
-  const id = now.toISOString().replace(/[:.]/g, "-");
+  const id = now.toISOString().replace(/[:.]/g, "-").toLowerCase();
 
   return {
     id,

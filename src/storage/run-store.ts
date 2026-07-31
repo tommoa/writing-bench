@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir, readdir, rm } from "fs/promises";
 import { join } from "path";
 import type { RunResult, EloRating } from "../types.js";
 import { DEFAULT_CONVERGENCE } from "../types.js";
+import { assertValidRunId, isValidRunId } from "./run-id.js";
 
 const DATA_DIR = join(process.cwd(), "data", "runs");
 const NUMBER_SENTINEL = "__WB_NUMBER__";
@@ -68,6 +69,7 @@ function validateRunResultShape(value: unknown): asserts value is RunResult {
  * Get the directory path for a run.
  */
 function runDir(runId: string): string {
+  assertValidRunId(runId);
   return join(DATA_DIR, runId);
 }
 
@@ -98,6 +100,10 @@ export async function loadRun(runId: string): Promise<RunResult> {
   const decoded = decodeSpecialNumbers(JSON.parse(raw));
   validateRunResultShape(decoded);
   const result = decoded as RunResult;
+  assertValidRunId(result.config.id);
+  if (result.config.id !== runId) {
+    throw new Error(`Invalid run file: config.id does not match directory ${runId}`);
+  }
 
   // Migrate old RunConfig shape: flat ciThreshold/maxRounds → convergence object
   if (!result.config.convergence) {
@@ -132,7 +138,7 @@ export async function listRuns(): Promise<string[]> {
 
   const entries = await readdir(DATA_DIR, { withFileTypes: true });
   const dirs = entries
-    .filter((e) => e.isDirectory())
+    .filter((e) => e.isDirectory() && isValidRunId(e.name))
     .map((e) => e.name)
     .sort()
     .reverse();
